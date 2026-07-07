@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H01_TUI_Surface_Removal_And_CLI_Core_Cleanu
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: implemented.
 
 ## Scope
 

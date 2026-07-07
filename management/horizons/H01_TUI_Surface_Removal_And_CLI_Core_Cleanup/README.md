@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H01_TUI_Surface_Removal_And_CLI_Core_Cleanu
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -15,11 +15,11 @@ same profile operations.
 
 ## Goals
 
-- Delete or quarantine `tui_manager.py` and Windows TUI launch assets.
-- Remove Textual/Rich as runtime requirements and from documentation claims.
-- Keep the pure keyboard CLI manager as the only supported local UI.
-- Preserve profile data and credential files during removal.
-- Add checks that prevent accidental reintroduction of the removed TUI surface.
+- Delete or quarantine `tui_manager.py` and Windows TUI launch assets. Done.
+- Remove Textual/Rich as runtime requirements and from documentation claims. Done.
+- Keep the pure keyboard CLI manager as the only supported local UI. Done.
+- Preserve profile data and credential files during removal. Done.
+- Add checks that prevent accidental reintroduction of the removed TUI surface. Done.
 
 ## Non-Goals
 
@@ -44,8 +44,9 @@ same profile operations.
 ## Related Assets
 
 - `profile_manager.py`
-- `tui_manager.py`
 - `install.sh`
 - `README.md`
-- `/mnt/c/Users/Oliver/ai-man-tui-win/tui_manager.py`
-- `/mnt/c/Users/Oliver/ai-man-tui-win/Start-TUI.bat`
+- `scripts/verify_no_tui_surface.sh`
+- Removed: `tui_manager.py`
+- Removed: `/mnt/c/Users/Oliver/ai-man-tui-win/tui_manager.py`
+- Removed: `/mnt/c/Users/Oliver/ai-man-tui-win/Start-TUI.bat`
