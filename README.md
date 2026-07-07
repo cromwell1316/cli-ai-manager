@@ -55,7 +55,7 @@ ai-man login codex p3
 ai-man import agy /mnt/c/Users/Oliver/agy-homes/cred-p1.json p1
 ai-man export codex p1 --to /mnt/c/Users/Oliver/Downloads
 ai-man label claude p1 work
-ai-man clear agy p4
+ai-man clear agy p4 --yes
 ai-man sync --from wsl --mode soft
 ```
 
@@ -69,7 +69,7 @@ ai-man login <tool> [profile]
 ai-man import <tool> <path> [profile]
 ai-man export <tool> <profile> [--to path]
 ai-man label <tool> <profile> <label>
-ai-man clear <tool> <profile>
+ai-man clear <tool> <profile> --yes
 ai-man sync [--from wsl|windows] [--mode soft|hard] [--dry-run] [--yes]
 ```
 
@@ -86,6 +86,8 @@ Exit codes:
 4 profile has no token for a token-required operation
 5 runtime failure
 ```
+
+`clear` refuses to delete a profile unless `--yes` is supplied.
 
 ## Interactive Selector
 

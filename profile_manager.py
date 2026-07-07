@@ -444,9 +444,6 @@ def cmd_status(args):
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
-    if not is_valid_display_profile(args.tool, n):
-        print_error(f"profile p{n} does not exist and is outside visible slots")
-        return EXIT_USAGE
     status = status_payload(args.tool, n)
     if args.json:
         print(json.dumps(status, indent=2))
@@ -519,6 +516,10 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
 def cmd_import(args):
     try:
         n = parse_profile(args.profile) if args.profile else None
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    try:
         imported_num, dest_file = import_credential_file(args.tool, args.path, n)
     except FileNotFoundError as e:
         print_error(str(e))
@@ -619,12 +620,16 @@ def cmd_clear(args):
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
+    home = profile_home(args.tool, n)
+    if not args.yes:
+        print_error(f"refusing to clear {home} without --yes")
+        return EXIT_USAGE
     try:
-        home = clear_profile_data(args.tool, n)
+        cleared_home = clear_profile_data(args.tool, n)
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
-    print(f"Cleared {args.tool} p{n}: {home}")
+    print(f"Cleared {args.tool} p{n}: {cleared_home}")
     return EXIT_OK
 
 def clear_profile_data(tool_key, n):
@@ -1296,6 +1301,7 @@ def build_parser():
     clear_p = sub.add_parser("clear", help="delete a profile directory")
     clear_p.add_argument("tool", choices=TOOLS.keys())
     clear_p.add_argument("profile")
+    clear_p.add_argument("--yes", action="store_true", help="confirm profile deletion")
     clear_p.set_defaults(func=cmd_clear)
 
     sync_p = sub.add_parser("sync", help="sync profile directories between WSL and Windows")
