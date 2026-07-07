@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H03_Windows_WSL_Profile_Parity_And_Verifica
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 

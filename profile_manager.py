@@ -7,6 +7,7 @@ import json
 import base64
 import argparse
 import glob
+import shlex
 import subprocess
 import termios
 import tty
@@ -34,6 +35,8 @@ EXIT_USAGE = 2
 EXIT_NOT_FOUND = 3
 EXIT_NO_TOKEN = 4
 EXIT_RUNTIME = 5
+AGY_WINDOWS_TARGET = "gemini:antigravity"
+AGY_WINDOWS_USERNAME = "antigravity"
 
 # Tool configurations
 TOOLS = {
@@ -42,7 +45,7 @@ TOOLS = {
         "env_var": "HOME",
         "base_dir": os.path.expanduser(os.environ.get("AI_MAN_AGY_HOME", "~/agy-homes")),
         "cmd": "agy",
-        "cred_file": os.path.join(".gemini", "antigravity-cli", "antigravity-oauth-token"),
+        "cred_file": os.path.join(".gemini", "oauth_creds.json"),
         "acct_file": os.path.join(".gemini", "google_accounts.json"),
         "import_help": "Import a Windows Credential Manager backup (.json) file"
     },
@@ -137,7 +140,7 @@ def get_occupied_profiles(tool_key):
         if d.startswith("p") and d[1:].isdigit():
             profiles.add(int(d[1:]))
         # For Windows agy, the profile might just be a cred-pN.json file
-        elif tool_key == "agy" and d.startswith("cred-p") and d.endswith(".json"):
+        elif os.name == "nt" and tool_key == "agy" and d.startswith("cred-p") and d.endswith(".json"):
             num_part = d[6:-5]
             if num_part.isdigit():
                 profiles.add(int(num_part))
@@ -201,6 +204,10 @@ def credential_path(tool_key, n):
     tool = TOOLS[tool_key]
     return os.path.join(profile_home(tool_key, n), tool["cred_file"])
 
+def agy_windows_credential_path(n, base_dir=None):
+    base = base_dir or TOOLS["agy"]["base_dir"]
+    return os.path.join(str(base), f"cred-p{n}.json")
+
 def make_tool_env(tool_key, n):
     tool = TOOLS[tool_key]
     home = profile_home(tool_key, n)
@@ -224,23 +231,90 @@ def write_json_atomic(path, data):
         json.dump(data, f, indent=2)
     os.replace(tmp_path, path)
 
+def read_json_object(path, encoding="utf-8"):
+    with open(path, "r", encoding=encoding) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+def account_email_from_google_accounts(profile_home):
+    ga_path = os.path.join(profile_home, TOOLS["agy"]["acct_file"])
+    if not os.path.exists(ga_path):
+        return None
+    try:
+        data = read_json_object(ga_path)
+    except Exception:
+        return None
+    email = data.get("active")
+    if isinstance(email, str) and email.strip():
+        return email.strip().rstrip(",")
+    return None
+
+def decode_windows_agy_credential(win_cred_path):
+    data = read_json_object(win_cred_path, encoding="utf-8-sig")
+    target = data.get("Target")
+    if target and target != AGY_WINDOWS_TARGET:
+        raise ValueError(f"unexpected Windows credential target: {target}")
+    blob_b64 = data.get("BlobBase64")
+    if not isinstance(blob_b64, str) or not blob_b64:
+        raise ValueError("Windows credential is missing BlobBase64")
+    try:
+        token_text = base64.b64decode(blob_b64).decode("utf-8")
+        token_data = json.loads(token_text)
+    except Exception as e:
+        raise ValueError(f"Windows credential BlobBase64 is not valid OAuth JSON: {e}") from e
+    if not isinstance(token_data, dict):
+        raise ValueError("Windows credential token payload must be a JSON object")
+    account = data.get("Account")
+    if isinstance(account, str):
+        account = account.strip().rstrip(",") or None
+    else:
+        account = None
+    return token_data, account
+
+def read_wsl_agy_oauth(token_path):
+    return read_json_object(token_path)
+
+def build_windows_agy_credential(token_data, account=None):
+    token_text = json.dumps(token_data, indent=2)
+    token_bytes = token_text.encode("utf-8")
+    return {
+        "Target": AGY_WINDOWS_TARGET,
+        "Type": 1,
+        "Persist": 2,
+        "Flags": 0,
+        "UserName": AGY_WINDOWS_USERNAME,
+        "Account": account,
+        "BlobBase64": base64.b64encode(token_bytes).decode("utf-8"),
+        "BlobSize": len(token_bytes),
+        "SavedAt": datetime.now().isoformat()
+    }
+
+def import_windows_agy_credential(win_cred_path, profile_num):
+    token_data, account = decode_windows_agy_credential(win_cred_path)
+    dest_home = profile_home("agy", profile_num)
+    dest_file = credential_path("agy", profile_num)
+    write_json_atomic(dest_file, token_data)
+    if account:
+        write_json_atomic(os.path.join(dest_home, TOOLS["agy"]["acct_file"]), {"active": account})
+    return dest_file
+
+def export_wsl_agy_credential(profile_num, win_cred_path):
+    home = profile_home("agy", profile_num)
+    token_data = read_wsl_agy_oauth(credential_path("agy", profile_num))
+    account = account_email_from_google_accounts(home)
+    write_json_atomic(win_cred_path, build_windows_agy_credential(token_data, account))
+    return win_cred_path
+
 def generate_win_cred_from_linux_token(token_path, win_cred_path, profile_home, tool):
     try:
-        with open(token_path, "r", encoding="utf-8") as f:
-            token_content = f.read().strip()
-        if not token_content:
+        token_data = read_wsl_agy_oauth(token_path)
+        if not token_data:
             return False
             
         # Try to find email
-        email = "logged in"
-        ga_path = os.path.join(profile_home, tool["acct_file"])
-        if os.path.exists(ga_path):
-            try:
-                with open(ga_path, "r") as f:
-                    ga = json.load(f)
-                    email = ga.get("active", "logged in").rstrip(",")
-            except Exception:
-                pass
+        email = account_email_from_google_accounts(profile_home) or "logged in"
                 
         if email in ("(no login)", "logged in"):
             log_dir = os.path.join(profile_home, ".gemini", "antigravity-cli", "log")
@@ -260,24 +334,8 @@ def generate_win_cred_from_linux_token(token_path, win_cred_path, profile_home, 
                             break
                 except Exception:
                     pass
-                    
-        blob_size = len(token_content.encode("utf-8"))
-        blob_b64 = base64.b64encode(token_content.encode("utf-8")).decode("utf-8")
-        
-        cred_data = {
-            "Target": "gemini:antigravity",
-            "Type": 1,
-            "Persist": 2,
-            "Flags": 0,
-            "UserName": "antigravity",
-            "Account": email,
-            "BlobBase64": blob_b64,
-            "BlobSize": blob_size,
-            "SavedAt": datetime.now().isoformat()
-        }
-        
-        with open(win_cred_path, "w", encoding="utf-8") as f:
-            json.dump(cred_data, f, indent=4)
+
+        write_json_atomic(win_cred_path, build_windows_agy_credential(token_data, email))
             
         logging.info(f"Generated Windows credential {win_cred_path} for account {email}")
         return True
@@ -292,74 +350,32 @@ def get_profile_status(tool_key, n, metadata):
     
     email = "(no login)"
     has_token = False
+    token_state = "missing"
     
-    # Windows native token checking for agy
-    is_windows_agy = (tool_key == "agy" and os.name == "nt")
-    win_cred_path = os.path.join(tool["base_dir"], f"cred-p{n}.json")
-    
-    if is_windows_agy:
-        # Auto-generate Windows cred if missing but Linux token file was synced
-        if not os.path.exists(win_cred_path) and os.path.exists(cred_path):
-            generate_win_cred_from_linux_token(cred_path, win_cred_path, profile_home, tool)
-            
-        if os.path.exists(win_cred_path):
-            has_token = True
-            try:
-                with open(win_cred_path, "r", encoding="utf-8-sig") as f:
-                    cdata = json.load(f)
-                    acct = cdata.get("Account")
-                    if acct and acct != "(no login)":
-                        email = acct.rstrip(",")
-            except Exception:
-                pass
-        
-        # Fallback to google_accounts.json if email is still not found
-        ga_path = os.path.join(profile_home, tool["acct_file"])
-        if os.path.exists(ga_path):
-            try:
-                with open(ga_path, "r") as f:
-                    ga = json.load(f)
-                    email = ga.get("active", "(no login)").rstrip(",")
-            except Exception:
-                pass
-        
-        # Fallback: scan log files for email if missing
-        if email in ("(no login)", "logged in") and has_token:
-            log_dir = os.path.join(profile_home, ".gemini", "antigravity-cli", "log")
-            if os.path.exists(log_dir):
+    if tool_key == "agy":
+        if os.name == "nt":
+            win_cred_path = agy_windows_credential_path(n, tool["base_dir"])
+            if os.path.exists(win_cred_path):
                 try:
-                    for log_file in sorted(os.listdir(log_dir), reverse=True):
-                        if log_file.startswith("cli-") and log_file.endswith(".log"):
-                            log_path = os.path.join(log_dir, log_file)
-                            with open(log_path, "r", errors="ignore") as lf:
-                                for line in lf:
-                                    if "email=" in line:
-                                        parts = line.split("email=")
-                                        if len(parts) > 1:
-                                            email = parts[1].split()[0].strip().rstrip(",")
-                                            break
-                            if email not in ("(no login)", "logged in"):
-                                break
-                except Exception:
-                    pass
-                    
-        if email in ("(no login)", "logged in") and has_token:
-            email = "logged in"
-
+                    _, account = decode_windows_agy_credential(win_cred_path)
+                    has_token = True
+                    token_state = "valid"
+                    email = account or account_email_from_google_accounts(profile_home) or "logged in"
+                except Exception as e:
+                    token_state = "invalid"
+                    email = f"invalid token: {e}"
+        elif os.path.exists(cred_path):
+            try:
+                read_wsl_agy_oauth(cred_path)
+                has_token = True
+                token_state = "valid"
+                email = account_email_from_google_accounts(profile_home) or "logged in"
+            except Exception as e:
+                token_state = "invalid"
+                email = f"invalid token: {e}"
     elif os.path.exists(cred_path):
         has_token = True
-
-        if tool_key == "agy":
-            ga_path = os.path.join(profile_home, tool["acct_file"])
-            if os.path.exists(ga_path):
-                try:
-                    with open(ga_path, "r", encoding="utf-8") as f:
-                        ga = json.load(f)
-                        email = ga.get("active", "logged in").rstrip(",")
-                except Exception:
-                    email = "logged in"
-            else:
-                email = "logged in"
+        token_state = "present"
 
     if tool_key == "codex":
         if has_token:
@@ -374,7 +390,9 @@ def get_profile_status(tool_key, n, metadata):
                     email = payload.get("email") or payload.get("https://api.openai.com/profile", {}).get("email") or "logged in"
                 elif data.get("OPENAI_API_KEY"):
                     email = "API Key"
+                token_state = "valid"
             except Exception:
+                token_state = "invalid"
                 email = "logged in"
                 
     elif tool_key == "claude":
@@ -391,7 +409,9 @@ def get_profile_status(tool_key, n, metadata):
                     email = f"Logged in ({sub})"
                 else:
                     email = "Logged in"
+                token_state = "valid"
             except Exception:
+                token_state = "invalid"
                 email = "Logged in"
                 
     label = metadata.get(tool_key, {}).get(f"p{n}", {}).get("label", "")
@@ -400,6 +420,7 @@ def get_profile_status(tool_key, n, metadata):
         "profile": f"p{n}",
         "email": email,
         "has_token": has_token,
+        "token_state": token_state,
         "label": label,
         "home": profile_home
     }
@@ -417,7 +438,7 @@ def print_status_table(tool_key, statuses):
     print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16} Home")
     print("-" * 96)
     for status in statuses:
-        token = "yes" if status["has_token"] else "no"
+        token = status.get("token_state") or ("yes" if status["has_token"] else "no")
         label = status["label"] or ""
         print(f"{status['profile']:<8} {status['email']:<32} {token:<8} {label:<16} {status['home']}")
 
@@ -453,11 +474,34 @@ def cmd_status(args):
 
 def run_cli_tool(tool_key, n, extra_args=None):
     tool = TOOLS[tool_key]
+    extra_args = extra_args or []
+    if os.name == "nt" and tool_key == "agy":
+        switcher = os.path.join(tool["base_dir"], "agy-multiaccount.ps1")
+        if not os.path.exists(switcher):
+            print_error(f"Windows agy launch requires Credential Manager switcher: {switcher}")
+            return EXIT_NOT_FOUND
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if powershell is None:
+            print_error("PowerShell is required for Windows agy Credential Manager switching")
+            return EXIT_NOT_FOUND
+        os.makedirs(profile_home(tool_key, n), exist_ok=True)
+        quoted_args = " ".join(shlex.quote(arg) for arg in extra_args)
+        command = (
+            f"& {shlex.quote(switcher)} Set-AgyCred {n}; "
+            f"$env:USERPROFILE={shlex.quote(profile_home(tool_key, n))}; "
+            f"$env:HOME=$env:USERPROFILE; "
+            f"& {shlex.quote(tool['cmd'])}"
+        )
+        if quoted_args:
+            command = f"{command} {quoted_args}"
+        completed = subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        return completed.returncode
+
     if shutil.which(tool["cmd"]) is None:
         print_error(f"{tool['cmd']} CLI is not installed or not in PATH")
         return EXIT_NOT_FOUND
     os.makedirs(profile_home(tool_key, n), exist_ok=True)
-    cmd = [tool["cmd"]] + (extra_args or [])
+    cmd = [tool["cmd"]] + extra_args
     logging.info(f"Launching {tool_key} profile p{n}: {' '.join(cmd)}")
     try:
         completed = subprocess.run(cmd, env=make_tool_env(tool_key, n))
@@ -498,14 +542,7 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
     dest_dir = profile_home(tool_key, n)
     dest_file = credential_path(tool_key, n)
     if tool_key == "agy":
-        with open(source, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-        blob_data = base64.b64decode(data["BlobBase64"]).decode("utf-8")
-        write_text_atomic(dest_file, blob_data)
-        email = data.get("Account")
-        if email:
-            acct_file_path = os.path.join(dest_dir, tool["acct_file"])
-            write_json_atomic(acct_file_path, {"active": email})
+        dest_file = import_windows_agy_credential(source, n)
     else:
         ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
@@ -561,19 +598,7 @@ def export_credential_file(tool_key, profile_num, to_path=None):
     if tool_key == "agy":
         if dest_file is None:
             dest_file = os.path.join(export_dir, f"cred-p{profile_num}-exported.json")
-        with open(src_file, "r", encoding="utf-8") as f:
-            token_data = f.read()
-        payload = {
-            "Target": "gemini:antigravity",
-            "Type": 1,
-            "Persist": 2,
-            "Flags": 0,
-            "UserName": "antigravity",
-            "Account": status["email"] if status["email"] != "logged in" else None,
-            "BlobBase64": base64.b64encode(token_data.encode("utf-8")).decode("utf-8"),
-            "SavedAt": datetime.now().isoformat(),
-        }
-        write_json_atomic(dest_file, payload)
+        export_wsl_agy_credential(profile_num, dest_file)
     else:
         if dest_file is None:
             dest_file = os.path.join(export_dir, f"{tool_key}-p{profile_num}-exported.json")
@@ -643,17 +668,77 @@ def clear_profile_data(tool_key, n):
     return home
 
 def resolve_sync_bases(direction):
+    override_wsl = os.environ.get("AI_MAN_WSL_HOME")
+    override_win = os.environ.get("AI_MAN_WINDOWS_HOME")
     if os.name == "nt":
-        win_home = Path(os.environ.get("USERPROFILE", r"C:\Users\Oliver"))
-        wsl_home = Path(r"\\wsl.localhost\Ubuntu\home\olivercromwell")
-        if not wsl_home.exists():
+        win_home = Path(override_win or os.environ.get("USERPROFILE", r"C:\Users\Oliver"))
+        if override_wsl:
+            wsl_home = Path(override_wsl)
+        else:
+            wsl_home = Path(r"\\wsl.localhost\Ubuntu\home\olivercromwell")
+        if not override_wsl and not wsl_home.exists():
             wsl_home = Path(r"\\wsl$\Ubuntu\home\olivercromwell")
     else:
-        wsl_home = Path(os.path.expanduser("~"))
-        win_home = Path(f"/mnt/c/Users/{find_windows_user()}")
+        wsl_home = Path(override_wsl or os.path.expanduser("~"))
+        win_home = Path(override_win or f"/mnt/c/Users/{find_windows_user()}")
     src_base = wsl_home if direction == "wsl" else win_home
     dst_base = win_home if direction == "wsl" else wsl_home
     return src_base, dst_base
+
+def count_files_under(path):
+    total = 0
+    if not path.exists():
+        return total
+    for _, _, files in os.walk(path):
+        total += len(files)
+    return total
+
+def profile_number_from_dir_name(name):
+    if name.startswith("p") and name[1:].isdigit():
+        return int(name[1:])
+    return None
+
+def is_windows_agy_backup_name(name):
+    return name.startswith("cred-p") and name.endswith(".json") and name[6:-5].isdigit()
+
+def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=False):
+    converted = 0
+    src_agy = Path(src_base) / "agy-homes"
+    dst_agy = Path(dst_base) / "agy-homes"
+    if not src_agy.exists():
+        return converted
+
+    if direction == "wsl":
+        for profile_dir in src_agy.iterdir():
+            if not profile_dir.is_dir():
+                continue
+            n = profile_number_from_dir_name(profile_dir.name)
+            if n is None:
+                continue
+            token_path = profile_dir / ".gemini" / "oauth_creds.json"
+            if not token_path.exists():
+                continue
+            token_data = read_wsl_agy_oauth(str(token_path))
+            account = account_email_from_google_accounts(str(profile_dir))
+            dest = dst_agy / f"cred-p{n}.json"
+            converted += 1
+            if not dry_run:
+                write_json_atomic(str(dest), build_windows_agy_credential(token_data, account))
+    else:
+        for cred_path in src_agy.glob("cred-p*.json"):
+            stem = cred_path.stem
+            num_text = stem[6:]
+            if not num_text.isdigit():
+                continue
+            n = int(num_text)
+            token_data, account = decode_windows_agy_credential(str(cred_path))
+            dest_profile = dst_agy / f"p{n}"
+            converted += 1
+            if not dry_run:
+                write_json_atomic(str(dest_profile / ".gemini" / "oauth_creds.json"), token_data)
+                if account:
+                    write_json_atomic(str(dest_profile / ".gemini" / "google_accounts.json"), {"active": account})
+    return converted
 
 def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     dirs_to_sync = ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"]
@@ -666,11 +751,14 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     if not dst_base.exists():
         raise FileNotFoundError(f"destination path not found: {dst_base}")
     copied = 0
+    would_delete = 0
     for name in dirs_to_sync:
         src = src_base / name
         dst = dst_base / name
         if not src.exists():
             continue
+        if hard_mode and dst.exists():
+            would_delete += count_files_under(dst)
         if hard_mode and dst.exists() and not dry_run:
             shutil.rmtree(dst)
         if not dry_run:
@@ -681,6 +769,8 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
             if not dry_run:
                 (dst / rel_root).mkdir(parents=True, exist_ok=True)
             for file_name in files:
+                if direction == "windows" and name == "agy-homes" and is_windows_agy_backup_name(file_name):
+                    continue
                 src_file = Path(root) / file_name
                 if src_file.is_symlink():
                     continue
@@ -690,11 +780,12 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
                     if not dry_run:
                         dst_file.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_file, dst_file)
-    return copied
+    converted = sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
+    return {"files": copied, "converted": converted, "would_delete": would_delete}
 
 def cmd_sync(args):
     try:
-        copied = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
+        result = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
     except PermissionError as e:
         print_error(str(e))
         return EXIT_USAGE
@@ -705,7 +796,11 @@ def cmd_sync(args):
         print_error(f"sync failed: {e}")
         return EXIT_RUNTIME
     action = "Would update" if args.dry_run else "Updated"
-    print(f"{action} {copied} files ({args.source} -> {'windows' if args.source == 'wsl' else 'wsl'}, {args.mode})")
+    print(
+        f"{action} {result['files']} files and {result['converted']} agy credentials "
+        f"({args.source} -> {'windows' if args.source == 'wsl' else 'wsl'}, {args.mode}); "
+        f"hard-delete preflight: {result['would_delete']} files"
+    )
     return EXIT_OK
 
 def print_header(title=""):
@@ -1109,30 +1204,7 @@ def sync_profiles():
     clear_screen()
     print_header("SYNC PROFILES (WSL <-> WINDOWS)")
     print()
-    
-    DIRS_TO_SYNC = ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"]
-    
-    if os.name == 'nt':
-        win_home = Path(os.environ.get("USERPROFILE", r"C:\Users\Oliver"))
-        wsl_home = Path(r"\\wsl.localhost\Ubuntu\home\olivercromwell")
-        # Fallback if wsl.localhost doesn't work
-        if not wsl_home.exists():
-            wsl_home = Path(r"\\wsl$\Ubuntu\home\olivercromwell")
-    else:
-        wsl_home = Path(os.path.expanduser("~"))
-        win_user = find_windows_user()
-        win_home = Path(f"/mnt/c/Users/{win_user}")
-        
-    if not wsl_home.exists():
-        print(f"{CLR_RED}Error: Cannot access WSL path: {wsl_home}{CLR_RESET}")
-        input("\nPress Enter to return...")
-        return
-        
-    if not win_home.exists():
-        print(f"{CLR_RED}Error: Cannot access Windows path: {win_home}{CLR_RESET}")
-        input("\nPress Enter to return...")
-        return
-        
+
     options = [
         "1. [SOFT] WSL -> Windows (Update newer files only)",
         "2. [SOFT] Windows -> WSL (Update newer files only)",
@@ -1147,107 +1219,43 @@ def sync_profiles():
         
     is_hard = sel in (2, 3)
     is_wsl_to_win = sel in (0, 2)
+    direction = "wsl" if is_wsl_to_win else "windows"
+    mode = "hard" if is_hard else "soft"
+    src_base, dst_base = resolve_sync_bases(direction)
     
     clear_screen()
     print_header("SYNCHRONIZING...")
     print()
-    
-    src_base = wsl_home if is_wsl_to_win else win_home
-    dst_base = win_home if is_wsl_to_win else wsl_home
-    
+
     print(f"Mode:  {'HARD (Mirror)' if is_hard else 'SOFT (Incremental)'}")
     print(f"Source: {src_base}")
     print(f"Dest:   {dst_base}\n")
-    
+
     if is_hard:
+        try:
+            preflight = sync_profiles_noninteractive(direction, mode, dry_run=True, yes=True)
+            print(f"Hard-delete preflight: {preflight['would_delete']} destination files would be removed.")
+        except Exception as e:
+            print(f"{CLR_RED}Preflight failed: {e}{CLR_RESET}")
+            input("\nPress Enter to return...")
+            return
         print(f"{CLR_RED}WARNING: Hard sync will DELETE extra files in Dest that are not in Source.{CLR_RESET}")
         confirm = input("Type 'yes' to proceed: ").strip().lower()
         if confirm != 'yes':
             print("Operation cancelled.")
             input("\nPress Enter to return...")
             return
-            
-    logging.info(f"Starting sync. Mode: {'HARD' if is_hard else 'SOFT'}, Source: {src_base}, Dest: {dst_base}")
-    
-    def sync_dir(src: Path, dst: Path, hard_mode: bool):
-        if not src.exists():
-            return
-        
-        # Hard sync: remove destination first to ensure exact mirror
-        if hard_mode and dst.exists():
-            try:
-                shutil.rmtree(dst, ignore_errors=True)
-                logging.info(f"Hard sync: Cleared destination {dst}")
-            except Exception as e:
-                logging.error(f"Hard sync clear failed for {dst}: {e}")
-                print(f"{CLR_RED}Failed to clear {dst}: {e}{CLR_RESET}")
-                
-        dst.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        scanned_dirs = 0
-        for root, dirs, files in os.walk(src):
-            scanned_dirs += 1
-            # Exclude heavy/unnecessary directories to speed up network sync
-            dirs[:] = [d for d in dirs if d not in ('cache', 'log', '.tempmediaStorage', '.venv', 'node_modules')]
-            
-            print(f"\r  -> Scanning dir #{scanned_dirs}: {Path(root).name[:40]:<40}", end="", flush=True)
-            
-            # Ensure the directory itself is created even if it has no files
-            rel_root = Path(root).relative_to(src)
-            (dst / rel_root).mkdir(parents=True, exist_ok=True)
-            
-            for file in files:
-                src_file = Path(root) / file
-                rel_path = src_file.relative_to(src)
-                dst_file = dst / rel_path
-                dst_file.parent.mkdir(parents=True, exist_ok=True)
-                
-                try:
-                    if src_file.is_symlink():
-                        continue
-                        
-                    if not src_file.exists():
-                        continue
-                        
-                    if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
-                        shutil.copy2(src_file, dst_file)
-                        copied += 1
-                except FileNotFoundError:
-                    pass
-                except Exception as e:
-                    if not str(src_file).endswith(".log"):
-                        logging.warning(f"Failed to copy {rel_path}: {e}")
-                        # Don't print to avoid breaking the carriage return progress bar
-                        
-        print("\r" + " " * 80 + "\r", end="", flush=True) # Clear progress line
-        if copied > 0:
-            logging.info(f"Synced {src.name}: {copied} files {'mirrored' if hard_mode else 'updated'}.")
-            print(f"{CLR_GREEN}Synced {src.name}: {copied} files {'mirrored' if hard_mode else 'updated'}.{CLR_RESET}")
-            
-    for d in DIRS_TO_SYNC:
-        print(f"Scanning {d}...")
-        sync_dir(src_base / d, dst_base / d, is_hard)
-        
-    # Generate Windows credentials directly after sync
-    if is_wsl_to_win:
-        print("Finalizing profile credentials...")
-        src_agy = src_base / "agy-homes"
-        dst_agy = dst_base / "agy-homes"
-        if src_agy.exists():
-            for d in os.listdir(src_agy):
-                if d.startswith("p") and d[1:].isdigit():
-                    token_path = src_agy / d / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
-                    win_cred_path = dst_agy / f"cred-{d}.json"
-                    profile_home = src_agy / d
-                    if token_path.exists():
-                        generate_win_cred_from_linux_token(
-                            str(token_path), 
-                            str(win_cred_path), 
-                            str(profile_home), 
-                            TOOLS["agy"]
-                        )
-                        
-    logging.info("Sync completed successfully.")
+
+    try:
+        result = sync_profiles_noninteractive(direction, mode, dry_run=False, yes=True)
+    except Exception as e:
+        logging.error(f"Sync failed: {e}")
+        print(f"{CLR_RED}Sync failed: {e}{CLR_RESET}")
+        input("\nPress Enter to return...")
+        return
+
+    logging.info(f"Sync completed successfully: {result}")
+    print(f"{CLR_GREEN}Updated {result['files']} files and converted {result['converted']} agy credentials.{CLR_RESET}")
     print(f"\n{CLR_CYAN}Sync Complete!{CLR_RESET}")
     input("\nPress Enter to return...")
 

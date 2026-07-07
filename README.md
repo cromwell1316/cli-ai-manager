@@ -144,6 +144,21 @@ codex  -> CODEX_HOME
 claude -> CLAUDE_CONFIG_DIR
 ```
 
+For `agy`, Windows and WSL use different authoritative credential files:
+
+```text
+WSL profile token      -> ~/agy-homes/pN/.gemini/oauth_creds.json
+Windows token backup  -> %USERPROFILE%\agy-homes\cred-pN.json
+Windows live slot     -> Credential Manager target gemini:antigravity
+```
+
+Importing an `agy` Windows `cred-pN.json` decodes `BlobBase64` and writes the
+WSL OAuth JSON file. Exporting an `agy` WSL profile wraps
+`.gemini/oauth_creds.json` into a Windows backup JSON with target
+`gemini:antigravity`. Sync performs the same conversion in the selected
+direction; it does not mutate the live Windows Credential Manager slot during
+dry-run validation.
+
 Credential formats and Windows/WSL parity are tracked in:
 
 ```text

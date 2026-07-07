@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H03_Windows_WSL_Profile_Parity_And_Verifica
 Lifecycle: living
 Document Class: acceptance matrix
 
-Status: planned.
+Status: implemented.
 
 | Phase | Acceptance Evidence |
 | --- | --- |
