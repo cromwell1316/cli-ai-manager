@@ -17,6 +17,7 @@ The supported local interface is `profile_manager.py`, installed as `ai-man`,
 - Export credentials back to Windows-friendly files.
 - Label profiles for easier identification.
 - View profile status and token presence.
+- Probe per-profile quota through the native agent CLI.
 - Sync profile folders between WSL and Windows.
 
 ## Installation
@@ -50,6 +51,8 @@ Use direct commands for the fastest path and for scripts:
 ai-man list agy
 ai-man list codex --json
 ai-man status claude p1
+ai-man status codex p1 --quota --json
+ai-man quota codex p1 --json
 ai-man launch agy p2 -- --help
 ai-man login codex p3
 ai-man import agy /mnt/c/Users/Oliver/agy-homes/cred-p1.json p1
@@ -62,8 +65,9 @@ ai-man sync --from wsl --mode soft
 Command grammar:
 
 ```text
-ai-man list <tool> [--json]
-ai-man status <tool> <profile> [--json]
+ai-man list <tool> [--json] [--quota] [--timeout seconds]
+ai-man status <tool> <profile> [--json] [--quota] [--timeout seconds]
+ai-man quota <tool> <profile> [--json] [--timeout seconds]
 ai-man launch <tool> <profile> [-- args...]
 ai-man login <tool> [profile]
 ai-man import <tool> <path> [profile]
@@ -88,6 +92,14 @@ Exit codes:
 ```
 
 `clear` refuses to delete a profile unless `--yes` is supplied.
+
+Quota probing uses a PTY and the native CLI for each profile, because these
+agents render usage data only in terminal mode. The default quota commands are
+`/usage` for `agy`, `/status` for `codex`, and `/usage` for `claude`; override
+them with `AI_MAN_AGY_QUOTA_COMMAND`, `AI_MAN_CODEX_QUOTA_COMMAND`, or
+`AI_MAN_CLAUDE_QUOTA_COMMAND` if a local CLI version changes its command. If a
+profile is logged out, the quota payload reports `auth_required` or `no_token`
+instead of returning partial numbers.
 
 ## Interactive Selector
 

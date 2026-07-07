@@ -47,6 +47,7 @@ from cli_profile_manager.paths import (
     refresh_from_env as core_refresh_paths_from_env,
     resolve_sync_bases as core_resolve_sync_bases,
 )
+from cli_profile_manager.quota import quota_payload as core_quota_payload
 from cli_profile_manager.sync import (
     deletion_preflight_paths as core_deletion_preflight_paths,
     is_windows_agy_backup_name as core_is_windows_agy_backup_name,
@@ -321,6 +322,32 @@ def status_payload(tool_key, n, metadata=None):
     status["exists"] = n in get_occupied_profiles(tool_key)
     return status
 
+def quota_payload(tool_key, n, timeout_seconds=None):
+    tool = TOOLS[tool_key]
+    home = profile_home(tool_key, n)
+    command = [tool["cmd"]]
+    timeout = timeout_seconds if timeout_seconds is not None else 20
+    return core_quota_payload(
+        tool_key,
+        f"p{n}",
+        command,
+        make_tool_env(tool_key, n),
+        home,
+        timeout_seconds=timeout,
+    )
+
+def status_payload_with_quota(tool_key, n, metadata=None, timeout_seconds=None):
+    status = status_payload(tool_key, n, metadata)
+    if status["has_token"]:
+        status["quota"] = quota_payload(tool_key, n, timeout_seconds)["quota"]
+    else:
+        status["quota"] = {
+            "state": "no_token",
+            "limits": {},
+            "warnings": ["profile has no token"],
+        }
+    return status
+
 def print_error(message):
     print(f"Error: {message}", file=sys.stderr)
 
@@ -337,18 +364,38 @@ def print_json_error(message, code, error_type="runtime_error"):
         },
     })
 
+def quota_summary(status):
+    quota = status.get("quota")
+    if not quota:
+        return ""
+    state = quota.get("state", "unknown")
+    if state != "available":
+        return state
+    parts = []
+    for name, data in quota.get("limits", {}).items():
+        value = data.get("percent_left", data.get("percent"))
+        if value is not None:
+            parts.append(f"{name}:{value}%")
+    return ", ".join(parts) or state
+
 def print_status_table(tool_key, statuses):
-    print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16} Home")
-    print("-" * 96)
+    has_quota = any("quota" in status for status in statuses)
+    quota_header = f" {'Quota':<24}" if has_quota else ""
+    print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16}{quota_header} Home")
+    print("-" * (121 if has_quota else 96))
     for status in statuses:
         token = status.get("token_state") or ("yes" if status["has_token"] else "no")
         label = status["label"] or ""
-        print(f"{status['profile']:<8} {status['email']:<32} {token:<8} {label:<16} {status['home']}")
+        quota = f" {quota_summary(status):<24}" if has_quota else ""
+        print(f"{status['profile']:<8} {status['email']:<32} {token:<8} {label:<16}{quota} {status['home']}")
 
 def cmd_list(args):
     metadata = load_metadata()
     profiles = get_display_profiles(args.tool)
-    statuses = [status_payload(args.tool, n, metadata) for n in profiles]
+    if args.quota:
+        statuses = [status_payload_with_quota(args.tool, n, metadata, args.timeout) for n in profiles]
+    else:
+        statuses = [status_payload(args.tool, n, metadata) for n in profiles]
     payload = {
         "tool": args.tool,
         "next_profile": f"p{first_free_profile(args.tool)}",
@@ -371,11 +418,41 @@ def cmd_status(args):
         else:
             print_error(str(e))
         return EXIT_USAGE
-    status = status_payload(args.tool, n)
+    if args.quota:
+        status = status_payload_with_quota(args.tool, n, timeout_seconds=args.timeout)
+    else:
+        status = status_payload(args.tool, n)
     if args.json:
         print_json_payload(status)
     else:
         print_status_table(args.tool, [status])
+    return EXIT_OK
+
+def cmd_quota(args):
+    try:
+        n = parse_profile(args.profile)
+    except ValueError as e:
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
+        return EXIT_USAGE
+    status = status_payload(args.tool, n)
+    if not status["has_token"]:
+        message = f"profile p{n} has no token; use login or import first"
+        if args.json:
+            print_json_error(message, EXIT_NO_TOKEN, "no_token")
+        else:
+            print_error(message)
+        return EXIT_NO_TOKEN
+    payload = quota_payload(args.tool, n, args.timeout)
+    if args.json:
+        print_json_payload(payload)
+    else:
+        state = payload["quota"].get("state", "unknown")
+        print(f"{args.tool} p{n} quota: {quota_summary({'quota': payload['quota']}) or state}")
+        for warning in payload["quota"].get("warnings", []):
+            print(f"warning: {warning}")
     return EXIT_OK
 
 def run_cli_tool(tool_key, n, extra_args=None):
@@ -781,13 +858,24 @@ def build_parser():
     list_p = sub.add_parser("list", help="list profiles for a tool")
     list_p.add_argument("tool", choices=TOOLS.keys())
     list_p.add_argument("--json", action="store_true")
+    list_p.add_argument("--quota", action="store_true", help="probe each profile CLI through a PTY and include quota")
+    list_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout per profile in seconds")
     list_p.set_defaults(func=cmd_list)
 
     status_p = sub.add_parser("status", help="show one profile status")
     status_p.add_argument("tool", choices=TOOLS.keys())
     status_p.add_argument("profile")
     status_p.add_argument("--json", action="store_true")
+    status_p.add_argument("--quota", action="store_true", help="probe the profile CLI through a PTY and include quota")
+    status_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout in seconds")
     status_p.set_defaults(func=cmd_status)
+
+    quota_p = sub.add_parser("quota", help="probe one profile quota through its native CLI")
+    quota_p.add_argument("tool", choices=TOOLS.keys())
+    quota_p.add_argument("profile")
+    quota_p.add_argument("--json", action="store_true")
+    quota_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout in seconds")
+    quota_p.set_defaults(func=cmd_quota)
 
     launch_p = sub.add_parser("launch", help="launch a CLI under an existing profile")
     launch_p.add_argument("tool", choices=TOOLS.keys())

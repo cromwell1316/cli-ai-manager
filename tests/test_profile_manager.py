@@ -82,6 +82,52 @@ def test_status_detection_reports_source_state_account_and_warnings(monkeypatch,
     assert claude["warnings"]
 
 
+def test_quota_parsers_extract_agent_specific_limits():
+    from cli_profile_manager.quota import parse_quota
+
+    codex = parse_quota("codex", "5h limit: [###] 82% left resets 03:12\nweekly 64% left")
+    claude = parse_quota("claude", "Claude Code /usage\nSession usage 41% remaining resets in 2h\nWeekly 77%")
+    agy = parse_quota("agy", "Gemini usage\nDaily limit 35% remaining resets tomorrow")
+
+    assert codex["state"] == "available"
+    assert codex["limits"]["five_hour"]["percent_left"] == 82
+    assert codex["limits"]["weekly"]["percent_left"] == 64
+    assert claude["state"] == "available"
+    assert claude["limits"]["session"]["percent"] == 41
+    assert claude["limits"]["weekly"]["percent"] == 77
+    assert agy["state"] == "available"
+    assert agy["limits"]["daily"]["percent"] == 35
+
+
+def test_status_payload_can_include_quota_without_real_cli(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    codex_auth = tmp_path / "codex-homes" / "p1" / "auth.json"
+    write_json(codex_auth, {"OPENAI_API_KEY": "sk-test"})
+
+    def fake_quota(tool_key, profile_name, command, env, cwd, timeout_seconds=20):
+        assert tool_key == "codex"
+        assert profile_name == "p1"
+        assert command == ["codex"]
+        assert env["CODEX_HOME"] == str(tmp_path / "codex-homes" / "p1")
+        return {
+            "tool": tool_key,
+            "profile": profile_name,
+            "quota": {
+                "state": "available",
+                "limits": {"five_hour": {"percent_left": 82}},
+            },
+        }
+
+    import cli_profile_manager.cli as cli
+
+    monkeypatch.setattr(cli, "core_quota_payload", fake_quota)
+
+    status = pm.status_payload_with_quota("codex", 1, {})
+
+    assert status["quota"]["state"] == "available"
+    assert status["quota"]["limits"]["five_hour"]["percent_left"] == 82
+
+
 def test_agy_windows_wsl_conversion_round_trips(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     token = {"refresh_token": "secret", "scope": "email"}
