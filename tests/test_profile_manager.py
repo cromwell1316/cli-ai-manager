@@ -130,6 +130,9 @@ def test_sync_dry_run_json_shape_and_hard_delete_preflight(monkeypatch, tmp_path
     assert str(windows / "codex-homes" / "p9" / "auth.json") in result["delete_paths"]
     assert not (windows / "agy-homes" / "cred-p1.json").exists()
 
+    with pytest.raises(PermissionError):
+        pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=False)
+
 
 def test_direct_command_exit_codes_and_json_errors(monkeypatch, tmp_path):
     env = os.environ.copy()
@@ -152,6 +155,81 @@ def test_direct_command_exit_codes_and_json_errors(monkeypatch, tmp_path):
     payload = json.loads(completed.stdout)
     assert payload["ok"] is False
     assert payload["error"]["code"] == 2
+
+
+def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+    source = tmp_path / "source-auth.json"
+    write_json(source, {"OPENAI_API_KEY": "sk-test"})
+
+    imported = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "profile_manager.py"),
+            "import",
+            "codex",
+            str(source),
+            "p1",
+            "--dry-run",
+            "--json",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert imported.returncode == 0
+    import_payload = json.loads(imported.stdout)
+    assert import_payload["ok"] is True
+    assert import_payload["dry_run"] is True
+    assert import_payload["would_import"] is True
+    assert not (tmp_path / "codex-homes" / "p1" / "auth.json").exists()
+
+    write_json(tmp_path / "codex-homes" / "p1" / "auth.json", {"OPENAI_API_KEY": "sk-test"})
+    export_path = tmp_path / "out" / "auth.json"
+    exported = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "profile_manager.py"),
+            "export",
+            "codex",
+            "p1",
+            "--to",
+            str(export_path),
+            "--dry-run",
+            "--json",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert exported.returncode == 0
+    export_payload = json.loads(exported.stdout)
+    assert export_payload["ok"] is True
+    assert export_payload["dry_run"] is True
+    assert export_payload["would_export"] is True
+    assert not export_path.exists()
+
+
+def test_core_modules_are_importable_without_terminal_helpers():
+    from cli_profile_manager import metadata, paths, sync
+    from cli_profile_manager.credentials import agy, claude, codex
+
+    assert paths.parse_profile("p1") == 1
+    assert metadata.load_metadata() == {}
+    assert sync.profile_number_from_dir_name("p2") == 2
+    assert agy.WINDOWS_TARGET == "gemini:antigravity"
+    assert callable(codex.account_from_auth)
+    assert callable(claude.account_summary)
 
 
 def test_launch_flags_after_profile_are_normalized_before_tool_args(monkeypatch, tmp_path):
