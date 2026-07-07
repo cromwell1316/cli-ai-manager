@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H02_Keyboard_First_Profile_Command_Surface/
 Lifecycle: living
 Document Class: phase verification
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -20,6 +20,8 @@ python3 profile_manager.py status agy p1
 - Empty temporary `agy-homes` returns next profile `p1`.
 - Existing `p1` and `p3` return next profile `p2`.
 - Invalid `p0`, `p-1`, and `abc` are rejected.
+- Temporary stores use `AI_MAN_AGY_HOME` and `AI_MAN_METADATA_DIR` so real
+  profile data is not modified.
 
 ## Pass Criteria
 

@@ -42,7 +42,52 @@ Ensure `~/.local/bin` is in your shell `PATH`, then run:
 ai-man
 ```
 
-## Usage
+## Direct Commands
+
+Use direct commands for the fastest path and for scripts:
+
+```bash
+ai-man list agy
+ai-man list codex --json
+ai-man status claude p1
+ai-man launch agy p2 -- --help
+ai-man login codex p3
+ai-man import agy /mnt/c/Users/Oliver/agy-homes/cred-p1.json p1
+ai-man export codex p1 --to /mnt/c/Users/Oliver/Downloads
+ai-man label claude p1 work
+ai-man clear agy p4
+ai-man sync --from wsl --mode soft
+```
+
+Command grammar:
+
+```text
+ai-man list <tool> [--json]
+ai-man status <tool> <profile> [--json]
+ai-man launch <tool> <profile> [-- args...]
+ai-man login <tool> [profile]
+ai-man import <tool> <path> [profile]
+ai-man export <tool> <profile> [--to path]
+ai-man label <tool> <profile> <label>
+ai-man clear <tool> <profile>
+ai-man sync [--from wsl|windows] [--mode soft|hard] [--dry-run] [--yes]
+```
+
+Supported tools are `agy`, `codex`, and `claude`. Profiles accept `pN` or `N`.
+When a command creates or imports into a profile and no profile is supplied, it
+uses the first free positive profile number.
+
+Exit codes:
+
+```text
+0 success
+2 invalid command or profile
+3 missing file, tool executable, source, or destination
+4 profile has no token for a token-required operation
+5 runtime failure
+```
+
+## Interactive Selector
 
 Launching `ai-man` opens the keyboard selector:
 
@@ -52,6 +97,21 @@ Launching `ai-man` opens the keyboard selector:
 [3] Anthropic Claude CLI
 [4] Sync Profiles (WSL <-> Windows)
 [x] Exit
+```
+
+Keys:
+
+```text
+digits  select visible item
+arrows  move selection
+Enter   confirm or launch
+a       add/login
+i       import
+e       export
+l       label
+s       status
+c       clear
+q/Esc   back or exit
 ```
 
 Inside each tool manager you can:
@@ -90,10 +150,14 @@ management/horizons/H03_Windows_WSL_Profile_Parity_And_Verification
 
 ## Verification
 
-Run the H01 checks after changing supported runtime files:
+Run the command-surface checks after changing supported runtime files:
 
 ```bash
 python3 -m py_compile profile_manager.py
+python3 profile_manager.py --help
+python3 profile_manager.py list agy --json
+python3 profile_manager.py list codex --json
+python3 profile_manager.py list claude --json
 ./scripts/verify_no_tui_surface.sh
 ```
 

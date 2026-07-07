@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H02_Keyboard_First_Profile_Command_Surface/
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: implemented.
 
 ## Scope
 

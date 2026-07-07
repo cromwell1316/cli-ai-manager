@@ -5,6 +5,8 @@ import os
 import sys
 import json
 import base64
+import argparse
+import glob
 import subprocess
 import termios
 import tty
@@ -24,15 +26,21 @@ logging.basicConfig(
 )
 
 # Base configuration paths
-METADATA_DIR = os.path.expanduser("~/.config/cli-profile-manager")
+METADATA_DIR = os.path.expanduser(os.environ.get("AI_MAN_METADATA_DIR", "~/.config/cli-profile-manager"))
 METADATA_PATH = os.path.join(METADATA_DIR, "profiles_metadata.json")
+DISPLAY_SLOT_COUNT = 12
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_NOT_FOUND = 3
+EXIT_NO_TOKEN = 4
+EXIT_RUNTIME = 5
 
 # Tool configurations
 TOOLS = {
     "agy": {
         "name": "Antigravity CLI (agy)",
         "env_var": "HOME",
-        "base_dir": os.path.expanduser("~/agy-homes"),
+        "base_dir": os.path.expanduser(os.environ.get("AI_MAN_AGY_HOME", "~/agy-homes")),
         "cmd": "agy",
         "cred_file": os.path.join(".gemini", "antigravity-cli", "antigravity-oauth-token"),
         "acct_file": os.path.join(".gemini", "google_accounts.json"),
@@ -41,7 +49,7 @@ TOOLS = {
     "codex": {
         "name": "OpenAI Codex CLI",
         "env_var": "CODEX_HOME",
-        "base_dir": os.path.expanduser("~/codex-homes"),
+        "base_dir": os.path.expanduser(os.environ.get("AI_MAN_CODEX_HOME", "~/codex-homes")),
         "cmd": "codex",
         "cred_file": "auth.json",
         "acct_file": None,
@@ -50,7 +58,7 @@ TOOLS = {
     "claude": {
         "name": "Anthropic Claude CLI",
         "env_var": "CLAUDE_CONFIG_DIR",
-        "base_dir": os.path.expanduser("~/claude-homes"),
+        "base_dir": os.path.expanduser(os.environ.get("AI_MAN_CLAUDE_HOME", "~/claude-homes")),
         "cmd": "claude",
         "cred_file": ".credentials.json",
         "acct_file": None,
@@ -117,6 +125,9 @@ def save_metadata(data):
         print(f"Error saving metadata: {e}")
 
 def get_profiles(tool_key):
+    return get_occupied_profiles(tool_key)
+
+def get_occupied_profiles(tool_key):
     base_dir = TOOLS[tool_key]["base_dir"]
     if not os.path.exists(base_dir):
         os.makedirs(base_dir, exist_ok=True)
@@ -130,14 +141,88 @@ def get_profiles(tool_key):
             num_part = d[6:-5]
             if num_part.isdigit():
                 profiles.add(int(num_part))
-    
-    # Guarantee at least 1..12 are available/listed
-    for i in range(1, 13):
-        profiles.add(i)
-            
+
     profiles = list(profiles)
     profiles.sort()
     return profiles
+
+def get_display_profiles(tool_key):
+    profiles = set(get_occupied_profiles(tool_key))
+    profiles.update(range(1, DISPLAY_SLOT_COUNT + 1))
+    result = list(profiles)
+    result.sort()
+    return result
+
+def first_free_profile(tool_key):
+    occupied = set(get_occupied_profiles(tool_key))
+    n = 1
+    while n in occupied:
+        n += 1
+    return n
+
+def parse_profile(value):
+    raw = str(value).strip().lower()
+    if raw.startswith("p"):
+        raw = raw[1:]
+    if not raw.isdigit():
+        raise ValueError(f"invalid profile '{value}': expected pN with a positive integer")
+    num = int(raw)
+    if num <= 0:
+        raise ValueError(f"invalid profile '{value}': profile number must be positive")
+    return num
+
+def is_valid_display_profile(tool_key, n):
+    return n in get_display_profiles(tool_key)
+
+def ensure_parent(path):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+def normalize_credential_path(tool_key, cred_file):
+    cred_file = cred_file.strip()
+    if (cred_file.startswith('"') and cred_file.endswith('"')) or (cred_file.startswith("'") and cred_file.endswith("'")):
+        cred_file = cred_file[1:-1]
+    if len(cred_file) >= 3 and cred_file[1:3] == ":\\":
+        drive = cred_file[0].lower()
+        cred_file = f"/mnt/{drive}/" + cred_file[3:].replace("\\", "/")
+    cred_file = os.path.expanduser(cred_file)
+    if os.path.isdir(cred_file):
+        if tool_key == "codex":
+            cred_file = os.path.join(cred_file, "auth.json")
+        elif tool_key == "claude":
+            cred_file = os.path.join(cred_file, ".credentials.json")
+    return cred_file
+
+def profile_home(tool_key, n):
+    return os.path.join(TOOLS[tool_key]["base_dir"], f"p{n}")
+
+def credential_path(tool_key, n):
+    tool = TOOLS[tool_key]
+    return os.path.join(profile_home(tool_key, n), tool["cred_file"])
+
+def make_tool_env(tool_key, n):
+    tool = TOOLS[tool_key]
+    home = profile_home(tool_key, n)
+    env = os.environ.copy()
+    env[tool["env_var"]] = home
+    if tool_key == "agy":
+        env["HOME"] = home
+    return env
+
+def write_text_atomic(path, content):
+    ensure_parent(path)
+    tmp_path = f"{path}.tmp-{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp_path, path)
+
+def write_json_atomic(path, data):
+    ensure_parent(path)
+    tmp_path = f"{path}.tmp-{os.getpid()}"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, path)
 
 def generate_win_cred_from_linux_token(token_path, win_cred_path, profile_home, tool):
     try:
@@ -260,8 +345,23 @@ def get_profile_status(tool_key, n, metadata):
                     
         if email in ("(no login)", "logged in") and has_token:
             email = "logged in"
-            
-    elif tool_key == "codex":
+
+    elif os.path.exists(cred_path):
+        has_token = True
+
+        if tool_key == "agy":
+            ga_path = os.path.join(profile_home, tool["acct_file"])
+            if os.path.exists(ga_path):
+                try:
+                    with open(ga_path, "r", encoding="utf-8") as f:
+                        ga = json.load(f)
+                        email = ga.get("active", "logged in").rstrip(",")
+                except Exception:
+                    email = "logged in"
+            else:
+                email = "logged in"
+
+    if tool_key == "codex":
         if has_token:
             try:
                 with open(cred_path, "r") as f:
@@ -297,11 +397,311 @@ def get_profile_status(tool_key, n, metadata):
     label = metadata.get(tool_key, {}).get(f"p{n}", {}).get("label", "")
     return {
         "num": n,
+        "profile": f"p{n}",
         "email": email,
         "has_token": has_token,
         "label": label,
         "home": profile_home
     }
+
+def status_payload(tool_key, n, metadata=None):
+    metadata = metadata if metadata is not None else load_metadata()
+    status = get_profile_status(tool_key, n, metadata)
+    status["exists"] = n in get_occupied_profiles(tool_key)
+    return status
+
+def print_error(message):
+    print(f"Error: {message}", file=sys.stderr)
+
+def print_status_table(tool_key, statuses):
+    print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16} Home")
+    print("-" * 96)
+    for status in statuses:
+        token = "yes" if status["has_token"] else "no"
+        label = status["label"] or ""
+        print(f"{status['profile']:<8} {status['email']:<32} {token:<8} {label:<16} {status['home']}")
+
+def cmd_list(args):
+    metadata = load_metadata()
+    profiles = get_display_profiles(args.tool)
+    statuses = [status_payload(args.tool, n, metadata) for n in profiles]
+    payload = {
+        "tool": args.tool,
+        "next_profile": f"p{first_free_profile(args.tool)}",
+        "profiles": statuses,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"{TOOLS[args.tool]['name']}")
+        print(f"Next profile: {payload['next_profile']}")
+        print_status_table(args.tool, statuses)
+    return EXIT_OK
+
+def cmd_status(args):
+    try:
+        n = parse_profile(args.profile)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    if not is_valid_display_profile(args.tool, n):
+        print_error(f"profile p{n} does not exist and is outside visible slots")
+        return EXIT_USAGE
+    status = status_payload(args.tool, n)
+    if args.json:
+        print(json.dumps(status, indent=2))
+    else:
+        print_status_table(args.tool, [status])
+    return EXIT_OK
+
+def run_cli_tool(tool_key, n, extra_args=None):
+    tool = TOOLS[tool_key]
+    if shutil.which(tool["cmd"]) is None:
+        print_error(f"{tool['cmd']} CLI is not installed or not in PATH")
+        return EXIT_NOT_FOUND
+    os.makedirs(profile_home(tool_key, n), exist_ok=True)
+    cmd = [tool["cmd"]] + (extra_args or [])
+    logging.info(f"Launching {tool_key} profile p{n}: {' '.join(cmd)}")
+    try:
+        completed = subprocess.run(cmd, env=make_tool_env(tool_key, n))
+        return completed.returncode
+    except KeyboardInterrupt:
+        return 130
+
+def cmd_launch(args):
+    try:
+        n = parse_profile(args.profile)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    if not is_valid_display_profile(args.tool, n):
+        print_error(f"profile p{n} does not exist and is outside visible slots")
+        return EXIT_USAGE
+    if not status_payload(args.tool, n)["has_token"]:
+        print_error(f"profile p{n} has no token; use login or import first")
+        return EXIT_NO_TOKEN
+    return run_cli_tool(args.tool, n, args.args)
+
+def cmd_login(args):
+    try:
+        n = parse_profile(args.profile) if args.profile else first_free_profile(args.tool)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    return run_cli_tool(args.tool, n, [])
+
+def import_credential_file(tool_key, cred_file, profile_num=None):
+    tool = TOOLS[tool_key]
+    source = normalize_credential_path(tool_key, cred_file)
+    if not os.path.exists(source):
+        raise FileNotFoundError(f"file '{source}' not found")
+    n = profile_num if profile_num is not None else first_free_profile(tool_key)
+    if n <= 0:
+        raise ValueError("profile number must be positive")
+    dest_dir = profile_home(tool_key, n)
+    dest_file = credential_path(tool_key, n)
+    if tool_key == "agy":
+        with open(source, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        blob_data = base64.b64decode(data["BlobBase64"]).decode("utf-8")
+        write_text_atomic(dest_file, blob_data)
+        email = data.get("Account")
+        if email:
+            acct_file_path = os.path.join(dest_dir, tool["acct_file"])
+            write_json_atomic(acct_file_path, {"active": email})
+    else:
+        ensure_parent(dest_file)
+        tmp_path = f"{dest_file}.tmp-{os.getpid()}"
+        shutil.copy2(source, tmp_path)
+        os.replace(tmp_path, dest_file)
+    return n, dest_file
+
+def cmd_import(args):
+    try:
+        n = parse_profile(args.profile) if args.profile else None
+        imported_num, dest_file = import_credential_file(args.tool, args.path, n)
+    except FileNotFoundError as e:
+        print_error(str(e))
+        return EXIT_NOT_FOUND
+    except Exception as e:
+        print_error(f"import failed: {e}")
+        return EXIT_RUNTIME
+    print(f"Imported {args.tool} credential into p{imported_num}: {dest_file}")
+    return EXIT_OK
+
+def default_export_dir():
+    win_user = find_windows_user()
+    for candidate in (
+        f"/mnt/c/Users/{win_user}/Downloads",
+        f"/mnt/c/Users/{win_user}/Desktop",
+        "/mnt/c",
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return os.getcwd()
+
+def export_credential_file(tool_key, profile_num, to_path=None):
+    status = status_payload(tool_key, profile_num)
+    if not status["has_token"]:
+        raise PermissionError(f"profile p{profile_num} has no token to export")
+    src_file = credential_path(tool_key, profile_num)
+    if to_path:
+        to_path = os.path.expanduser(to_path)
+        if os.path.isdir(to_path):
+            export_dir = to_path
+            dest_file = None
+        else:
+            export_dir = os.path.dirname(to_path) or "."
+            dest_file = to_path
+    else:
+        export_dir = default_export_dir()
+        dest_file = None
+    os.makedirs(export_dir, exist_ok=True)
+    if tool_key == "agy":
+        if dest_file is None:
+            dest_file = os.path.join(export_dir, f"cred-p{profile_num}-exported.json")
+        with open(src_file, "r", encoding="utf-8") as f:
+            token_data = f.read()
+        payload = {
+            "Target": "gemini:antigravity",
+            "Type": 1,
+            "Persist": 2,
+            "Flags": 0,
+            "UserName": "antigravity",
+            "Account": status["email"] if status["email"] != "logged in" else None,
+            "BlobBase64": base64.b64encode(token_data.encode("utf-8")).decode("utf-8"),
+            "SavedAt": datetime.now().isoformat(),
+        }
+        write_json_atomic(dest_file, payload)
+    else:
+        if dest_file is None:
+            dest_file = os.path.join(export_dir, f"{tool_key}-p{profile_num}-exported.json")
+        ensure_parent(dest_file)
+        tmp_path = f"{dest_file}.tmp-{os.getpid()}"
+        shutil.copy2(src_file, tmp_path)
+        os.replace(tmp_path, dest_file)
+    return dest_file
+
+def cmd_export(args):
+    try:
+        n = parse_profile(args.profile)
+        dest_file = export_credential_file(args.tool, n, args.to)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    except PermissionError as e:
+        print_error(str(e))
+        return EXIT_NO_TOKEN
+    except Exception as e:
+        print_error(f"export failed: {e}")
+        return EXIT_RUNTIME
+    print(f"Exported {args.tool} p{n}: {dest_file}")
+    return EXIT_OK
+
+def label_profile(tool_key, profile_num, label):
+    metadata = load_metadata()
+    metadata.setdefault(tool_key, {}).setdefault(f"p{profile_num}", {})["label"] = label
+    save_metadata(metadata)
+
+def cmd_label(args):
+    try:
+        n = parse_profile(args.profile)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    label_profile(args.tool, n, args.label)
+    print(f"Label set for {args.tool} p{n}: {args.label}")
+    return EXIT_OK
+
+def cmd_clear(args):
+    try:
+        n = parse_profile(args.profile)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    try:
+        home = clear_profile_data(args.tool, n)
+    except ValueError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    print(f"Cleared {args.tool} p{n}: {home}")
+    return EXIT_OK
+
+def clear_profile_data(tool_key, n):
+    home = profile_home(tool_key, n)
+    base = os.path.abspath(TOOLS[tool_key]["base_dir"])
+    target = os.path.abspath(home)
+    if not target.startswith(base + os.sep):
+        raise ValueError(f"refusing to clear unsafe path: {target}")
+    if os.path.exists(home):
+        shutil.rmtree(home)
+    return home
+
+def resolve_sync_bases(direction):
+    if os.name == "nt":
+        win_home = Path(os.environ.get("USERPROFILE", r"C:\Users\Oliver"))
+        wsl_home = Path(r"\\wsl.localhost\Ubuntu\home\olivercromwell")
+        if not wsl_home.exists():
+            wsl_home = Path(r"\\wsl$\Ubuntu\home\olivercromwell")
+    else:
+        wsl_home = Path(os.path.expanduser("~"))
+        win_home = Path(f"/mnt/c/Users/{find_windows_user()}")
+    src_base = wsl_home if direction == "wsl" else win_home
+    dst_base = win_home if direction == "wsl" else wsl_home
+    return src_base, dst_base
+
+def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
+    dirs_to_sync = ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"]
+    hard_mode = mode == "hard"
+    if hard_mode and not yes and not dry_run:
+        raise PermissionError("hard sync requires --yes")
+    src_base, dst_base = resolve_sync_bases(direction)
+    if not src_base.exists():
+        raise FileNotFoundError(f"source path not found: {src_base}")
+    if not dst_base.exists():
+        raise FileNotFoundError(f"destination path not found: {dst_base}")
+    copied = 0
+    for name in dirs_to_sync:
+        src = src_base / name
+        dst = dst_base / name
+        if not src.exists():
+            continue
+        if hard_mode and dst.exists() and not dry_run:
+            shutil.rmtree(dst)
+        if not dry_run:
+            dst.mkdir(parents=True, exist_ok=True)
+        for root, dirs, files in os.walk(src):
+            dirs[:] = [d for d in dirs if d not in ("cache", "log", ".tempmediaStorage", ".venv", "node_modules")]
+            rel_root = Path(root).relative_to(src)
+            if not dry_run:
+                (dst / rel_root).mkdir(parents=True, exist_ok=True)
+            for file_name in files:
+                src_file = Path(root) / file_name
+                if src_file.is_symlink():
+                    continue
+                dst_file = dst / rel_root / file_name
+                if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
+                    copied += 1
+                    if not dry_run:
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+    return copied
+
+def cmd_sync(args):
+    try:
+        copied = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
+    except PermissionError as e:
+        print_error(str(e))
+        return EXIT_USAGE
+    except FileNotFoundError as e:
+        print_error(str(e))
+        return EXIT_NOT_FOUND
+    except Exception as e:
+        print_error(f"sync failed: {e}")
+        return EXIT_RUNTIME
+    action = "Would update" if args.dry_run else "Updated"
+    print(f"{action} {copied} files ({args.source} -> {'windows' if args.source == 'wsl' else 'wsl'}, {args.mode})")
+    return EXIT_OK
 
 def print_header(title=""):
     width = 62
@@ -314,7 +714,8 @@ def print_header(title=""):
         print(f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}{pad_str}{CLR_BOLD}{CLR_WHITE}{title}{CLR_RESET}{pad_str}{extra}{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}")
     print(f"{CLR_BOLD}{CLR_CYAN}╚{border}╝{CLR_RESET}")
 
-def run_menu(options, title=""):
+def run_menu(options, title="", shortcuts=None):
+    shortcuts = shortcuts or {}
     selected_idx = 0
     while True:
         clear_screen()
@@ -327,7 +728,7 @@ def run_menu(options, title=""):
             else:
                 print(f"      \033[90m{option}{CLR_RESET}")
         print()
-        print(f"{CLR_WHITE}Use {CLR_BOLD}↑/↓{CLR_RESET}{CLR_WHITE} arrows to select, {CLR_BOLD}Enter{CLR_RESET}{CLR_WHITE} to confirm, {CLR_BOLD}Esc/q{CLR_RESET}{CLR_WHITE} to go back.{CLR_RESET}")
+        print(f"{CLR_WHITE}Use {CLR_BOLD}↑/↓{CLR_RESET}{CLR_WHITE}, digits/shortcuts, {CLR_BOLD}Enter{CLR_RESET}{CLR_WHITE} to confirm, {CLR_BOLD}Esc/q{CLR_RESET}{CLR_WHITE} to go back.{CLR_RESET}")
         
         key = get_key()
         if key == 'up':
@@ -336,6 +737,12 @@ def run_menu(options, title=""):
             selected_idx = (selected_idx + 1) % len(options)
         elif key == 'enter':
             return selected_idx
+        elif key.isdigit() and key != "0":
+            idx = int(key) - 1
+            if 0 <= idx < len(options):
+                return idx
+        elif key in shortcuts:
+            return shortcuts[key]
         elif key in ('esc', 'q'):
             return -1
         elif key == 'ctrl+c':
@@ -348,7 +755,7 @@ def view_status(tool_key):
     print()
     
     metadata = load_metadata()
-    profiles = get_profiles(tool_key)
+    profiles = get_display_profiles(tool_key)
     
     print(f"{CLR_BOLD}{CLR_WHITE}{'Profile':<9} {'Active Account / Tier':<30} {'Status':<12} {'Label':<12}{CLR_RESET}")
     print("-" * 64)
@@ -367,7 +774,7 @@ def launch_account(tool_key):
     tool = TOOLS[tool_key]
     metadata = load_metadata()
     while True:
-        profiles = get_profiles(tool_key)
+        profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
             status = get_profile_status(tool_key, n, metadata)
@@ -380,33 +787,22 @@ def launch_account(tool_key):
             break
             
         profile_num = profiles[sel]
-        profile_home = os.path.join(tool["base_dir"], f"p{profile_num}")
-        os.makedirs(profile_home, exist_ok=True)
+        status = status_payload(tool_key, profile_num, metadata)
+        if not status["has_token"]:
+            clear_screen()
+            print_header(f"LAUNCH p{profile_num} ({tool['cmd']})")
+            print(f"\n{CLR_RED}Profile p{profile_num} has no token. Use login or import first.{CLR_RESET}")
+            input("\nPress Enter to continue...")
+            continue
         
         clear_screen()
         print_header(f"LAUNCHING p{profile_num} ({tool['cmd']})")
-        print(f"\nConfig directory: {profile_home}\n")
+        print(f"\nConfig directory: {profile_home(tool_key, profile_num)}\n")
         print(f"{CLR_YELLOW}Running CLI... Exit the tool normally to return here.{CLR_RESET}\n")
-        
-        # Build environment
-        env = os.environ.copy()
-        env[tool["env_var"]] = profile_home
-        
-        # Specialized env override for tools like agy that read HOME
-        if tool_key == "agy":
-            env["HOME"] = profile_home
-            
-        logging.info(f"Launching {tool_key} profile p{profile_num} interactively")
-        try:
-            # Launch CLI interactively
-            subprocess.run([tool["cmd"]], env=env)
-            logging.info(f"Exited {tool_key} profile p{profile_num}")
-        except FileNotFoundError:
-            logging.error(f"Failed to launch {tool['cmd']}: Executable not found")
-            print(f"{CLR_RED}Error: {tool['cmd']} CLI is not installed or not in PATH.{CLR_RESET}")
+        code = run_cli_tool(tool_key, profile_num)
+        if code != EXIT_OK:
+            print(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
             input("\nPress Enter to continue...")
-        except KeyboardInterrupt:
-            pass
         
         # Refresh metadata
         metadata = load_metadata()
@@ -417,48 +813,32 @@ def add_account(tool_key):
     print_header(f"ADD NEW PROFILE ({tool['cmd']})")
     print()
     
-    profiles = get_profiles(tool_key)
-    last_p = profiles[-1] if profiles else 0
-    next_p = last_p + 1
+    next_p = first_free_profile(tool_key)
     
     p_num_input = input(f"Enter profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
-            next_p = int(p_num_input)
+            next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"{CLR_RED}Invalid profile number!{CLR_RESET}")
             input("\nPress Enter to return...")
             return
             
-    profile_home = os.path.join(tool["base_dir"], f"p{next_p}")
-    os.makedirs(os.path.join(profile_home, os.path.dirname(tool["cred_file"])), exist_ok=True)
+    os.makedirs(profile_home(tool_key, next_p), exist_ok=True)
     
     clear_screen()
     print_header(f"SETUP p{next_p} ({tool['cmd']})")
-    print(f"\nConfig directory: {profile_home}\n")
+    print(f"\nConfig directory: {profile_home(tool_key, next_p)}\n")
     print("Launching CLI to sign in.")
     print("Complete the browser authentication flow. Once logged in, exit the tool.\n")
     input("Press Enter to start authentication...")
     
-    env = os.environ.copy()
-    env[tool["env_var"]] = profile_home
-    if tool_key == "agy":
-        env["HOME"] = profile_home
-        
     logging.info(f"Adding new profile p{next_p} for {tool_key}")
-    try:
-        if tool_key == "claude":
-            subprocess.run([tool["cmd"]], env=env)
-        elif tool_key == "codex":
-            subprocess.run([tool["cmd"]], env=env)
-        else:
-            subprocess.run([tool["cmd"]], env=env)
+    code = run_cli_tool(tool_key, next_p)
+    if code == EXIT_OK:
         logging.info(f"Successfully configured new profile p{next_p} for {tool_key}")
-    except FileNotFoundError:
-        logging.error(f"Failed to add profile: {tool['cmd']} executable not found")
-        print(f"{CLR_RED}Error: {tool['cmd']} CLI is not installed or not in PATH.{CLR_RESET}")
-    except KeyboardInterrupt:
-        pass
+    else:
+        print(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
         
     print(f"\n{CLR_GREEN}Setup finished for p{next_p}!{CLR_RESET}")
     input("Press Enter to return...")
@@ -467,7 +847,7 @@ def set_label(tool_key):
     tool = TOOLS[tool_key]
     metadata = load_metadata()
     while True:
-        profiles = get_profiles(tool_key)
+        profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
             status = get_profile_status(tool_key, n, metadata)
@@ -487,18 +867,11 @@ def set_label(tool_key):
         print(f"Current label: {CLR_YELLOW}{current_lbl or '(none)'}{CLR_RESET}\n")
         new_lbl = input("Enter new label (or empty to clear): ").strip()
         
-        if tool_key not in metadata:
-            metadata[tool_key] = {}
-        if f"p{profile_num}" not in metadata[tool_key]:
-            metadata[tool_key][f"p{profile_num}"] = {}
-            
-        metadata[tool_key][f"p{profile_num}"]["label"] = new_lbl
-        save_metadata(metadata)
+        label_profile(tool_key, profile_num, new_lbl)
+        metadata = load_metadata()
         
         print(f"\n{CLR_GREEN}Label updated successfully!{CLR_RESET}")
         input("Press Enter to return...")
-
-import glob
 
 def find_windows_user():
     try:
@@ -545,13 +918,12 @@ def magic_import(tool_key):
         
     cred_file = found_files[sel]
     
-    profiles = get_profiles(tool_key)
-    next_p = (profiles[-1] if profiles else 0) + 1
+    next_p = first_free_profile(tool_key)
     
     p_num_input = input(f"\nSelected: {cred_file}\nEnter target profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
-            next_p = int(p_num_input)
+            next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"\n{CLR_RED}Invalid profile number!{CLR_RESET}")
             input("\nPress Enter to return...")
@@ -560,27 +932,8 @@ def magic_import(tool_key):
     print(f"\nImporting into profile p{next_p}...")
     
     try:
-        wsl_dest_dir = os.path.join(tool["base_dir"], f"p{next_p}")
-        wsl_dest_file = os.path.join(wsl_dest_dir, tool["cred_file"])
-        os.makedirs(os.path.dirname(wsl_dest_file), exist_ok=True)
-        
-        if tool_key == "agy":
-            with open(cred_file, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
-            blob_data = base64.b64decode(data["BlobBase64"]).decode("utf-8")
-            with open(wsl_dest_file, "w") as f:
-                f.write(blob_data)
-            email = data.get("Account")
-            if email:
-                acct_file_path = os.path.join(wsl_dest_dir, tool["acct_file"])
-                os.makedirs(os.path.dirname(acct_file_path), exist_ok=True)
-                with open(acct_file_path, "w") as f:
-                    json.dump({"active": email}, f, indent=2)
-            print(f"\n{CLR_GREEN}Successfully imported credential for agy! (Account: {email or 'Unknown'}){CLR_RESET}")
-        else:
-            shutil.copy(cred_file, wsl_dest_file)
-            print(f"\n{CLR_GREEN}Successfully copied credential file!{CLR_RESET}")
-            
+        _, dest_file = import_credential_file(tool_key, cred_file, next_p)
+        print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
     except Exception as e:
         print(f"\n{CLR_RED}Import error: {e}{CLR_RESET}")
         
@@ -612,46 +965,11 @@ def export_credential(tool_key):
             break
             
         profile_num = valid_profiles[sel]
-        status = get_profile_status(tool_key, profile_num, metadata)
-        cred_path = os.path.join(status["home"], tool["cred_file"])
-        
-        win_user = find_windows_user()
-        export_dir = f"/mnt/c/Users/{win_user}/Downloads"
-        if not os.path.exists(export_dir):
-            export_dir = f"/mnt/c/Users/{win_user}/Desktop"
-            if not os.path.exists(export_dir):
-                export_dir = "/mnt/c/"
-            
-        if tool_key == "agy":
-            try:
-                with open(cred_path, "r") as f:
-                    token_data = f.read()
-                b64 = base64.b64encode(token_data.encode("utf-8")).decode("utf-8")
-                
-                win_json = {
-                    "Target": "gemini:antigravity",
-                    "Type": 1,
-                    "Persist": 2,
-                    "Flags": 0,
-                    "UserName": "antigravity",
-                    "Account": status["email"] if status["email"] != "logged in" else None,
-                    "BlobBase64": b64,
-                    "SavedAt": datetime.now().isoformat()
-                }
-                
-                dest_file = os.path.join(export_dir, f"cred-p{profile_num}-exported.json")
-                with open(dest_file, "w") as f:
-                    json.dump(win_json, f, indent=2)
-                print(f"\n{CLR_GREEN}Successfully exported to Windows: {dest_file}{CLR_RESET}")
-            except Exception as e:
-                print(f"\n{CLR_RED}Export error: {e}{CLR_RESET}")
-        else:
-            dest_file = os.path.join(export_dir, f"{tool_key}-p{profile_num}-exported.json")
-            try:
-                shutil.copy(cred_path, dest_file)
-                print(f"\n{CLR_GREEN}Successfully exported to Windows: {dest_file}{CLR_RESET}")
-            except Exception as e:
-                print(f"\n{CLR_RED}Export error: {e}{CLR_RESET}")
+        try:
+            dest_file = export_credential_file(tool_key, profile_num)
+            print(f"\n{CLR_GREEN}Successfully exported to Windows: {dest_file}{CLR_RESET}")
+        except Exception as e:
+            print(f"\n{CLR_RED}Export error: {e}{CLR_RESET}")
                 
         input("\nPress Enter to return...")
 
@@ -659,7 +977,7 @@ def clear_profile(tool_key):
     tool = TOOLS[tool_key]
     metadata = load_metadata()
     while True:
-        profiles = get_profiles(tool_key)
+        profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
             status = get_profile_status(tool_key, n, metadata)
@@ -672,17 +990,17 @@ def clear_profile(tool_key):
             break
             
         profile_num = profiles[sel]
-        profile_home = os.path.join(tool["base_dir"], f"p{profile_num}")
+        home = profile_home(tool_key, profile_num)
         
         clear_screen()
         print_header(f"CLEAR p{profile_num}")
         print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
-        print(f"Path: {profile_home}")
+        print(f"Path: {home}")
         confirm = input("\nType 'yes' to confirm deletion: ").strip().lower()
         if confirm == 'yes':
-            logging.info(f"Clearing profile p{profile_num} for {tool_key} at {profile_home}")
+            logging.info(f"Clearing profile p{profile_num} for {tool_key} at {home}")
             try:
-                shutil.rmtree(profile_home, ignore_errors=True)
+                clear_profile_data(tool_key, profile_num)
                 print(f"\n{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
                 logging.info(f"Successfully cleared profile p{profile_num}")
             except Exception as e:
@@ -703,37 +1021,19 @@ def import_credential(tool_key):
     
     cred_file = input("Enter path to file to import: ").strip()
     
-    # Strip quotes
-    if (cred_file.startswith('"') and cred_file.endswith('"')) or (cred_file.startswith("'") and cred_file.endswith("'")):
-        cred_file = cred_file[1:-1]
-    
-    # Auto-convert Windows paths to WSL paths
-    if len(cred_file) >= 3 and cred_file[1:3] == ":\\":
-        drive = cred_file[0].lower()
-        cred_file = f"/mnt/{drive}/" + cred_file[3:].replace("\\", "/")
-        
-    cred_file = os.path.expanduser(cred_file)
-    
-    # If the provided path is a directory, append the default credential file name
-    if os.path.isdir(cred_file):
-        if tool_key == "codex":
-            cred_file = os.path.join(cred_file, "auth.json")
-        elif tool_key == "claude":
-            cred_file = os.path.join(cred_file, ".credentials.json")
+    cred_file = normalize_credential_path(tool_key, cred_file)
     
     if not os.path.exists(cred_file):
         print(f"\n{CLR_RED}Error: File '{cred_file}' not found.{CLR_RESET}")
         input("\nPress Enter to return...")
         return
         
-    profiles = get_profiles(tool_key)
-    last_p = profiles[-1] if profiles else 0
-    next_p = last_p + 1
+    next_p = first_free_profile(tool_key)
     
     p_num_input = input(f"Enter target profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
-            next_p = int(p_num_input)
+            next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"\n{CLR_RED}Invalid profile number!{CLR_RESET}")
             input("\nPress Enter to return...")
@@ -742,31 +1042,8 @@ def import_credential(tool_key):
     print(f"\nImporting into profile p{next_p}...")
     
     try:
-        wsl_dest_dir = os.path.join(tool["base_dir"], f"p{next_p}")
-        wsl_dest_file = os.path.join(wsl_dest_dir, tool["cred_file"])
-        os.makedirs(os.path.dirname(wsl_dest_file), exist_ok=True)
-        
-        if tool_key == "agy":
-            # agy Windows Credential Manager JSON decoding
-            with open(cred_file, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
-                
-            blob_data = base64.b64decode(data["BlobBase64"]).decode("utf-8")
-            
-            with open(wsl_dest_file, "w") as f:
-                f.write(blob_data)
-                
-            email = data.get("Account")
-            if email:
-                acct_file_path = os.path.join(wsl_dest_dir, tool["acct_file"])
-                os.makedirs(os.path.dirname(acct_file_path), exist_ok=True)
-                with open(acct_file_path, "w") as f:
-                    json.dump({"active": email}, f, indent=2)
-            print(f"\n{CLR_GREEN}Successfully imported credential for agy! (Account: {email or 'Unknown'}){CLR_RESET}")
-        else:
-            # Codex / Claude raw copy-import
-            shutil.copy(cred_file, wsl_dest_file)
-            print(f"\n{CLR_GREEN}Successfully copied credential file to {wsl_dest_file}!{CLR_RESET}")
+        _, dest_file = import_credential_file(tool_key, cred_file, next_p)
+        print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
             
     except Exception as e:
         print(f"\n{CLR_RED}Import error: {e}{CLR_RESET}")
@@ -788,7 +1065,22 @@ def run_tool_manager(tool_key):
     ]
     
     while True:
-        sel = run_menu(menu_options, tool["name"].upper())
+        shortcuts = {
+            ">": 0,
+            "+": 1,
+            "a": 1,
+            "*": 2,
+            "i": 3,
+            "<": 3,
+            "e": 4,
+            "^": 4,
+            "c": 5,
+            "-": 5,
+            "l": 6,
+            "#": 6,
+            "s": 7,
+        }
+        sel = run_menu(menu_options, tool["name"].upper(), shortcuts)
         if sel == 0:
             launch_account(tool_key)
         elif sel == 1:
@@ -954,7 +1246,82 @@ def sync_profiles():
     print(f"\n{CLR_CYAN}Sync Complete!{CLR_RESET}")
     input("\nPress Enter to return...")
 
-def main():
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="ai-man",
+        description="Keyboard-first profile manager for agy, codex, and claude.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    list_p = sub.add_parser("list", help="list profiles for a tool")
+    list_p.add_argument("tool", choices=TOOLS.keys())
+    list_p.add_argument("--json", action="store_true")
+    list_p.set_defaults(func=cmd_list)
+
+    status_p = sub.add_parser("status", help="show one profile status")
+    status_p.add_argument("tool", choices=TOOLS.keys())
+    status_p.add_argument("profile")
+    status_p.add_argument("--json", action="store_true")
+    status_p.set_defaults(func=cmd_status)
+
+    launch_p = sub.add_parser("launch", help="launch a CLI under an existing profile")
+    launch_p.add_argument("tool", choices=TOOLS.keys())
+    launch_p.add_argument("profile")
+    launch_p.add_argument("args", nargs=argparse.REMAINDER, help="arguments passed after -- to the target CLI")
+    launch_p.set_defaults(func=cmd_launch)
+
+    login_p = sub.add_parser("login", aliases=["add"], help="run native CLI login flow")
+    login_p.add_argument("tool", choices=TOOLS.keys())
+    login_p.add_argument("profile", nargs="?")
+    login_p.set_defaults(func=cmd_login)
+
+    import_p = sub.add_parser("import", help="import a credential file")
+    import_p.add_argument("tool", choices=TOOLS.keys())
+    import_p.add_argument("path")
+    import_p.add_argument("profile", nargs="?")
+    import_p.set_defaults(func=cmd_import)
+
+    export_p = sub.add_parser("export", help="export a profile credential")
+    export_p.add_argument("tool", choices=TOOLS.keys())
+    export_p.add_argument("profile")
+    export_p.add_argument("--to")
+    export_p.set_defaults(func=cmd_export)
+
+    label_p = sub.add_parser("label", help="set or clear a profile label")
+    label_p.add_argument("tool", choices=TOOLS.keys())
+    label_p.add_argument("profile")
+    label_p.add_argument("label")
+    label_p.set_defaults(func=cmd_label)
+
+    clear_p = sub.add_parser("clear", help="delete a profile directory")
+    clear_p.add_argument("tool", choices=TOOLS.keys())
+    clear_p.add_argument("profile")
+    clear_p.set_defaults(func=cmd_clear)
+
+    sync_p = sub.add_parser("sync", help="sync profile directories between WSL and Windows")
+    sync_p.add_argument("--from", dest="source", choices=("wsl", "windows"), default="wsl")
+    sync_p.add_argument("--mode", choices=("soft", "hard"), default="soft")
+    sync_p.add_argument("--dry-run", action="store_true")
+    sync_p.add_argument("--yes", action="store_true", help="confirm hard sync")
+    sync_p.set_defaults(func=cmd_sync)
+
+    return parser
+
+def run_cli(argv):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        return None
+    if getattr(args, "args", None) and args.args[:1] == ["--"]:
+        args.args = args.args[1:]
+    return args.func(args)
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    result = run_cli(argv)
+    if result is not None:
+        return result
+
     while True:
         options = [
             "[1] Antigravity CLI (agy)",
@@ -976,10 +1343,11 @@ def main():
             clear_screen()
             print("Exiting Profile Manager. Goodbye!")
             break
+    return EXIT_OK
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         clear_screen()
         sys.exit(0)

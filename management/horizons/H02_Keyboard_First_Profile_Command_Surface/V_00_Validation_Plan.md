@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H02_Keyboard_First_Profile_Command_Surface/
 Lifecycle: living
 Document Class: validation plan
 
-Status: planned.
+Status: implemented.
 
 ## Required Checks
 
@@ -15,6 +15,7 @@ python3 profile_manager.py --help
 python3 profile_manager.py list agy --json
 python3 profile_manager.py list codex --json
 python3 profile_manager.py list claude --json
+./scripts/verify_no_tui_surface.sh
 rg -n "textual|rich|curses" profile_manager.py
 ```
 

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H02_Keyboard_First_Profile_Command_Surface/
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -15,10 +15,10 @@ well in WSL and Windows shells.
 ## Goals
 
 - Provide direct commands for list, launch, login/add, import, export, label,
-  status, clear, and sync.
-- Keep interactive menus optional and keyboard-fast, not TUI-dependent.
-- Fix profile-number selection so new installs start at `p1`, not `p13`.
-- Make command behavior scriptable and verifiable.
+  status, clear, and sync. Done.
+- Keep interactive menus optional and keyboard-fast, not TUI-dependent. Done.
+- Fix profile-number selection so new installs start at `p1`, not `p13`. Done.
+- Make command behavior scriptable and verifiable. Done.
 
 ## Non-Goals
 
