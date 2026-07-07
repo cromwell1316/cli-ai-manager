@@ -128,6 +128,28 @@ def test_status_payload_can_include_quota_without_real_cli(monkeypatch, tmp_path
     assert status["quota"]["limits"]["five_hour"]["percent_left"] == 82
 
 
+def test_interactive_get_key_reads_arrow_sequences(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    class FakeStdin:
+        def __init__(self, data):
+            self.data = list(data)
+
+        def fileno(self):
+            return 0
+
+        def read(self, _size):
+            return self.data.pop(0)
+
+    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin("\x1b[A"))
+    monkeypatch.setattr(interactive.termios, "tcgetattr", lambda _fd: object())
+    monkeypatch.setattr(interactive.termios, "tcsetattr", lambda *_args: None)
+    monkeypatch.setattr(interactive.tty, "setraw", lambda _fd: None)
+    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r, [], []))
+
+    assert interactive.get_key() == "up"
+
+
 def test_agy_windows_wsl_conversion_round_trips(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     token = {"refresh_token": "secret", "scope": "email"}

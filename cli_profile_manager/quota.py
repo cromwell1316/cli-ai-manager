@@ -4,6 +4,9 @@ import select
 import shutil
 import signal
 import subprocess
+import fcntl
+import struct
+import termios
 import time
 
 
@@ -11,6 +14,7 @@ DEFAULT_COLS = 120
 DEFAULT_ROWS = 40
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_IDLE_SECONDS = 0.8
+DEFAULT_STARTUP_SECONDS = 3.0
 
 
 QUOTA_COMMANDS = {
@@ -72,6 +76,15 @@ def parse_percent_limit(text, label_patterns):
     return None
 
 
+def agy_model_name_from_line(line):
+    if "quota pools" in line.lower() or "," in line or len(line) > 72:
+        return None
+    match = re.search(r"\b(?:Gemini|Claude|GPT)\s+[A-Za-z0-9 .()/-]+", line)
+    if not match:
+        return None
+    return match.group(0).strip()
+
+
 def parse_codex_quota(screen_text):
     text = "\n".join(compact_lines(screen_text))
     quota = {
@@ -125,13 +138,46 @@ def parse_claude_quota(screen_text):
 
 
 def parse_agy_quota(screen_text):
-    text = "\n".join(compact_lines(screen_text))
+    lines = compact_lines(screen_text)
+    text = "\n".join(lines)
     quota = {
         "state": "available",
         "source_command": "/usage",
         "limits": {},
         "raw_summary": text,
     }
+    current_model = None
+    for line in lines:
+        if line.startswith("└ Models & Quota"):
+            break
+        model_name = agy_model_name_from_line(line)
+        if model_name:
+            current_model = model_name
+            quota["current_model"] = current_model
+            break
+    for idx, line in enumerate(lines):
+        model_name = agy_model_name_from_line(line)
+        if model_name:
+            percent = None
+            refresh = None
+            search_lines = lines[idx:idx + 4]
+            for search_line in search_lines:
+                percent_match = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%", search_line)
+                if percent_match:
+                    percent = float(percent_match.group(1))
+                refresh_match = re.search(r"Refresh(?:es)?\s+in\s+([^·]+)$", search_line, re.I)
+                if refresh_match:
+                    refresh = refresh_match.group(1).strip()
+            if percent is not None:
+                key = re.sub(r"[^a-z0-9]+", "_", model_name.lower()).strip("_")
+                quota["limits"][key] = {
+                    "model": model_name,
+                    "percent": percent,
+                }
+                if refresh:
+                    quota["limits"][key]["refreshes_in"] = refresh
+                if current_model and model_name == current_model:
+                    quota["current_limit"] = key
     daily = parse_percent_limit(text, (
         r"(?:daily|today|gemini)\b.*?(\d{1,3})\s*%\s*(?:left|remaining|used)?",
         r"(\d{1,3})\s*%\s*(?:left|remaining).*?(?:daily|today|gemini)\b",
@@ -197,6 +243,14 @@ def wait_for_idle(fd, output, idle_seconds, timeout_seconds):
             raise QuotaProbeError("timeout", "timeout waiting for CLI output", current)
 
 
+def wait_for_startup(fd, output, startup_seconds):
+    deadline = time.monotonic() + startup_seconds
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            output.append(read_available(fd))
+
+
 def terminate_process(proc, master_fd, output):
     if proc.poll() is not None:
         return
@@ -237,6 +291,9 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
         raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
 
     master_fd, slave_fd = pty.openpty()
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
+    env = env.copy()
+    env.setdefault("TERM", "xterm-256color")
     proc = subprocess.Popen(
         command,
         stdin=slave_fd,
@@ -250,6 +307,8 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
     os.close(slave_fd)
     output = []
     try:
+        startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", DEFAULT_STARTUP_SECONDS))
+        wait_for_startup(master_fd, output, max(0.0, startup_seconds))
         wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
         slash_command = quota_command_for(tool_key)
         if not slash_command:

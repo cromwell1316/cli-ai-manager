@@ -101,6 +101,14 @@ them with `AI_MAN_AGY_QUOTA_COMMAND`, `AI_MAN_CODEX_QUOTA_COMMAND`, or
 profile is logged out, the quota payload reports `auth_required` or `no_token`
 instead of returning partial numbers.
 
+Interactive `ai-man` screens load quota automatically in the background for
+active profiles and cache it for the current session. Fresh quota data is shown
+in green; cached data older than five minutes is shown in red. Set
+`AI_MAN_INTERACTIVE_QUOTA=0` to disable automatic probing, or
+`AI_MAN_INTERACTIVE_QUOTA_TIMEOUT=<seconds>` to change the per-profile timeout.
+Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs more startup
+time before slash commands are accepted.
+
 ## Interactive Selector
 
 Launching `ai-man` opens the keyboard selector:

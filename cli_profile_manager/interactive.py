@@ -1,8 +1,11 @@
 import glob
 import logging
 import os
+import select
 import sys
 import termios
+import threading
+import time
 import tty
 
 from .cli import (
@@ -41,26 +44,164 @@ from .cli import (
     resolve_sync_bases,
     run_cli_tool,
     save_metadata,
+    quota_payload,
     status_payload,
     sync_profiles_noninteractive,
+    quota_summary,
     write_json_atomic,
 )
 
-def clear_screen():
-    sys.stdout.write("\033[H\033[J")
-    sys.stdout.flush()
+INTERACTIVE_QUOTA_CACHE = {}
+INTERACTIVE_QUOTA_LOCK = threading.Lock()
+QUOTA_FRESH_SECONDS = 300
 
 
-def get_key():
+def interactive_quota_enabled():
+    return os.environ.get("AI_MAN_INTERACTIVE_QUOTA", "1").lower() not in ("0", "false", "no", "off")
+
+
+def interactive_quota_timeout():
+    raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "8")
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 8.0
+
+
+def quota_cache_entry(tool_key, profile_num):
+    with INTERACTIVE_QUOTA_LOCK:
+        return INTERACTIVE_QUOTA_CACHE.get((tool_key, profile_num))
+
+
+def store_quota_cache(tool_key, profile_num, entry):
+    with INTERACTIVE_QUOTA_LOCK:
+        INTERACTIVE_QUOTA_CACHE[(tool_key, profile_num)] = entry
+
+
+def load_quota_background(tool_key, profile_num):
+    try:
+        quota = quota_payload(tool_key, profile_num, interactive_quota_timeout())["quota"]
+    except Exception as e:
+        quota = {
+            "state": "error",
+            "limits": {},
+            "warnings": [str(e)],
+        }
+    quota["fetched_at"] = time.time()
+    store_quota_cache(tool_key, profile_num, {
+        "state": "ready",
+        "quota": quota,
+        "fetched_at": quota["fetched_at"],
+    })
+
+
+def ensure_quota_loading(tool_key, profile_num):
+    entry = quota_cache_entry(tool_key, profile_num)
+    if entry is not None:
+        return entry
+    entry = {
+        "state": "loading",
+        "quota": {
+            "state": "loading",
+            "limits": {},
+            "warnings": ["quota is loading"],
+        },
+        "fetched_at": None,
+    }
+    store_quota_cache(tool_key, profile_num, entry)
+    thread = threading.Thread(
+        target=load_quota_background,
+        args=(tool_key, profile_num),
+        daemon=True,
+    )
+    entry["thread"] = thread
+    thread.start()
+    return entry
+
+
+def status_with_auto_quota(tool_key, profile_num, metadata):
+    status = status_payload(tool_key, profile_num, metadata)
+    if not interactive_quota_enabled():
+        return status
+    if not status["has_token"]:
+        status["quota"] = {
+            "state": "no_token",
+            "limits": {},
+            "warnings": ["profile has no token"],
+        }
+        return status
+    entry = ensure_quota_loading(tool_key, profile_num)
+    status["quota"] = entry["quota"]
+    return status
+
+
+def color_quota_text(text, status):
+    quota = status.get("quota") or {}
+    state = quota.get("state")
+    if state == "loading":
+        return f"{CLR_YELLOW}{text}{CLR_RESET}"
+    fetched_at = quota.get("fetched_at")
+    if fetched_at is None:
+        return f"{CLR_RED}{text}{CLR_RESET}" if state not in ("available", "loading") else text
+    color = CLR_GREEN if time.time() - fetched_at <= QUOTA_FRESH_SECONDS else CLR_RED
+    return f"{color}{text}{CLR_RESET}"
+
+
+def quota_text(status, color=True):
+    summary = quota_summary(status)
+    text = summary or "quota pending"
+    if len(text) > 24:
+        text = f"{text[:21]}..."
+    return color_quota_text(text, status) if color else text
+
+
+def invalidate_quota_cache(tool_key=None, profile_num=None):
+    with INTERACTIVE_QUOTA_LOCK:
+        if tool_key is None:
+            INTERACTIVE_QUOTA_CACHE.clear()
+            return
+        if profile_num is None:
+            for key in list(INTERACTIVE_QUOTA_CACHE):
+                if key[0] == tool_key:
+                    del INTERACTIVE_QUOTA_CACHE[key]
+            return
+        INTERACTIVE_QUOTA_CACHE.pop((tool_key, profile_num), None)
+
+
+def any_quota_loading(tool_key=None):
+    with INTERACTIVE_QUOTA_LOCK:
+        for (entry_tool, _), entry in INTERACTIVE_QUOTA_CACHE.items():
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            if entry.get("state") == "loading":
+                return True
+    return False
+
+
+def read_key_byte(timeout=None):
+    if timeout is not None:
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not ready:
+            return None
+    return sys.stdin.read(1)
+
+
+def get_key(timeout=None):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = sys.stdin.read(1)
+        ch = read_key_byte(timeout)
+        if ch is None:
+            return None
         if ch == '\x1b':
-            ch2 = sys.stdin.read(1)
+            ch2 = read_key_byte(0.12)
+            if ch2 is None:
+                return 'esc'
             if ch2 == '[':
-                ch3 = sys.stdin.read(1)
+                ch3 = read_key_byte(0.12)
+                if ch3 is None:
+                    return 'esc'
                 if ch3 == 'A':
                     return 'up'
                 elif ch3 == 'B':
@@ -78,6 +219,46 @@ def get_key():
             return ch
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def render_status_screen(tool_key):
+    clear_screen()
+    tool_name = TOOLS[tool_key]["name"]
+    print_header(f"STATUS: {tool_name.upper()}")
+    print()
+
+    metadata = load_metadata()
+    profiles = get_display_profiles(tool_key)
+
+    print(f"{CLR_BOLD}{CLR_WHITE}{'Profile':<9} {'Active Account / Tier':<30} {'Status':<12} {'Quota':<24} {'Label':<12}{CLR_RESET}")
+    print("-" * 90)
+
+    for n in profiles:
+        status = status_with_auto_quota(tool_key, n, metadata)
+        stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
+        lbl_str = f"({status['label']})" if status["label"] else ""
+        email_color = CLR_CYAN if status["has_token"] else CLR_RESET
+        quota = quota_text(status)
+        print(f"p{status['num']:<7} {email_color}{status['email']:<30}{CLR_RESET} {stat_str:<12} {quota:<24} {CLR_YELLOW}{lbl_str:<12}{CLR_RESET}")
+    print()
+    print("Press Enter to return...")
+
+
+def view_status(tool_key):
+    while True:
+        render_status_screen(tool_key)
+        key = get_key(timeout=0.5 if any_quota_loading(tool_key) else None)
+        if key is None:
+            continue
+        if key in ("enter", "esc", "q"):
+            return
+        elif key == "ctrl+c":
+            sys.exit(0)
+
+
+def clear_screen():
+    sys.stdout.write("\033[H\033[J")
+    sys.stdout.flush()
 
 
 def print_header(title=""):
@@ -125,28 +306,6 @@ def run_menu(options, title="", shortcuts=None):
         elif key == 'ctrl+c':
             sys.exit(0)
 
-def view_status(tool_key):
-    clear_screen()
-    tool_name = TOOLS[tool_key]["name"]
-    print_header(f"STATUS: {tool_name.upper()}")
-    print()
-
-    metadata = load_metadata()
-    profiles = get_display_profiles(tool_key)
-
-    print(f"{CLR_BOLD}{CLR_WHITE}{'Profile':<9} {'Active Account / Tier':<30} {'Status':<12} {'Label':<12}{CLR_RESET}")
-    print("-" * 64)
-
-    for n in profiles:
-        status = get_profile_status(tool_key, n, metadata)
-        stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
-        lbl_str = f"({status['label']})" if status["label"] else ""
-        email_color = CLR_CYAN if status["has_token"] else CLR_RESET
-        print(f"p{status['num']:<7} {email_color}{status['email']:<30}{CLR_RESET} {stat_str:<12} {CLR_YELLOW}{lbl_str:<12}{CLR_RESET}")
-
-    print()
-    input("Press Enter to return...")
-
 def launch_account(tool_key):
     tool = TOOLS[tool_key]
     metadata = load_metadata()
@@ -154,10 +313,11 @@ def launch_account(tool_key):
         profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
-            status = get_profile_status(tool_key, n, metadata)
+            status = status_with_auto_quota(tool_key, n, metadata)
             lbl = f" ({status['label']})" if status['label'] else ""
             tok = f"{CLR_GREEN}[Active]{CLR_RESET}" if status['has_token'] else f"{CLR_RED}[No Token]{CLR_RESET}"
-            options.append(f"p{status['num']:<3} | {status['email']:<28} {tok}{CLR_YELLOW}{lbl}{CLR_RESET}")
+            quota = quota_text(status)
+            options.append(f"p{status['num']:<3} | {status['email']:<28} {tok} {quota:<24}{CLR_YELLOW}{lbl}{CLR_RESET}")
 
         sel = run_menu(options, f"LAUNCH {tool['name'].upper()}")
         if sel == -1:
@@ -177,6 +337,7 @@ def launch_account(tool_key):
         print(f"\nConfig directory: {profile_home(tool_key, profile_num)}\n")
         print(f"{CLR_YELLOW}Running CLI... Exit the tool normally to return here.{CLR_RESET}\n")
         code = run_cli_tool(tool_key, profile_num)
+        invalidate_quota_cache(tool_key, profile_num)
         if code != EXIT_OK:
             print(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
             input("\nPress Enter to continue...")
@@ -212,6 +373,7 @@ def add_account(tool_key):
 
     logging.info(f"Adding new profile p{next_p} for {tool_key}")
     code = run_cli_tool(tool_key, next_p)
+    invalidate_quota_cache(tool_key, next_p)
     if code == EXIT_OK:
         logging.info(f"Successfully configured new profile p{next_p} for {tool_key}")
     else:
@@ -227,9 +389,10 @@ def set_label(tool_key):
         profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
-            status = get_profile_status(tool_key, n, metadata)
+            status = status_with_auto_quota(tool_key, n, metadata)
             lbl = f" ({status['label']})" if status['label'] else " (no label)"
-            options.append(f"p{status['num']:<3} | {status['email']:<28} {CLR_YELLOW}{lbl}{CLR_RESET}")
+            quota = quota_text(status)
+            options.append(f"p{status['num']:<3} | {status['email']:<28} {quota:<24} {CLR_YELLOW}{lbl}{CLR_RESET}")
 
         sel = run_menu(options, f"LABEL {tool['name'].upper()}")
         if sel == -1:
@@ -303,6 +466,7 @@ def magic_import(tool_key):
 
     try:
         _, dest_file = import_credential_file(tool_key, cred_file, next_p)
+        invalidate_quota_cache(tool_key, next_p)
         print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
     except Exception as e:
         print(f"\n{CLR_RED}Import error: {e}{CLR_RESET}")
@@ -317,10 +481,11 @@ def export_credential(tool_key):
         options = []
         valid_profiles = []
         for n in profiles:
-            status = get_profile_status(tool_key, n, metadata)
+            status = status_with_auto_quota(tool_key, n, metadata)
             if status['has_token']:
                 lbl = f" ({status['label']})" if status['label'] else ""
-                options.append(f"p{status['num']:<3} | {status['email']:<28} {CLR_GREEN}[Active]{CLR_RESET}{CLR_YELLOW}{lbl}{CLR_RESET}")
+                quota = quota_text(status)
+                options.append(f"p{status['num']:<3} | {status['email']:<28} {CLR_GREEN}[Active]{CLR_RESET} {quota:<24}{CLR_YELLOW}{lbl}{CLR_RESET}")
                 valid_profiles.append(n)
 
         if not valid_profiles:
@@ -350,10 +515,11 @@ def clear_profile(tool_key):
         profiles = get_display_profiles(tool_key)
         options = []
         for n in profiles:
-            status = get_profile_status(tool_key, n, metadata)
+            status = status_with_auto_quota(tool_key, n, metadata)
             lbl = f" ({status['label']})" if status['label'] else ""
             tok = f"{CLR_GREEN}[Active]{CLR_RESET}" if status['has_token'] else f"{CLR_RED}[No Token]{CLR_RESET}"
-            options.append(f"p{status['num']:<3} | {status['email']:<28} {tok}{CLR_YELLOW}{lbl}{CLR_RESET}")
+            quota = quota_text(status)
+            options.append(f"p{status['num']:<3} | {status['email']:<28} {tok} {quota:<24}{CLR_YELLOW}{lbl}{CLR_RESET}")
 
         sel = run_menu(options, f"CLEAR PROFILE: {tool['name'].upper()}")
         if sel == -1:
@@ -371,6 +537,7 @@ def clear_profile(tool_key):
             logging.info(f"Clearing profile p{profile_num} for {tool_key} at {home}")
             try:
                 clear_profile_data(tool_key, profile_num)
+                invalidate_quota_cache(tool_key, profile_num)
                 print(f"\n{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
                 logging.info(f"Successfully cleared profile p{profile_num}")
             except Exception as e:
@@ -413,6 +580,7 @@ def import_credential(tool_key):
 
     try:
         _, dest_file = import_credential_file(tool_key, cred_file, next_p)
+        invalidate_quota_cache(tool_key, next_p)
         print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
 
     except Exception as e:
@@ -527,6 +695,7 @@ def sync_profiles():
         return
 
     logging.info(f"Sync completed successfully: {result}")
+    invalidate_quota_cache()
     print(
         f"{CLR_GREEN}Updated {result['copied']} files, skipped {result['skipped']}, "
         f"converted {result['converted']} agy credentials, invalid {result['invalid']}.{CLR_RESET}"

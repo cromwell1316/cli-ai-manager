@@ -371,11 +371,19 @@ def quota_summary(status):
     state = quota.get("state", "unknown")
     if state != "available":
         return state
+    current_limit = quota.get("current_limit")
+    if current_limit:
+        data = quota.get("limits", {}).get(current_limit, {})
+        value = data.get("percent_left", data.get("percent"))
+        if value is not None:
+            model = data.get("model", current_limit)
+            return f"{model}:{value:g}%"
     parts = []
     for name, data in quota.get("limits", {}).items():
         value = data.get("percent_left", data.get("percent"))
         if value is not None:
-            parts.append(f"{name}:{value}%")
+            label = data.get("model", name)
+            parts.append(f"{label}:{value:g}%")
     return ", ".join(parts) or state
 
 def print_status_table(tool_key, statuses):
