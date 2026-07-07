@@ -351,6 +351,9 @@ def get_profile_status(tool_key, n, metadata):
     email = "(no login)"
     has_token = False
     token_state = "missing"
+    credential_source = None
+    account = None
+    warnings = []
     
     if tool_key == "agy":
         if os.name == "nt":
@@ -360,22 +363,30 @@ def get_profile_status(tool_key, n, metadata):
                     _, account = decode_windows_agy_credential(win_cred_path)
                     has_token = True
                     token_state = "valid"
+                    credential_source = "windows-backup"
                     email = account or account_email_from_google_accounts(profile_home) or "logged in"
                 except Exception as e:
                     token_state = "invalid"
+                    credential_source = "windows-backup"
+                    warnings.append(str(e))
                     email = f"invalid token: {e}"
         elif os.path.exists(cred_path):
             try:
                 read_wsl_agy_oauth(cred_path)
                 has_token = True
                 token_state = "valid"
+                credential_source = "wsl-oauth"
+                account = account_email_from_google_accounts(profile_home)
                 email = account_email_from_google_accounts(profile_home) or "logged in"
             except Exception as e:
                 token_state = "invalid"
+                credential_source = "wsl-oauth"
+                warnings.append(str(e))
                 email = f"invalid token: {e}"
     elif os.path.exists(cred_path):
         has_token = True
         token_state = "present"
+        credential_source = "codex-auth" if tool_key == "codex" else "claude-credentials"
 
     if tool_key == "codex":
         if has_token:
@@ -391,8 +402,10 @@ def get_profile_status(tool_key, n, metadata):
                 elif data.get("OPENAI_API_KEY"):
                     email = "API Key"
                 token_state = "valid"
-            except Exception:
+                account = email
+            except Exception as e:
                 token_state = "invalid"
+                warnings.append(str(e))
                 email = "logged in"
                 
     elif tool_key == "claude":
@@ -410,8 +423,10 @@ def get_profile_status(tool_key, n, metadata):
                 else:
                     email = "Logged in"
                 token_state = "valid"
-            except Exception:
+                account = email
+            except Exception as e:
                 token_state = "invalid"
+                warnings.append(str(e))
                 email = "Logged in"
                 
     label = metadata.get(tool_key, {}).get(f"p{n}", {}).get("label", "")
@@ -421,6 +436,9 @@ def get_profile_status(tool_key, n, metadata):
         "email": email,
         "has_token": has_token,
         "token_state": token_state,
+        "credential_source": credential_source,
+        "account": account or (email if has_token and not email.startswith("invalid token:") else None),
+        "warnings": warnings,
         "label": label,
         "home": profile_home
     }
@@ -433,6 +451,19 @@ def status_payload(tool_key, n, metadata=None):
 
 def print_error(message):
     print(f"Error: {message}", file=sys.stderr)
+
+def print_json_payload(payload):
+    print(json.dumps(payload, indent=2))
+
+def print_json_error(message, code, error_type="runtime_error"):
+    print_json_payload({
+        "ok": False,
+        "error": {
+            "type": error_type,
+            "message": str(message),
+            "code": code,
+        },
+    })
 
 def print_status_table(tool_key, statuses):
     print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16} Home")
@@ -452,7 +483,7 @@ def cmd_list(args):
         "profiles": statuses,
     }
     if args.json:
-        print(json.dumps(payload, indent=2))
+        print_json_payload(payload)
     else:
         print(f"{TOOLS[args.tool]['name']}")
         print(f"Next profile: {payload['next_profile']}")
@@ -463,11 +494,14 @@ def cmd_status(args):
     try:
         n = parse_profile(args.profile)
     except ValueError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     status = status_payload(args.tool, n)
     if args.json:
-        print(json.dumps(status, indent=2))
+        print_json_payload(status)
     else:
         print_status_table(args.tool, [status])
     return EXIT_OK
@@ -513,13 +547,41 @@ def cmd_launch(args):
     try:
         n = parse_profile(args.profile)
     except ValueError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
+    dry_payload = {
+        "ok": True,
+        "tool": args.tool,
+        "profile": f"p{n}",
+        "platform": args.platform,
+        "home": profile_home(args.tool, n),
+        "command": [TOOLS[args.tool]["cmd"]] + (args.args or []),
+        "environment": {TOOLS[args.tool]["env_var"]: profile_home(args.tool, n)},
+    }
+    if args.tool == "agy":
+        dry_payload["environment"]["HOME"] = profile_home(args.tool, n)
     if not is_valid_display_profile(args.tool, n):
-        print_error(f"profile p{n} does not exist and is outside visible slots")
+        message = f"profile p{n} does not exist and is outside visible slots"
+        if args.json:
+            print_json_error(message, EXIT_USAGE, "usage_error")
+        else:
+            print_error(message)
         return EXIT_USAGE
-    if not status_payload(args.tool, n)["has_token"]:
-        print_error(f"profile p{n} has no token; use login or import first")
+    status = status_payload(args.tool, n)
+    dry_payload["status"] = status
+    dry_payload["would_launch"] = status["has_token"]
+    if args.dry_run:
+        print_json_payload(dry_payload) if args.json else print(" ".join(shlex.quote(part) for part in dry_payload["command"]))
+        return EXIT_OK
+    if not status["has_token"]:
+        message = f"profile p{n} has no token; use login or import first"
+        if args.json:
+            print_json_error(message, EXIT_NO_TOKEN, "no_token")
+        else:
+            print_error(message)
         return EXIT_NO_TOKEN
     return run_cli_tool(args.tool, n, args.args)
 
@@ -554,17 +616,34 @@ def cmd_import(args):
     try:
         n = parse_profile(args.profile) if args.profile else None
     except ValueError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     try:
         imported_num, dest_file = import_credential_file(args.tool, args.path, n)
     except FileNotFoundError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_NOT_FOUND, "not_found")
+        else:
+            print_error(str(e))
         return EXIT_NOT_FOUND
     except Exception as e:
-        print_error(f"import failed: {e}")
+        if args.json:
+            print_json_error(f"import failed: {e}", EXIT_RUNTIME, "runtime_error")
+        else:
+            print_error(f"import failed: {e}")
         return EXIT_RUNTIME
-    print(f"Imported {args.tool} credential into p{imported_num}: {dest_file}")
+    if args.json:
+        print_json_payload({
+            "ok": True,
+            "tool": args.tool,
+            "profile": f"p{imported_num}",
+            "destination": dest_file,
+        })
+    else:
+        print(f"Imported {args.tool} credential into p{imported_num}: {dest_file}")
     return EXIT_OK
 
 def default_export_dir():
@@ -613,15 +692,32 @@ def cmd_export(args):
         n = parse_profile(args.profile)
         dest_file = export_credential_file(args.tool, n, args.to)
     except ValueError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     except PermissionError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_NO_TOKEN, "no_token")
+        else:
+            print_error(str(e))
         return EXIT_NO_TOKEN
     except Exception as e:
-        print_error(f"export failed: {e}")
+        if args.json:
+            print_json_error(f"export failed: {e}", EXIT_RUNTIME, "runtime_error")
+        else:
+            print_error(f"export failed: {e}")
         return EXIT_RUNTIME
-    print(f"Exported {args.tool} p{n}: {dest_file}")
+    if args.json:
+        print_json_payload({
+            "ok": True,
+            "tool": args.tool,
+            "profile": f"p{n}",
+            "destination": dest_file,
+        })
+    else:
+        print(f"Exported {args.tool} p{n}: {dest_file}")
     return EXIT_OK
 
 def label_profile(tool_key, profile_num, label):
@@ -701,12 +797,36 @@ def profile_number_from_dir_name(name):
 def is_windows_agy_backup_name(name):
     return name.startswith("cred-p") and name.endswith(".json") and name[6:-5].isdigit()
 
+def path_is_within(child, parent):
+    child = Path(child).resolve()
+    parent = Path(parent).resolve()
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+def deletion_preflight_paths(path):
+    if not path.exists():
+        return []
+    paths = []
+    for root, dirs, files in os.walk(path):
+        for file_name in files:
+            paths.append(str(Path(root) / file_name))
+        for dir_name in dirs:
+            dir_path = Path(root) / dir_name
+            if not any(dir_path.iterdir()):
+                paths.append(str(dir_path))
+    if not paths:
+        paths.append(str(path))
+    return sorted(paths)
+
 def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=False):
-    converted = 0
+    result = {"converted": 0, "invalid": 0, "items": []}
     src_agy = Path(src_base) / "agy-homes"
     dst_agy = Path(dst_base) / "agy-homes"
     if not src_agy.exists():
-        return converted
+        return result
 
     if direction == "wsl":
         for profile_dir in src_agy.iterdir():
@@ -718,10 +838,16 @@ def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=Fa
             token_path = profile_dir / ".gemini" / "oauth_creds.json"
             if not token_path.exists():
                 continue
-            token_data = read_wsl_agy_oauth(str(token_path))
-            account = account_email_from_google_accounts(str(profile_dir))
             dest = dst_agy / f"cred-p{n}.json"
-            converted += 1
+            try:
+                token_data = read_wsl_agy_oauth(str(token_path))
+                account = account_email_from_google_accounts(str(profile_dir))
+            except Exception as e:
+                result["invalid"] += 1
+                result["items"].append({"source": str(token_path), "destination": str(dest), "status": "invalid", "error": str(e)})
+                continue
+            result["converted"] += 1
+            result["items"].append({"source": str(token_path), "destination": str(dest), "status": "converted"})
             if not dry_run:
                 write_json_atomic(str(dest), build_windows_agy_credential(token_data, account))
     else:
@@ -731,14 +857,21 @@ def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=Fa
             if not num_text.isdigit():
                 continue
             n = int(num_text)
-            token_data, account = decode_windows_agy_credential(str(cred_path))
             dest_profile = dst_agy / f"p{n}"
-            converted += 1
+            dest = dest_profile / ".gemini" / "oauth_creds.json"
+            try:
+                token_data, account = decode_windows_agy_credential(str(cred_path))
+            except Exception as e:
+                result["invalid"] += 1
+                result["items"].append({"source": str(cred_path), "destination": str(dest), "status": "invalid", "error": str(e)})
+                continue
+            result["converted"] += 1
+            result["items"].append({"source": str(cred_path), "destination": str(dest), "status": "converted"})
             if not dry_run:
-                write_json_atomic(str(dest_profile / ".gemini" / "oauth_creds.json"), token_data)
+                write_json_atomic(str(dest), token_data)
                 if account:
                     write_json_atomic(str(dest_profile / ".gemini" / "google_accounts.json"), {"active": account})
-    return converted
+    return result
 
 def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     dirs_to_sync = ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"]
@@ -751,14 +884,19 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     if not dst_base.exists():
         raise FileNotFoundError(f"destination path not found: {dst_base}")
     copied = 0
-    would_delete = 0
+    skipped = 0
+    delete_paths = []
+    copied_items = []
+    skipped_items = []
     for name in dirs_to_sync:
         src = src_base / name
         dst = dst_base / name
         if not src.exists():
             continue
+        if not path_is_within(dst, dst_base):
+            raise PermissionError(f"refusing to sync unsafe destination path: {dst}")
         if hard_mode and dst.exists():
-            would_delete += count_files_under(dst)
+            delete_paths.extend(deletion_preflight_paths(dst))
         if hard_mode and dst.exists() and not dry_run:
             shutil.rmtree(dst)
         if not dry_run:
@@ -770,37 +908,78 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
                 (dst / rel_root).mkdir(parents=True, exist_ok=True)
             for file_name in files:
                 if direction == "windows" and name == "agy-homes" and is_windows_agy_backup_name(file_name):
+                    skipped += 1
                     continue
                 src_file = Path(root) / file_name
                 if src_file.is_symlink():
+                    skipped += 1
+                    skipped_items.append({"source": str(src_file), "reason": "symlink"})
                     continue
                 dst_file = dst / rel_root / file_name
                 if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
                     copied += 1
+                    copied_items.append({"source": str(src_file), "destination": str(dst_file)})
                     if not dry_run:
                         dst_file.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_file, dst_file)
-    converted = sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
-    return {"files": copied, "converted": converted, "would_delete": would_delete}
+                else:
+                    skipped += 1
+                    skipped_items.append({"source": str(src_file), "destination": str(dst_file), "reason": "up-to-date"})
+    conversion = sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
+    return {
+        "ok": True,
+        "direction": direction,
+        "mode": mode,
+        "dry_run": dry_run,
+        "source_base": str(src_base),
+        "destination_base": str(dst_base),
+        "files": copied,
+        "copied": copied,
+        "skipped": skipped,
+        "converted": conversion["converted"],
+        "invalid": conversion["invalid"],
+        "would_delete": len(delete_paths),
+        "delete_paths": delete_paths,
+        "copied_items": copied_items,
+        "skipped_items": skipped_items,
+        "conversion_items": conversion["items"],
+    }
 
 def cmd_sync(args):
     try:
         result = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
     except PermissionError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     except FileNotFoundError as e:
-        print_error(str(e))
+        if args.json:
+            print_json_error(str(e), EXIT_NOT_FOUND, "not_found")
+        else:
+            print_error(str(e))
         return EXIT_NOT_FOUND
     except Exception as e:
-        print_error(f"sync failed: {e}")
+        if args.json:
+            print_json_error(f"sync failed: {e}", EXIT_RUNTIME, "runtime_error")
+        else:
+            print_error(f"sync failed: {e}")
         return EXIT_RUNTIME
+    if args.json:
+        print_json_payload(result)
+        return EXIT_OK
     action = "Would update" if args.dry_run else "Updated"
     print(
-        f"{action} {result['files']} files and {result['converted']} agy credentials "
+        f"{action} {result['copied']} files, skipped {result['skipped']}, "
+        f"converted {result['converted']} agy credentials, invalid {result['invalid']} "
         f"({args.source} -> {'windows' if args.source == 'wsl' else 'wsl'}, {args.mode}); "
-        f"hard-delete preflight: {result['would_delete']} files"
+        f"hard-delete preflight: {result['would_delete']} paths"
     )
+    if result["delete_paths"]:
+        print("Would delete:")
+        for path in result["delete_paths"]:
+            print(f"  {path}")
     return EXIT_OK
 
 def print_header(title=""):
@@ -1234,7 +1413,9 @@ def sync_profiles():
     if is_hard:
         try:
             preflight = sync_profiles_noninteractive(direction, mode, dry_run=True, yes=True)
-            print(f"Hard-delete preflight: {preflight['would_delete']} destination files would be removed.")
+            print(f"Hard-delete preflight: {preflight['would_delete']} destination paths would be removed.")
+            for path in preflight["delete_paths"]:
+                print(f"  {path}")
         except Exception as e:
             print(f"{CLR_RED}Preflight failed: {e}{CLR_RESET}")
             input("\nPress Enter to return...")
@@ -1255,7 +1436,10 @@ def sync_profiles():
         return
 
     logging.info(f"Sync completed successfully: {result}")
-    print(f"{CLR_GREEN}Updated {result['files']} files and converted {result['converted']} agy credentials.{CLR_RESET}")
+    print(
+        f"{CLR_GREEN}Updated {result['copied']} files, skipped {result['skipped']}, "
+        f"converted {result['converted']} agy credentials, invalid {result['invalid']}.{CLR_RESET}"
+    )
     print(f"\n{CLR_CYAN}Sync Complete!{CLR_RESET}")
     input("\nPress Enter to return...")
 
@@ -1281,6 +1465,9 @@ def build_parser():
     launch_p.add_argument("tool", choices=TOOLS.keys())
     launch_p.add_argument("profile")
     launch_p.add_argument("args", nargs=argparse.REMAINDER, help="arguments passed after -- to the target CLI")
+    launch_p.add_argument("--dry-run", action="store_true", help="show launch plan without running the tool")
+    launch_p.add_argument("--json", action="store_true")
+    launch_p.add_argument("--platform", choices=("auto", "wsl", "windows"), default="auto")
     launch_p.set_defaults(func=cmd_launch)
 
     login_p = sub.add_parser("login", aliases=["add"], help="run native CLI login flow")
@@ -1292,12 +1479,14 @@ def build_parser():
     import_p.add_argument("tool", choices=TOOLS.keys())
     import_p.add_argument("path")
     import_p.add_argument("profile", nargs="?")
+    import_p.add_argument("--json", action="store_true")
     import_p.set_defaults(func=cmd_import)
 
     export_p = sub.add_parser("export", help="export a profile credential")
     export_p.add_argument("tool", choices=TOOLS.keys())
     export_p.add_argument("profile")
     export_p.add_argument("--to")
+    export_p.add_argument("--json", action="store_true")
     export_p.set_defaults(func=cmd_export)
 
     label_p = sub.add_parser("label", help="set or clear a profile label")
@@ -1317,11 +1506,50 @@ def build_parser():
     sync_p.add_argument("--mode", choices=("soft", "hard"), default="soft")
     sync_p.add_argument("--dry-run", action="store_true")
     sync_p.add_argument("--yes", action="store_true", help="confirm hard sync")
+    sync_p.add_argument("--json", action="store_true")
     sync_p.set_defaults(func=cmd_sync)
 
     return parser
 
+def normalize_launch_argv(argv):
+    if not argv or argv[0] != "launch" or "--" in argv[:1]:
+        return argv
+    if len(argv) < 4:
+        return argv
+    try:
+        passthrough_index = argv.index("--")
+    except ValueError:
+        passthrough_index = len(argv)
+
+    head = argv[1:passthrough_index]
+    tail = argv[passthrough_index:]
+    if len(head) < 2:
+        return argv
+
+    tool = head[0]
+    profile = head[1]
+    rest = head[2:]
+    launch_flags = []
+    passthrough_before_separator = []
+    idx = 0
+    while idx < len(rest):
+        item = rest[idx]
+        if item in ("--dry-run", "--json"):
+            launch_flags.append(item)
+            idx += 1
+        elif item == "--platform" and idx + 1 < len(rest):
+            launch_flags.extend([item, rest[idx + 1]])
+            idx += 2
+        else:
+            passthrough_before_separator.extend(rest[idx:])
+            break
+    if passthrough_before_separator and not tail:
+        tail = ["--"] + passthrough_before_separator
+
+    return ["launch"] + launch_flags + [tool, profile] + tail
+
 def run_cli(argv):
+    argv = normalize_launch_argv(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
