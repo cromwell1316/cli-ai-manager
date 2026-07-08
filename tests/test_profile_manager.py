@@ -196,6 +196,28 @@ def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
     assert quota_summary({"quota": quota}) == "FM:0% FH:0% FL:0% PL:5% PH:5%"
 
 
+def test_interactive_agy_quota_columns_split_model_limits():
+    from cli_profile_manager.interactive import agy_quota_cells, agy_status_quota_columns
+
+    status = {
+        "quota": {
+            "state": "available",
+            "limits": {
+                "gemini_3_5_flash_medium": {"model": "Gemini 3.5 Flash (Medium)", "percent": 0},
+                "gemini_3_5_flash_high": {"model": "Gemini 3.5 Flash (High)", "percent": 94},
+                "gemini_3_1_pro_low": {"model": "Gemini 3.1 Pro (Low)", "percent": 5},
+                "claude_sonnet_4_6_thinking": {"model": "Claude Sonnet 4.6 (Thinking)", "percent": 100},
+                "claude_opus_4_1": {"model": "Claude Opus 4.1", "percent": 100},
+            },
+        },
+    }
+
+    columns = agy_status_quota_columns([status])
+
+    assert columns[:7] == ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
+    assert agy_quota_cells(status, columns)[:7] == ["0%", "94%", "", "5%", "", "100%", "100%"]
+
+
 def test_codex_quota_parser_extracts_status_limit_variants():
     from cli_profile_manager.quota import parse_quota
 

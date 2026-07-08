@@ -423,53 +423,61 @@ def quota_summary(status):
     return ", ".join(parts) or state
 
 
-def agy_quota_summary(quota):
+def agy_quota_label(model):
+    model_l = model.lower()
+    if "gemini" in model_l and "flash" in model_l:
+        label = "F"
+    elif "gemini" in model_l and "pro" in model_l:
+        label = "P"
+    elif "claude" in model_l:
+        label = "C"
+    elif "gpt" in model_l:
+        label = "G"
+    else:
+        return model[:8]
+
+    if "medium" in model_l:
+        tier = "M"
+    elif "high" in model_l:
+        tier = "H"
+    elif "low" in model_l:
+        tier = "L"
+    elif "sonnet" in model_l:
+        tier = "S"
+    elif "opus" in model_l:
+        tier = "O"
+    else:
+        tier = ""
+    return f"{label}{tier}"
+
+
+def agy_quota_entries(quota):
     limits = quota.get("limits", {})
-    groups = {
-        "flash": [],
-        "pro": [],
-        "claude": [],
-        "gpt": [],
-        "other": [],
+    order = {"F": 0, "P": 1, "C": 2, "G": 3}
+    label_order = {
+        "FM": 0,
+        "FH": 1,
+        "FL": 2,
+        "P": 3,
+        "PL": 4,
+        "PH": 5,
+        "CS": 6,
+        "CO": 7,
     }
-    for name, data in limits.items():
+    entries = []
+    for idx, (name, data) in enumerate(limits.items()):
         value = data.get("percent_left", data.get("percent"))
         if value is None:
             continue
         model = data.get("model", name)
-        model_l = model.lower()
-        if "gemini" in model_l and "flash" in model_l:
-            label = "F"
-            bucket = "flash"
-        elif "gemini" in model_l and "pro" in model_l:
-            label = "P"
-            bucket = "pro"
-        elif "claude" in model_l:
-            label = "C"
-            bucket = "claude"
-        elif "gpt" in model_l:
-            label = "G"
-            bucket = "gpt"
-        else:
-            label = model[:8]
-            bucket = "other"
-        if "medium" in model_l:
-            tier = "M"
-        elif "high" in model_l:
-            tier = "H"
-        elif "low" in model_l:
-            tier = "L"
-        elif "sonnet" in model_l:
-            tier = "S"
-        elif "opus" in model_l:
-            tier = "O"
-        else:
-            tier = ""
-        groups[bucket].append(f"{label}{tier}:{value:g}%")
-    parts = []
-    for bucket in ("flash", "pro", "claude", "gpt", "other"):
-        parts.extend(groups[bucket])
-    return " ".join(parts)
+        label = agy_quota_label(model)
+        entries.append((label, f"{value:g}%", order.get(label[:1], 99), label_order.get(label, 99), idx, name))
+    entries.sort(key=lambda item: (item[2], item[3], item[4], item[5]))
+    return [(label, value) for label, value, _, _, _, _ in entries]
+
+
+def agy_quota_summary(quota):
+    return " ".join(f"{label}:{value}" for label, value in agy_quota_entries(quota))
 
 def print_status_table(tool_key, statuses):
     has_quota = any("quota" in status for status in statuses)

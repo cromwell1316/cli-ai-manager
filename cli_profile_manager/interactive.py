@@ -31,6 +31,7 @@ from .cli import (
     default_export_dir,
     export_credential_file,
     find_windows_user,
+    agy_quota_entries,
     first_free_profile,
     get_display_profiles,
     get_profile_status,
@@ -52,6 +53,7 @@ from .cli import (
     write_json_atomic,
 )
 
+AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
 QUOTA_FRESH_SECONDS = 300
@@ -194,6 +196,38 @@ def quota_text(status, color=True, width=24):
     return color_quota_text(text, status) if color else text
 
 
+def agy_quota_cell_map(status):
+    quota = status.get("quota") or {}
+    if quota.get("state") != "available":
+        return {}
+    return dict(agy_quota_entries(quota))
+
+
+def agy_status_quota_columns(statuses):
+    columns = list(AGY_DEFAULT_QUOTA_COLUMNS)
+    for status in statuses:
+        for label in agy_quota_cell_map(status):
+            if label not in columns:
+                columns.append(label)
+    return columns
+
+
+def agy_quota_cells(status, columns):
+    cells = agy_quota_cell_map(status)
+    if cells:
+        return [cells.get(column, "") for column in columns]
+    quota = status.get("quota") or {}
+    state = quota.get("state")
+    marker = ""
+    if state == "loading":
+        marker = "load"
+    elif state == "unknown":
+        marker = "retry"
+    elif state in ("error", "timeout"):
+        marker = "err"
+    return [marker if idx == 0 else "" for idx, _ in enumerate(columns)]
+
+
 def invalidate_quota_cache(tool_key=None, profile_num=None):
     with INTERACTIVE_QUOTA_LOCK:
         if tool_key is None:
@@ -286,31 +320,46 @@ def render_status_screen(tool_key):
 
     metadata = load_metadata()
     profiles = get_display_profiles(tool_key)
+    statuses = [status_with_auto_quota(tool_key, n, metadata) for n in profiles]
 
-    widths = {
-        "profile": 8,
-        "account": 38 if tool_key == "agy" else 32,
-        "status": 10,
-        "quota": 46 if tool_key == "agy" else 52,
-        "label": 14,
-    }
+    if tool_key == "agy":
+        quota_columns = agy_status_quota_columns(statuses)
+        widths = {
+            "profile": 8,
+            "account": 38,
+            "status": 10,
+            "quota": 5,
+            "label": 14,
+        }
+        quota_header = " ".join(f"{column:<{widths['quota']}}" for column in quota_columns)
+        total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
+        total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
+    else:
+        quota_columns = []
+        widths = {
+            "profile": 8,
+            "account": 32,
+            "status": 10,
+            "quota": 52,
+            "label": 14,
+        }
+        quota_header = f"{'Quota':<{widths['quota']}}"
+        total_width = sum(widths.values()) + len(widths) - 1
     print(
         f"{CLR_BOLD}{CLR_WHITE}"
         f"{'Profile':<{widths['profile']}} "
         f"{'Active Account / Tier':<{widths['account']}} "
         f"{'Status':<{widths['status']}} "
-        f"{'Quota':<{widths['quota']}} "
+        f"{quota_header} "
         f"{'Label':<{widths['label']}}"
         f"{CLR_RESET}"
     )
-    print("-" * (sum(widths.values()) + len(widths) - 1))
+    print("-" * total_width)
 
-    for n in profiles:
-        status = status_with_auto_quota(tool_key, n, metadata)
+    for status in statuses:
         stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
         lbl_str = f"({status['label']})" if status["label"] else ""
         email_color = CLR_CYAN if status["has_token"] else CLR_RESET
-        quota = quota_text(status, width=widths["quota"])
         profile = f"p{status['num']}"
         display_email = status["email"]
         quota_account = (status.get("quota") or {}).get("account")
@@ -318,11 +367,18 @@ def render_status_screen(tool_key):
             display_email = quota_account
         email = f"{email_color}{display_email}{CLR_RESET}"
         label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
+        if tool_key == "agy":
+            quota = " ".join(
+                visible_fit(cell, widths["quota"])
+                for cell in agy_quota_cells(status, quota_columns)
+            )
+        else:
+            quota = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
         print(
             f"{visible_fit(profile, widths['profile'])} "
             f"{visible_fit(email, widths['account'])} "
             f"{visible_fit(stat_str, widths['status'])} "
-            f"{visible_fit(quota, widths['quota'])} "
+            f"{quota} "
             f"{visible_fit(label, widths['label'])}"
         )
     print()
