@@ -127,6 +127,37 @@ def test_agy_quota_parser_extracts_common_usage_variants():
     assert quota_summary({"quota": quota}) == "local:73%, cloud:60%, Gemini 2.5 Pro quota:41%"
 
 
+def test_agy_quota_parser_extracts_models_and_quota_output():
+    from cli_profile_manager.cli import quota_summary
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "agy",
+        """
+        └ Models & Quota
+        Account: user@example.com
+        ALL MODELS
+        Gemini 3.5 Flash (Medium)
+        [░░░░░░░░░░] 0.00%
+        Refreshes in 100h 47m
+        Gemini 3.1 Pro (Low)
+        [███░░░░░░░] 5.00%
+        5% remaining · Refreshes in 76h 48m
+        Claude Sonnet 4.6 (Thinking)
+        [██████████] 100.00%
+        Quota available
+        """,
+    )
+
+    assert quota["state"] == "available"
+    assert quota["current_limit"] == "gemini_3_5_flash_medium"
+    assert quota["limits"]["gemini_3_5_flash_medium"]["percent"] == 0
+    assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
+    assert quota["limits"]["claude_sonnet_4_6_thinking"]["percent"] == 100
+    assert "usage_1" not in quota["limits"]
+    assert quota_summary({"quota": quota}) == "Gemini 3.5 Flash (Medium):0%"
+
+
 def test_codex_quota_parser_extracts_status_limit_variants():
     from cli_profile_manager.quota import parse_quota
 

@@ -15,6 +15,10 @@ DEFAULT_ROWS = 40
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_IDLE_SECONDS = 0.8
 DEFAULT_STARTUP_SECONDS = 3.0
+DEFAULT_POST_COMMAND_SECONDS = 4.0
+DEFAULT_KEY_DELAY_SECONDS = 0.04
+DEFAULT_AGY_STARTUP_SECONDS = 8.0
+DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
 
 
 QUOTA_COMMANDS = {
@@ -135,7 +139,7 @@ def generic_quota_key_and_label(line, fallback_index=1):
     if before_percent:
         label = before_percent[-36:].strip()
         return stable_limit_key(label), label
-    return f"usage_{fallback_index}", "usage"
+    return None, None
 
 
 def parse_fraction_value(line):
@@ -154,6 +158,8 @@ def add_agy_line_limit(quota, line, fallback_index=1):
     if not re.search(r"\b(quota|limit|usage|remaining|left|available|used|refresh|reset|messages?|tasks?|requests?|tokens?|daily|today|local|cloud|gemini|claude|gpt)\b", line, re.I):
         return False
     key, label = generic_quota_key_and_label(line, fallback_index)
+    if key is None:
+        return False
     if key in quota["limits"]:
         return False
     percent = parse_percent_value(line)
@@ -292,6 +298,9 @@ def parse_agy_quota(screen_text):
             continue
         model_name = agy_model_name_from_line(line)
         if model_name:
+            if current_model is None:
+                current_model = model_name
+                quota["current_model"] = current_model
             percent = None
             refresh = None
             search_lines = lines[idx:idx + 4]
@@ -310,6 +319,8 @@ def parse_agy_quota(screen_text):
                 }
                 if refresh:
                     quota["limits"][key]["refreshes_in"] = refresh
+                if current_model and model_name == current_model:
+                    quota["current_limit"] = key
     daily = parse_percent_limit(text, (
         r"(?:daily|today)\b.*?(\d{1,3})\s*%\s*(?:left|remaining|used)?",
         r"(\d{1,3})\s*%\s*(?:left|remaining).*?(?:daily|today)\b",
@@ -391,6 +402,22 @@ def wait_for_startup(fd, output, startup_seconds):
             output.append(read_available(fd))
 
 
+def wait_after_command(fd, output, minimum_seconds):
+    deadline = time.monotonic() + minimum_seconds
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            output.append(read_available(fd))
+
+
+def send_interactive_command(fd, command, key_delay_seconds=DEFAULT_KEY_DELAY_SECONDS):
+    text = f"\x15{command}\r"
+    for ch in text:
+        os.write(fd, ch.encode("utf-8"))
+        if key_delay_seconds > 0:
+            time.sleep(key_delay_seconds)
+
+
 def terminate_process(proc, master_fd, output):
     if proc.poll() is not None:
         return
@@ -447,13 +474,18 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
     os.close(slave_fd)
     output = []
     try:
-        startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", DEFAULT_STARTUP_SECONDS))
+        startup_default = DEFAULT_AGY_STARTUP_SECONDS if tool_key == "agy" else DEFAULT_STARTUP_SECONDS
+        startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
         wait_for_startup(master_fd, output, max(0.0, startup_seconds))
         wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
         slash_command = quota_command_for(tool_key)
         if not slash_command:
             raise QuotaProbeError("unsupported", f"quota command is not configured for {tool_key}")
-        os.write(master_fd, f"{slash_command}\r".encode("utf-8"))
+        key_delay_seconds = float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", DEFAULT_KEY_DELAY_SECONDS))
+        send_interactive_command(master_fd, slash_command, max(0.0, key_delay_seconds))
+        post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
+        post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
+        wait_after_command(master_fd, output, max(0.0, post_command_seconds))
         return wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
     finally:
         terminate_process(proc, master_fd, output)
