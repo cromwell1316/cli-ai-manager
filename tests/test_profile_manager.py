@@ -583,8 +583,9 @@ def test_interactive_stale_quota_survives_failed_refresh(monkeypatch):
         }
 
     monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
     interactive.invalidate_quota_cache()
-    stale_fetched_at = interactive.time.time() - interactive.QUOTA_FRESH_SECONDS - 1
+    stale_fetched_at = interactive.time.time() - interactive.interactive_quota_fresh_seconds() - 1
     interactive.store_quota_cache("agy", 1, {
         "state": "ready",
         "job_state": "ready",
@@ -663,6 +664,70 @@ def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
     assert interactive.next_quota_wake_timeout("agy", now=100.0) == pytest.approx(0.2)
     assert interactive.next_quota_wake_timeout("agy", now=100.3) == 0.0
 
+    interactive.invalidate_quota_cache()
+
+
+def test_interactive_next_quota_wake_timeout_tracks_auto_refresh(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    interactive.invalidate_quota_cache()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "ready",
+        "job_state": "ready",
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": 100.0,
+        },
+        "fetched_at": 100.0,
+        "started_at": None,
+        "attempts": 0,
+        "last_error": None,
+        "next_retry_at": None,
+    })
+
+    assert interactive.next_quota_wake_timeout("agy", now=699.8) == pytest.approx(0.2)
+    assert interactive.next_quota_wake_timeout("agy", now=700.0) == 0.0
+    assert interactive.quota_refresh_countdown("agy", now=640.0) == "1m00s"
+    assert interactive.quota_refresh_countdown("agy", now=700.0) == "now"
+    interactive.invalidate_quota_cache()
+
+
+def test_interactive_force_refresh_preserves_stale_quota(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    submitted = []
+
+    class FakeScheduler:
+        def submit(self, tool_key, profile_num):
+            submitted.append((tool_key, profile_num))
+            return object()
+
+    monkeypatch.setattr(interactive, "quota_scheduler", lambda: FakeScheduler())
+    interactive.invalidate_quota_cache()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "ready",
+        "job_state": "ready",
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": 100.0,
+        },
+        "fetched_at": 100.0,
+        "started_at": None,
+        "attempts": 0,
+        "last_error": None,
+        "next_retry_at": None,
+    })
+
+    assert interactive.force_quota_refresh("agy") == 1
+    entry = interactive.quota_cache_entry("agy", 1)
+
+    assert submitted == [("agy", 1)]
+    assert entry["job_state"] == "queued"
+    assert entry["quota"]["limits"]["daily"]["percent"] == 77
+    assert entry["quota"]["job_state"] == "queued"
     interactive.invalidate_quota_cache()
 
 
@@ -938,18 +1003,18 @@ def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch, ref
     import cli_profile_manager.interactive as interactive
 
     rendered = []
-    invalidated = []
+    refreshed = []
     keys = iter([refresh_key, "enter"])
 
     monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key, status_message=None: rendered.append((tool_key, status_message)))
     monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
     monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool_key: None)
-    monkeypatch.setattr(interactive, "invalidate_quota_cache", lambda tool_key=None, profile_num=None: invalidated.append((tool_key, profile_num)))
+    monkeypatch.setattr(interactive, "force_quota_refresh", lambda tool_key=None: refreshed.append(tool_key) or 2)
 
     interactive.view_status("agy")
 
-    assert rendered == [("agy", None), ("agy", "Refreshing quota now...")]
-    assert invalidated == [("agy", None)]
+    assert rendered == [("agy", None), ("agy", "Refreshing quota now for 2 profiles...")]
+    assert refreshed == ["agy"]
 
 
 def test_interactive_get_key_reads_ctrl_r(monkeypatch):

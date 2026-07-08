@@ -207,7 +207,7 @@ def store_quota_cache(tool_key, profile_num, entry):
 def quota_entry_fresh(entry, now=None):
     now = time.time() if now is None else now
     fetched_at = entry.get("fetched_at")
-    return fetched_at is not None and now - fetched_at <= QUOTA_FRESH_SECONDS
+    return fetched_at is not None and now - fetched_at <= interactive_quota_fresh_seconds()
 
 
 def quota_entry_stale_usable(entry, now=None):
@@ -543,6 +543,35 @@ def invalidate_quota_cache(tool_key=None, profile_num=None):
         close_persistent_quota_sessions(close_tool, close_home)
 
 
+def force_quota_refresh(tool_key=None):
+    submissions = []
+    with INTERACTIVE_QUOTA_LOCK:
+        for key, entry in list(INTERACTIVE_QUOTA_CACHE.items()):
+            entry_tool, profile_num = key
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+                continue
+            entry["state"] = "queued"
+            entry["job_state"] = "queued"
+            entry["started_at"] = None
+            entry["next_retry_at"] = None
+            quota = entry.get("quota") or {}
+            if quota:
+                quota["job_state"] = "queued"
+                entry["quota"] = quota
+            else:
+                entry["quota"] = loading_quota("queued")
+            submissions.append((entry_tool, profile_num))
+    for entry_tool, profile_num in submissions:
+        future = quota_scheduler().submit(entry_tool, profile_num)
+        with INTERACTIVE_QUOTA_LOCK:
+            entry = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(entry_tool, profile_num))
+            if entry is not None:
+                entry["future"] = future
+    return len(submissions)
+
+
 def any_quota_loading(tool_key=None):
     with INTERACTIVE_QUOTA_LOCK:
         for (entry_tool, _), entry in INTERACTIVE_QUOTA_CACHE.items():
@@ -556,12 +585,19 @@ def any_quota_loading(tool_key=None):
 def next_quota_wake_timeout(tool_key=None, now=None, active_timeout=0.5, max_retry_timeout=0.5):
     now = time.time() if now is None else now
     next_retry_at = None
+    next_refresh_at = None
     with INTERACTIVE_QUOTA_LOCK:
         for (entry_tool, _), entry in INTERACTIVE_QUOTA_CACHE.items():
             if tool_key is not None and entry_tool != tool_key:
                 continue
             if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
                 return active_timeout
+            fetched_at = entry.get("fetched_at")
+            quota = entry.get("quota") or {}
+            if fetched_at is not None and quota.get("state") == "available":
+                refresh_at = fetched_at + interactive_quota_fresh_seconds()
+                if next_refresh_at is None or refresh_at < next_refresh_at:
+                    next_refresh_at = refresh_at
             retry_at = entry.get("next_retry_at")
             if retry_at is None:
                 continue
@@ -569,9 +605,46 @@ def next_quota_wake_timeout(tool_key=None, now=None, active_timeout=0.5, max_ret
                 continue
             if next_retry_at is None or retry_at < next_retry_at:
                 next_retry_at = retry_at
-    if next_retry_at is None:
+    candidates = [value for value in (next_retry_at, next_refresh_at) if value is not None]
+    if not candidates:
         return None
-    return max(0.0, min(max_retry_timeout, next_retry_at - now))
+    next_wake_at = min(candidates)
+    return max(0.0, min(max_retry_timeout, next_wake_at - now))
+
+
+def format_countdown(seconds):
+    seconds = max(0, int(seconds + 0.999))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def quota_refresh_countdown(tool_key=None, now=None):
+    now = time.time() if now is None else now
+    next_refresh_at = None
+    with INTERACTIVE_QUOTA_LOCK:
+        for (entry_tool, _), entry in INTERACTIVE_QUOTA_CACHE.items():
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+                return "updating now"
+            fetched_at = entry.get("fetched_at")
+            quota = entry.get("quota") or {}
+            if fetched_at is None or quota.get("state") != "available":
+                continue
+            refresh_at = fetched_at + interactive_quota_fresh_seconds()
+            if next_refresh_at is None or refresh_at < next_refresh_at:
+                next_refresh_at = refresh_at
+    if next_refresh_at is None:
+        return "pending"
+    remaining = next_refresh_at - now
+    if remaining <= 0:
+        return "now"
+    return format_countdown(remaining)
 
 
 def quota_runtime_snapshot(tool_key=None):
@@ -767,7 +840,10 @@ def render_status_screen(tool_key, status_message=None):
     print()
     if status_message:
         print(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
-    print("Press Enter/q to return, r to refresh quota now...")
+    print(
+        f"Next auto refresh: {CLR_CYAN}{quota_refresh_countdown(tool_key)}{CLR_RESET}. "
+        "Press Enter/q to return, r to refresh quota now..."
+    )
 
 
 def view_status(tool_key):
@@ -781,8 +857,11 @@ def view_status(tool_key):
         if key in ("enter", "esc", "q"):
             return
         elif key in ("r", "R", "ctrl+r", "к", "К"):
-            invalidate_quota_cache(tool_key)
-            status_message = "Refreshing quota now..."
+            count = force_quota_refresh(tool_key)
+            if count:
+                status_message = f"Refreshing quota now for {count} profiles..."
+            else:
+                status_message = "Quota refresh is already running..."
             continue
         elif key == "ctrl+c":
             sys.exit(0)
