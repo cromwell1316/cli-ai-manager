@@ -274,6 +274,41 @@ def test_interactive_quota_text_does_not_show_unknown_state():
     assert interactive.quota_text(status, color=False) == "not parsed"
 
 
+def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.delenv("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", raising=False)
+    monkeypatch.delenv("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", raising=False)
+
+    assert interactive.interactive_quota_timeout("agy") == 24.0
+    assert interactive.interactive_quota_timeout("codex") == 12.0
+
+
+def test_interactive_unknown_quota_cache_is_retryable(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        calls.append((tool_key, profile_num, timeout_seconds))
+        return {
+            "quota": {
+                "state": "unknown",
+                "limits": {},
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    monkeypatch.setattr(interactive, "time", type("FakeTime", (), {"time": staticmethod(lambda: 100.0)})())
+    interactive.invalidate_quota_cache()
+
+    interactive.load_quota_background("agy", 1)
+    entry = interactive.quota_cache_entry("agy", 1)
+
+    assert entry["state"] == "retryable"
+    assert calls == [("agy", 1, 24.0)]
+
+
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])
 def test_interactive_get_key_reads_up_arrow_sequences(monkeypatch, sequence):
     sys.path.insert(0, str(ROOT))

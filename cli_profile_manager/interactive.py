@@ -83,12 +83,17 @@ def interactive_quota_enabled():
     return os.environ.get("AI_MAN_INTERACTIVE_QUOTA", "1").lower() not in ("0", "false", "no", "off")
 
 
-def interactive_quota_timeout():
-    raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "8")
+def interactive_quota_timeout(tool_key=None):
+    if tool_key == "agy":
+        raw = os.environ.get("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "24"))
+        fallback = 24.0
+    else:
+        raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "12")
+        fallback = 12.0
     try:
         return max(1.0, float(raw))
     except ValueError:
-        return 8.0
+        return fallback
 
 
 def quota_cache_entry(tool_key, profile_num):
@@ -103,7 +108,7 @@ def store_quota_cache(tool_key, profile_num, entry):
 
 def load_quota_background(tool_key, profile_num):
     try:
-        quota = quota_payload(tool_key, profile_num, interactive_quota_timeout())["quota"]
+        quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
     except Exception as e:
         quota = {
             "state": "error",
@@ -111,8 +116,9 @@ def load_quota_background(tool_key, profile_num):
             "warnings": [str(e)],
         }
     quota["fetched_at"] = time.time()
+    entry_state = "retryable" if quota.get("state") == "unknown" else "ready"
     store_quota_cache(tool_key, profile_num, {
-        "state": "ready",
+        "state": entry_state,
         "quota": quota,
         "fetched_at": quota["fetched_at"],
     })
@@ -120,8 +126,12 @@ def load_quota_background(tool_key, profile_num):
 
 def ensure_quota_loading(tool_key, profile_num):
     entry = quota_cache_entry(tool_key, profile_num)
-    if entry is not None:
+    if entry is not None and entry.get("state") != "retryable":
         return entry
+    if entry is not None and entry.get("state") == "retryable":
+        fetched_at = entry.get("fetched_at") or 0
+        if time.time() - fetched_at < 10:
+            return entry
     entry = {
         "state": "loading",
         "quota": {
