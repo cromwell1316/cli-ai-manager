@@ -122,6 +122,7 @@ AI_MAN_INTERACTIVE_QUOTA                enable/disable background quota loading
 AI_MAN_INTERACTIVE_QUOTA_TIMEOUT        generic interactive quota timeout
 AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT    AGY interactive quota timeout
 AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY AGY quota worker count
+AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS  quota color freshness threshold
 AI_MAN_QUOTA_STARTUP_SECONDS            native CLI startup wait
 AI_MAN_QUOTA_POST_COMMAND_SECONDS       post slash-command wait
 AI_MAN_QUOTA_KEY_DELAY_SECONDS          PTY slash-command key delay
@@ -153,6 +154,10 @@ medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude
 Sonnet/Opus. `...` means a quota probe is queued or running, `~` marks a stale
 value being refreshed, and `!` marks a retryable failure whose details are
 available from JSON commands or diagnostics.
+Fresh AGY quota values are colored by remaining percentage: red for 0-20%,
+yellow for 21-40%, and green above 40%. Values older than
+`AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS` are shown in white; the default is
+600 seconds.
 
 Diagnostics are safe by default:
 

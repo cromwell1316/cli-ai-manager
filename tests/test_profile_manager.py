@@ -437,7 +437,7 @@ def test_interactive_agy_quota_cache_is_per_profile(monkeypatch):
     first["future"].result(timeout=1)
     second["future"].result(timeout=1)
 
-    assert calls == [("agy", 1, 40.0), ("agy", 2, 40.0)]
+    assert sorted(calls) == [("agy", 1, 40.0), ("agy", 2, 40.0)]
     assert interactive.quota_cache_key("agy", 1) != interactive.quota_cache_key("agy", 2)
     assert interactive.quota_cache_entry("agy", 1)["quota"]["limits"]["daily"]["percent"] == 41
     assert interactive.quota_cache_entry("agy", 2)["quota"]["limits"]["daily"]["percent"] == 42
@@ -906,6 +906,33 @@ def test_interactive_agy_quota_cells_render_h05_markers():
     assert agy_quota_cells(no_token, columns) == ["", "", "", "", "", "", ""]
 
 
+def test_interactive_agy_quota_cells_color_by_percent_and_staleness(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    fresh = {"quota": {"state": "available", "fetched_at": interactive.time.time()}}
+    stale = {"quota": {"state": "available", "fetched_at": interactive.time.time() - 601}}
+
+    assert interactive.color_agy_quota_cell("20%", fresh).startswith(interactive.CLR_RED)
+    assert interactive.color_agy_quota_cell("21%", fresh).startswith(interactive.CLR_YELLOW)
+    assert interactive.color_agy_quota_cell("40%", fresh).startswith(interactive.CLR_YELLOW)
+    assert interactive.color_agy_quota_cell("41%", fresh).startswith(interactive.CLR_GREEN)
+    assert interactive.color_agy_quota_cell("41%", stale).startswith(interactive.CLR_WHITE)
+    assert interactive.color_agy_quota_cell("...", fresh).startswith(interactive.CLR_YELLOW)
+    assert interactive.color_agy_quota_cell("!", fresh).startswith(interactive.CLR_RED)
+
+
+def test_interactive_email_coloring_preserves_visible_width():
+    import cli_profile_manager.interactive as interactive
+
+    colored = interactive.color_email_parts("alex123@example.com")
+
+    assert interactive.CLR_CYAN in colored
+    assert interactive.CLR_YELLOW in colored
+    assert interactive.CLR_MAGENTA in colored
+    assert interactive.visible_len(colored) == len("alex123@example.com")
+
+
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])
 def test_interactive_get_key_reads_up_arrow_sequences(monkeypatch, sequence):
     sys.path.insert(0, str(ROOT))
@@ -1077,6 +1104,7 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
         "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
         "AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY": "not-a-number",
         "AI_MAN_INTERACTIVE_QUOTA_TIMEOUT": "0",
+        "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS": "900",
         "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
     })
 
@@ -1094,6 +1122,7 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
     assert payload["profile_roots"]["agy"] == str(tmp_path / "agy-homes")
     assert payload["quota"]["interactive_agy_concurrency"] == 2
     assert payload["quota"]["interactive_timeout"] == 12.0
+    assert payload["quota"]["interactive_fresh_seconds"] == 900.0
     assert any("AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY" in warning for warning in payload["warnings"])
     assert any("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT" in warning for warning in payload["warnings"])
     assert "sk-test-secret" not in completed.stdout

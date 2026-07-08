@@ -71,6 +71,13 @@ CONFIG_ENV_VARS = [
         "minimum": 1,
     },
     {
+        "name": "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        "description": "quota color freshness threshold in seconds",
+        "default": "600",
+        "type": "float",
+        "minimum": 1.0,
+    },
+    {
         "name": "AI_MAN_QUOTA_STARTUP_SECONDS",
         "description": "native CLI startup wait before slash command probing",
         "default": "3 or 8 for AGY",
@@ -169,6 +176,14 @@ def effective_config_payload():
             2,
             "int",
             1,
+            warnings,
+        ),
+        "interactive_fresh_seconds": _numeric_value(
+            "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+            os.environ.get("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS"),
+            600.0,
+            "float",
+            1.0,
             warnings,
         ),
         "startup_seconds": _numeric_value(

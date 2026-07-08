@@ -114,6 +114,14 @@ def interactive_agy_quota_concurrency():
         return 2
 
 
+def interactive_quota_fresh_seconds():
+    raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 600.0
+
+
 class InteractiveQuotaScheduler:
     def __init__(self, agy_concurrency=None):
         self.agy_concurrency = agy_concurrency or interactive_agy_quota_concurrency()
@@ -399,7 +407,7 @@ def color_quota_text(text, status):
     fetched_at = quota.get("fetched_at")
     if fetched_at is None:
         return f"{CLR_RED}{text}{CLR_RESET}" if state not in ("available", "loading") else text
-    color = CLR_GREEN if time.time() - fetched_at <= QUOTA_FRESH_SECONDS else CLR_RED
+    color = CLR_GREEN if time.time() - fetched_at <= interactive_quota_fresh_seconds() else CLR_WHITE
     return f"{color}{text}{CLR_RESET}"
 
 
@@ -461,6 +469,61 @@ def agy_quota_cells(status, columns):
     ):
         marker = "!"
     return [marker if idx == 0 else "" for idx, _ in enumerate(columns)]
+
+
+def agy_quota_fresh(status, now=None):
+    quota = status.get("quota") or {}
+    fetched_at = quota.get("fetched_at")
+    if fetched_at is None:
+        return True
+    now = time.time() if now is None else now
+    return now - fetched_at <= interactive_quota_fresh_seconds()
+
+
+def quota_cell_percent(cell):
+    match = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%", str(cell))
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def color_agy_quota_cell(cell, status):
+    if not cell:
+        return cell
+    if cell == "...":
+        return f"{CLR_YELLOW}{cell}{CLR_RESET}"
+    if cell == "!":
+        return f"{CLR_RED}{cell}{CLR_RESET}"
+    value = quota_cell_percent(cell)
+    if value is None:
+        return cell
+    if not agy_quota_fresh(status):
+        return f"{CLR_WHITE}{cell}{CLR_RESET}"
+    if value <= 20:
+        color = CLR_RED
+    elif value <= 40:
+        color = CLR_YELLOW
+    else:
+        color = CLR_GREEN
+    return f"{color}{cell}{CLR_RESET}"
+
+
+def color_email_parts(value):
+    text = str(value)
+    match = re.fullmatch(r"([^@\s]+)(@[^@\s]+)", text)
+    if not match:
+        return text
+    local, domain = match.groups()
+    pieces = []
+    for char in local:
+        if char.isalpha():
+            pieces.append(f"{CLR_CYAN}{char}{CLR_RESET}")
+        elif char.isdigit():
+            pieces.append(f"{CLR_YELLOW}{char}{CLR_RESET}")
+        else:
+            pieces.append(f"{CLR_WHITE}{char}{CLR_RESET}")
+    pieces.append(f"{CLR_MAGENTA}{domain}{CLR_RESET}")
+    return "".join(pieces)
 
 
 def invalidate_quota_cache(tool_key=None, profile_num=None):
@@ -664,11 +727,11 @@ def render_status_screen(tool_key):
         quota_account = (status.get("quota") or {}).get("account")
         if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
             display_email = quota_account
-        email = f"{email_color}{display_email}{CLR_RESET}"
+        email = color_email_parts(display_email) if status["has_token"] else f"{email_color}{display_email}{CLR_RESET}"
         label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
         if tool_key == "agy":
             quota = " ".join(
-                visible_fit(cell, widths["quota"])
+                visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
                 for cell in agy_quota_cells(status, quota_columns)
             )
         else:

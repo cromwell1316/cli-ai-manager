@@ -549,7 +549,8 @@ def cmd_config_show(args):
         f"enabled={quota['interactive_enabled']} "
         f"timeout={quota['interactive_timeout']} "
         f"agy_timeout={quota['interactive_agy_timeout']} "
-        f"agy_workers={quota['interactive_agy_concurrency']}"
+        f"agy_workers={quota['interactive_agy_concurrency']} "
+        f"fresh_seconds={quota['interactive_fresh_seconds']}"
     )
     if payload["warnings"]:
         print("Warnings:")
