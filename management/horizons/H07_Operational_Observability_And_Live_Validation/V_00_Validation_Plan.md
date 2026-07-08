@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Automated Validation
 
@@ -20,10 +20,11 @@ python3 -m py_compile profile_manager.py cli_profile_manager/*.py cli_profile_ma
 ```bash
 python3 profile_manager.py diagnostics --json
 python3 profile_manager.py diagnostics agy --json
+python3 scripts/validate_agy_quota_live.py --dry-run --json
 ```
 
 If live validation script is implemented:
 
 ```bash
-./scripts/validate_agy_quota_live.sh
+python3 scripts/validate_agy_quota_live.py --concurrency 2 --timeout 60
 ```

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,5 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `python3 scripts/validate_agy_quota_live.py --dry-run --json`
+- Live mode is available through `python3 scripts/validate_agy_quota_live.py --concurrency 2 --timeout 60`.

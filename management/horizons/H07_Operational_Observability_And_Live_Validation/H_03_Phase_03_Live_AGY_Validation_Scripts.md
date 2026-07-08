@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 

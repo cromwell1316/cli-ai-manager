@@ -304,6 +304,9 @@ def load_quota_background(tool_key, profile_num):
             entry["started_at"] = now
             if (entry.get("quota") or {}).get("state") == "loading":
                 entry["quota"]["job_state"] = "running"
+    monotonic = getattr(time, "monotonic", time.time)
+    started = monotonic()
+    logging.debug("quota job start tool=%s profile=p%s", tool_key, profile_num)
     try:
         quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
     except Exception as e:
@@ -313,6 +316,13 @@ def load_quota_background(tool_key, profile_num):
             "warnings": [str(e)],
         }
     finish_quota_refresh(tool_key, profile_num, quota, time.time())
+    logging.debug(
+        "quota job finish tool=%s profile=p%s state=%s elapsed=%.3fs",
+        tool_key,
+        profile_num,
+        quota.get("state", "unknown"),
+        monotonic() - started,
+    )
 
 
 def ensure_quota_loading(tool_key, profile_num):
@@ -355,6 +365,7 @@ def ensure_quota_loading(tool_key, profile_num):
         else:
             return entry
     if should_submit:
+        logging.debug("quota job enqueue tool=%s profile=p%s", tool_key, profile_num)
         future = quota_scheduler().submit(tool_key, profile_num)
         with INTERACTIVE_QUOTA_LOCK:
             current = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
@@ -498,6 +509,45 @@ def next_quota_wake_timeout(tool_key=None, now=None, active_timeout=0.5, max_ret
     if next_retry_at is None:
         return None
     return max(0.0, min(max_retry_timeout, next_retry_at - now))
+
+
+def quota_runtime_snapshot(tool_key=None):
+    now = time.time()
+    with INTERACTIVE_QUOTA_LOCK:
+        cache_entries = []
+        for (entry_tool, profile_num), entry in sorted(INTERACTIVE_QUOTA_CACHE.items()):
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            quota = entry.get("quota") or {}
+            cache_entries.append({
+                "tool": entry_tool,
+                "profile": f"p{profile_num}",
+                "state": entry.get("state"),
+                "job_state": entry.get("job_state"),
+                "quota_state": quota.get("state"),
+                "has_limits": bool(quota.get("limits")),
+                "fetched_age_seconds": None if entry.get("fetched_at") is None else round(now - entry["fetched_at"], 3),
+                "started_age_seconds": None if entry.get("started_at") is None else round(now - entry["started_at"], 3),
+                "attempts": entry.get("attempts", 0),
+                "next_retry_in_seconds": None if entry.get("next_retry_at") is None else max(0.0, round(entry["next_retry_at"] - now, 3)),
+                "last_error": entry.get("last_error"),
+            })
+        scheduler = INTERACTIVE_QUOTA_SCHEDULER
+        scheduler_payload = None
+        if scheduler is not None:
+            scheduler_payload = {
+                "agy_concurrency": scheduler.agy_concurrency,
+                "worker_count": len(scheduler.workers),
+                "queue_size": scheduler.queue.qsize(),
+                "closed": scheduler.closed,
+            }
+    return {
+        "enabled": interactive_quota_enabled(),
+        "next_wake_timeout": next_quota_wake_timeout(tool_key),
+        "active_jobs": any_quota_loading(tool_key),
+        "scheduler": scheduler_payload,
+        "cache": cache_entries,
+    }
 
 
 def read_key_byte(fd=None, timeout=None):

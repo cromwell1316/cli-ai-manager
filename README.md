@@ -68,6 +68,7 @@ Command grammar:
 ai-man list <tool> [--json] [--quota] [--timeout seconds]
 ai-man status <tool> <profile> [--json] [--quota] [--timeout seconds]
 ai-man quota <tool> <profile> [--json] [--timeout seconds]
+ai-man diagnostics [tool] [--json] [--show-accounts]
 ai-man launch <tool> <profile> [-- args...]
 ai-man login <tool> [profile]
 ai-man import <tool> <path> [profile]
@@ -105,9 +106,36 @@ Interactive `ai-man` screens load quota automatically in the background for
 active profiles and cache it for the current session. Fresh quota data is shown
 in green; cached data older than five minutes is shown in red. Set
 `AI_MAN_INTERACTIVE_QUOTA=0` to disable automatic probing, or
-`AI_MAN_INTERACTIVE_QUOTA_TIMEOUT=<seconds>` to change the per-profile timeout.
-Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs more startup
-time before slash commands are accepted.
+`AI_MAN_INTERACTIVE_QUOTA_TIMEOUT=<seconds>` to change the generic per-profile
+timeout. AGY supports `AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` and
+`AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY=<workers>` for its slower interactive
+quota probes. Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
+more startup time before slash commands are accepted.
+
+AGY status uses separate quota columns. `FM`, `FH`, and `FL` are Gemini Flash
+medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude
+Sonnet/Opus. `...` means a quota probe is queued or running, `~` marks a stale
+value being refreshed, and `!` marks a retryable failure whose details are
+available from JSON commands or diagnostics.
+
+Diagnostics are safe by default:
+
+```bash
+ai-man diagnostics --json
+ai-man doctor agy --json
+```
+
+The diagnostics payload reports configured profile roots, CLI availability,
+quota scheduler/cache state, and persistent quota sessions. Account identifiers
+are redacted unless `--show-accounts` is supplied; token-like values are always
+redacted.
+
+Optional live AGY validation is available for local troubleshooting:
+
+```bash
+python3 scripts/validate_agy_quota_live.py --dry-run
+python3 scripts/validate_agy_quota_live.py --concurrency 2 --timeout 60
+```
 
 ## Interactive Selector
 

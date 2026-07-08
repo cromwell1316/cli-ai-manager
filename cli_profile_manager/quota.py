@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import fcntl
+import logging
 import struct
 import termios
 import threading
@@ -581,7 +582,35 @@ def close_persistent_quota_sessions(tool_key=None, home=None):
             del PERSISTENT_QUOTA_SESSIONS[key]
             PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
     for session in sessions:
+        logging.debug(
+            "quota session close tool=%s cwd=%s home=%s",
+            getattr(session, "tool_key", None),
+            getattr(session, "cwd", None),
+            getattr(session, "env", {}).get("HOME"),
+        )
         session.close()
+
+
+def persistent_quota_sessions_snapshot(tool_key=None):
+    with PERSISTENT_QUOTA_LOCK:
+        sessions = []
+        for key, session in PERSISTENT_QUOTA_SESSIONS.items():
+            if tool_key is not None and key[0] != tool_key:
+                continue
+            sessions.append({
+                "tool": key[0],
+                "command": list(key[1]),
+                "cwd": key[2],
+                "home": key[3],
+                "codex_home": key[4],
+                "claude_config_dir": key[5],
+                "alive": session.is_alive(),
+                "parser_misses": PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0),
+            })
+    return {
+        "count": len(sessions),
+        "sessions": sessions,
+    }
 
 
 atexit.register(close_persistent_quota_sessions)
@@ -594,6 +623,7 @@ def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_secon
         if session is None:
             session = PersistentQuotaSession(tool_key, command, env, cwd)
             PERSISTENT_QUOTA_SESSIONS[key] = session
+            logging.debug("quota session create tool=%s cwd=%s home=%s", tool_key, cwd, env.get("HOME"))
     try:
         return session.snapshot(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
     except Exception as e:
@@ -603,6 +633,13 @@ def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_secon
                 if PERSISTENT_QUOTA_SESSIONS.get(key) is session:
                     del PERSISTENT_QUOTA_SESSIONS[key]
                     PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+            logging.debug(
+                "quota session invalidate tool=%s cwd=%s home=%s reason=%s",
+                tool_key,
+                cwd,
+                env.get("HOME"),
+                getattr(e, "state", type(e).__name__),
+            )
             session.close()
         raise
 
@@ -622,6 +659,7 @@ def record_persistent_parser_result(tool_key, command, env, cwd, quota):
             return
         session = PERSISTENT_QUOTA_SESSIONS.pop(key)
         PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+    logging.debug("quota session invalidate tool=%s cwd=%s home=%s reason=parser_miss", tool_key, cwd, env.get("HOME"))
     session.close()
 
 

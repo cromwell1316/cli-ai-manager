@@ -22,6 +22,7 @@ from cli_profile_manager.credentials.common import (
     write_json_atomic as core_write_json_atomic,
     write_text_atomic as core_write_text_atomic,
 )
+from cli_profile_manager.diagnostics import diagnostics_payload
 from cli_profile_manager.metadata import (
     METADATA_DIR as CORE_METADATA_DIR,
     METADATA_PATH as CORE_METADATA_PATH,
@@ -949,6 +950,42 @@ def cmd_sync(args):
             print(f"  {path}")
     return EXIT_OK
 
+def diagnostics_status_provider(tool_key, n):
+    try:
+        return status_payload(tool_key, n)
+    except Exception as e:
+        return {
+            "has_token": False,
+            "token_state": "diagnostic_error",
+            "credential_source": None,
+            "account": None,
+            "email": None,
+            "warnings": [str(e)],
+        }
+
+def cmd_diagnostics(args):
+    payload = diagnostics_payload(
+        args.tool,
+        status_provider=diagnostics_status_provider,
+        show_accounts=args.show_accounts,
+    )
+    if args.json:
+        print_json_payload(payload)
+        return EXIT_OK
+    print("Diagnostics")
+    print(f"Generated: {payload['generated_at']}")
+    for tool_key, data in payload["tools"].items():
+        available = "yes" if data["cli_available"] else "no"
+        print(f"{tool_key}: cli={available} path={data['cli_path'] or '-'} profiles={len(data['visible_profiles'])}")
+    runtime = payload["quota_runtime"]
+    scheduler = runtime.get("scheduler") or {}
+    print(f"quota: enabled={runtime['enabled']} active={runtime['active_jobs']} cache={len(runtime['cache'])}")
+    if scheduler:
+        print(f"scheduler: workers={scheduler['worker_count']} queue={scheduler['queue_size']} closed={scheduler['closed']}")
+    sessions = payload["persistent_sessions"]
+    print(f"persistent sessions: {sessions['count']}")
+    return EXIT_OK
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="ai-man",
@@ -1027,6 +1064,16 @@ def build_parser():
     sync_p.add_argument("--yes", action="store_true", help="confirm hard sync")
     sync_p.add_argument("--json", action="store_true")
     sync_p.set_defaults(func=cmd_sync)
+
+    diagnostics_p = sub.add_parser(
+        "diagnostics",
+        aliases=["doctor"],
+        help="show safe runtime diagnostics",
+    )
+    diagnostics_p.add_argument("tool", choices=TOOLS.keys(), nargs="?")
+    diagnostics_p.add_argument("--json", action="store_true")
+    diagnostics_p.add_argument("--show-accounts", action="store_true", help="include full account identifiers")
+    diagnostics_p.set_defaults(func=cmd_diagnostics)
 
     return parser
 

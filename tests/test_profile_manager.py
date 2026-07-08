@@ -1004,6 +1004,49 @@ def test_direct_command_exit_codes_and_json_errors(monkeypatch, tmp_path):
     assert payload["error"]["code"] == 2
 
 
+def test_diagnostics_json_redacts_accounts_and_reports_runtime(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    write_json(
+        tmp_path / "codex-homes" / "p1" / "auth.json",
+        {"tokens": {"id_token": make_id_token("user@example.com")}},
+    )
+
+    payload = pm.diagnostics_payload("codex", status_provider=lambda tool, num: pm.status_payload(tool, num))
+    rendered = json.dumps(payload)
+
+    assert payload["ok"] is True
+    assert payload["tools"]["codex"]["cli_available"] in (True, False)
+    assert payload["quota_runtime"]["cache"] == []
+    assert "persistent_sessions" in payload
+    assert "user@example.com" not in rendered
+    assert "redacted:" in rendered
+
+
+def test_diagnostics_command_json_does_not_print_token_like_values(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+        "AI_MAN_QUOTA_KEY_DELAY_SECONDS": "sk-test-secret",
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "diagnostics", "agy", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is True
+    assert "sk-test-secret" not in completed.stdout
+    assert "[redacted-token]" in completed.stdout
+
+
 def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

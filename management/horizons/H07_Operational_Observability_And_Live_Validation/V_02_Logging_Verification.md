@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,6 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- Quota enqueue/start/finish events are logged in `cli_profile_manager/interactive.py`.
+- Persistent session create/close/invalidate events are logged in `cli_profile_manager/quota.py`.
+- Token-like diagnostics redaction is covered by automated diagnostics tests.

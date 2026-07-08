@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Diagnostics command | Planned |
-| Diagnostics JSON contract | Planned |
-| Safe quota debug logging | Planned |
-| Token redaction tests | Planned |
-| Live AGY validation script | Planned |
-| Dry-run validation mode | Planned |
-| README troubleshooting section | Planned |
-| Sanitized evidence workflow | Planned |
+| Diagnostics command | Implemented |
+| Diagnostics JSON contract | Implemented |
+| Safe quota debug logging | Implemented |
+| Token redaction tests | Implemented |
+| Live AGY validation script | Implemented |
+| Dry-run validation mode | Implemented |
+| README troubleshooting section | Implemented |
+| Sanitized evidence workflow | Implemented |

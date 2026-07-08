@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H07_Operational_Observability_And_Live_Vali
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,4 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `README.md` documents diagnostics, AGY quota columns, quota markers, and live validation.
