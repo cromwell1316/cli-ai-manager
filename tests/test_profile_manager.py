@@ -10,6 +10,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def load_pm(monkeypatch, tmp_path):
@@ -63,12 +64,15 @@ def test_status_detection_reports_source_state_account_and_warnings(monkeypatch,
     agy_token = tmp_path / "agy-homes" / "p2" / ".gemini" / "oauth_creds.json"
     write_json(agy_token, {"refresh_token": "r"})
     write_json(tmp_path / "agy-homes" / "p2" / ".gemini" / "google_accounts.json", {"active": "agy@example.com"})
+    agy_cli_token = tmp_path / "agy-homes" / "p3" / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+    write_json(agy_cli_token, {"auth_method": "oauth", "token": "synthetic"})
     invalid_claude = tmp_path / "claude-homes" / "p1" / ".credentials.json"
     invalid_claude.parent.mkdir(parents=True)
     invalid_claude.write_text("{bad", encoding="utf-8")
 
     codex = pm.status_payload("codex", 1, {})
     agy = pm.status_payload("agy", 2, {})
+    agy_cli = pm.status_payload("agy", 3, {})
     claude = pm.status_payload("claude", 1, {})
 
     assert codex["token_state"] == "valid"
@@ -77,6 +81,9 @@ def test_status_detection_reports_source_state_account_and_warnings(monkeypatch,
     assert agy["token_state"] == "valid"
     assert agy["credential_source"] == "wsl-oauth"
     assert agy["account"] == "agy@example.com"
+    assert agy_cli["token_state"] == "valid"
+    assert agy_cli["credential_source"] == "agy-cli-token"
+    assert agy_cli["account"] == "logged in"
     assert claude["token_state"] == "invalid"
     assert claude["credential_source"] == "claude-credentials"
     assert claude["warnings"]
@@ -85,7 +92,7 @@ def test_status_detection_reports_source_state_account_and_warnings(monkeypatch,
 def test_quota_parsers_extract_agent_specific_limits():
     from cli_profile_manager.quota import parse_quota
 
-    codex = parse_quota("codex", "5h limit: [###] 82% left resets 03:12\nweekly 64% left")
+    codex = parse_quota("codex", "5h limit: [###] 82% left resets 03:12\nWeekly limit: 64% left")
     claude = parse_quota("claude", "Claude Code /usage\nSession usage 41% remaining resets in 2h\nWeekly 77%")
     agy = parse_quota("agy", "Gemini usage\nDaily limit 35% remaining resets tomorrow")
 
@@ -97,6 +104,94 @@ def test_quota_parsers_extract_agent_specific_limits():
     assert claude["limits"]["weekly"]["percent"] == 77
     assert agy["state"] == "available"
     assert agy["limits"]["daily"]["percent"] == 35
+
+
+def test_agy_quota_parser_extracts_common_usage_variants():
+    from cli_profile_manager.cli import quota_summary
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "agy",
+        """
+        Antigravity usage
+        Local messages: 73% remaining, refreshes in 4h
+        Cloud tasks: 6/10 used, resets tomorrow
+        Gemini 2.5 Pro quota: 41% left
+        """,
+    )
+
+    assert quota["state"] == "available"
+    assert quota["limits"]["local_messages"]["percent_left"] == 73
+    assert quota["limits"]["cloud_tasks"]["percent"] == 60
+    assert quota["limits"]["gemini_2_5_pro_quota"]["percent_left"] == 41
+    assert quota_summary({"quota": quota}) == "local:73%, cloud:60%, Gemini 2.5 Pro quota:41%"
+
+
+def test_codex_quota_parser_extracts_status_limit_variants():
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "codex",
+        """
+        /status
+        Model: gpt-5.5 medium
+        5h limit: 71% remaining, resets in 2h 14m
+        Weekly limit: 42% available, resets Monday
+        Context window: 18% used
+        """,
+    )
+
+    assert quota["state"] == "available"
+    assert quota["limits"]["five_hour"]["percent_left"] == 71
+    assert quota["limits"]["weekly"]["percent_left"] == 42
+    assert quota["limits"]["context"]["percent"] == 18
+
+
+def test_codex_quota_parser_extracts_boxed_status_output():
+    from cli_profile_manager.cli import quota_summary
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "codex",
+        """
+        ╭─────────────────────────────────────────────────────────────────────────────────╮
+        │  >_ OpenAI Codex (v0.142.3)                                                     │
+        │  Context window:       81% left (58.6K used / 258K)                             │
+        │  5h limit:             [██████████████████░░] 89% left (resets 16:24)           │
+        │  Weekly limit:         [█████████████████░░░] 83% left (resets 20:22 on 14 Jul) │
+        ╰─────────────────────────────────────────────────────────────────────────────────╯
+        """,
+    )
+
+    assert quota["state"] == "available"
+    assert quota["limits"]["context"]["percent_left"] == 81
+    assert quota["limits"]["five_hour"]["percent_left"] == 89
+    assert quota["limits"]["weekly"]["percent_left"] == 83
+    assert quota_summary({"quota": quota}) == "5h:89%, week:83%, ctx:81%"
+
+
+def test_codex_quota_parser_ignores_generic_non_limit_usage():
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "codex",
+        "Usage limits\nMessages remaining: 63%\nRate limit resets at 18:30",
+    )
+
+    assert quota["state"] == "unknown"
+    assert quota["limits"] == {}
+
+
+def test_codex_quota_parser_ignores_warning_without_status_breakdown():
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "codex",
+        "Heads up, you have less than 10% of your weekly limit left. Run /status for a breakdown.",
+    )
+
+    assert quota["state"] == "unknown"
+    assert quota["limits"] == {}
 
 
 def test_status_payload_can_include_quota_without_real_cli(monkeypatch, tmp_path):
@@ -128,26 +223,66 @@ def test_status_payload_can_include_quota_without_real_cli(monkeypatch, tmp_path
     assert status["quota"]["limits"]["five_hour"]["percent_left"] == 82
 
 
-def test_interactive_get_key_reads_arrow_sequences(monkeypatch):
+def test_interactive_visible_padding_ignores_ansi_codes():
+    sys.path.insert(0, str(ROOT))
+    import cli_profile_manager.interactive as interactive
+
+    text = f"{interactive.CLR_GREEN}Active{interactive.CLR_RESET}"
+
+    assert interactive.visible_len(text) == len("Active")
+    assert interactive.visible_len(interactive.visible_ljust(text, 12)) == 12
+    assert interactive.visible_len(interactive.visible_fit(f"{interactive.CLR_RED}invalid token: Antigravity CLI token is missing token{interactive.CLR_RESET}", 34)) == 34
+
+
+def test_interactive_quota_text_does_not_show_unknown_state():
+    sys.path.insert(0, str(ROOT))
+    import cli_profile_manager.interactive as interactive
+
+    status = {"quota": {"state": "unknown", "limits": {}}}
+
+    assert interactive.quota_text(status, color=False) == "not parsed"
+
+
+@pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])
+def test_interactive_get_key_reads_up_arrow_sequences(monkeypatch, sequence):
+    sys.path.insert(0, str(ROOT))
     import cli_profile_manager.interactive as interactive
 
     class FakeStdin:
-        def __init__(self, data):
-            self.data = list(data)
-
         def fileno(self):
             return 0
 
-        def read(self, _size):
-            return self.data.pop(0)
+    data = [ch.encode() for ch in sequence]
 
-    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin("\x1b[A"))
+    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin())
+    monkeypatch.setattr(interactive.os, "read", lambda _fd, _size: data.pop(0))
     monkeypatch.setattr(interactive.termios, "tcgetattr", lambda _fd: object())
     monkeypatch.setattr(interactive.termios, "tcsetattr", lambda *_args: None)
     monkeypatch.setattr(interactive.tty, "setraw", lambda _fd: None)
-    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r, [], []))
+    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r if data else [], [], []))
 
     assert interactive.get_key() == "up"
+
+
+@pytest.mark.parametrize("sequence", ["\x1b[B", "\x1bOB", "\x1b[1;2B", "\x1b[1;5B"])
+def test_interactive_get_key_reads_down_arrow_sequences(monkeypatch, sequence):
+    sys.path.insert(0, str(ROOT))
+    import cli_profile_manager.interactive as interactive
+
+    class FakeStdin:
+        def fileno(self):
+            return 0
+
+    data = [ch.encode() for ch in sequence]
+
+    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin())
+    monkeypatch.setattr(interactive.os, "read", lambda _fd, _size: data.pop(0))
+    monkeypatch.setattr(interactive.termios, "tcgetattr", lambda _fd: object())
+    monkeypatch.setattr(interactive.termios, "tcsetattr", lambda *_args: None)
+    monkeypatch.setattr(interactive.tty, "setraw", lambda _fd: None)
+    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r if data else [], [], []))
+
+    assert interactive.get_key() == "down"
 
 
 def test_agy_windows_wsl_conversion_round_trips(monkeypatch, tmp_path):

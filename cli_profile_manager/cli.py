@@ -371,18 +371,31 @@ def quota_summary(status):
     state = quota.get("state", "unknown")
     if state != "available":
         return state
+    labels = {
+        "five_hour": "5h",
+        "weekly": "week",
+        "daily": "day",
+        "local_messages": "local",
+        "cloud_tasks": "cloud",
+        "requests": "req",
+        "messages": "msg",
+        "tasks": "tasks",
+        "tokens": "tokens",
+        "context": "ctx",
+        "usage": "usage",
+    }
     current_limit = quota.get("current_limit")
     if current_limit:
         data = quota.get("limits", {}).get(current_limit, {})
         value = data.get("percent_left", data.get("percent"))
         if value is not None:
-            model = data.get("model", current_limit)
+            model = labels.get(current_limit, data.get("model", current_limit))
             return f"{model}:{value:g}%"
     parts = []
     for name, data in quota.get("limits", {}).items():
         value = data.get("percent_left", data.get("percent"))
         if value is not None:
-            label = data.get("model", name)
+            label = labels.get(name, data.get("model", name))
             parts.append(f"{label}:{value:g}%")
     return ", ".join(parts) or state
 

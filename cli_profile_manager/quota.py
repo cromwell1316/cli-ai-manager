@@ -76,6 +76,119 @@ def parse_percent_limit(text, label_patterns):
     return None
 
 
+def parse_percent_value(text):
+    match = re.search(r"(\d{1,3}(?:\.\d+)?)\s*%", text)
+    if not match:
+        return None
+    value = float(match.group(1))
+    return int(value) if value.is_integer() else value
+
+
+def limit_reset_from_line(line):
+    match = re.search(r"\b(?:reset|resets|refresh|refreshes)(?:\s+in|\s+at|:)?\s+(.+)$", line, re.I)
+    if not match:
+        return None
+    return match.group(1).strip(" .;|")
+
+
+def add_percent_limit(quota, key, line, value=None, label=None):
+    value = parse_percent_value(line) if value is None else value
+    if value is None:
+        return False
+    percent_key = "percent_left" if re.search(r"\b(left|remaining|available)\b", line, re.I) else "percent"
+    data = {percent_key: value}
+    if label:
+        data["model"] = label
+    reset = limit_reset_from_line(line)
+    if reset:
+        data["resets"] = reset
+    quota["limits"][key] = data
+    return True
+
+
+def stable_limit_key(label):
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "usage"
+
+
+def generic_quota_key_and_label(line, fallback_index=1):
+    lowered = line.lower()
+    specs = (
+        ("daily", "day", (r"\bdaily\b", r"\btoday\b")),
+        ("local_messages", "local", (r"\blocal\b.*\bmessages?\b", r"\bmessages?\b.*\blocal\b")),
+        ("cloud_tasks", "cloud", (r"\bcloud\b.*\btasks?\b", r"\btasks?\b.*\bcloud\b")),
+        ("requests", "req", (r"\brequests?\b",)),
+        ("messages", "msg", (r"\bmessages?\b",)),
+        ("tasks", "tasks", (r"\btasks?\b",)),
+        ("tokens", "tokens", (r"\btokens?\b",)),
+    )
+    for key, label, patterns in specs:
+        if any(re.search(pattern, lowered, re.I) for pattern in patterns):
+            return key, label
+
+    model = agy_model_name_from_line(line)
+    if model:
+        return stable_limit_key(model), model
+
+    before_percent = re.split(r"\d{1,3}(?:\.\d+)?\s*%", line, 1)[0]
+    before_percent = re.sub(r"^[^\w]*(?:quota|usage|limit|pool|model)?[^\w]*", "", before_percent, flags=re.I)
+    before_percent = before_percent.strip(" :-|•·")
+    if before_percent:
+        label = before_percent[-36:].strip()
+        return stable_limit_key(label), label
+    return f"usage_{fallback_index}", "usage"
+
+
+def parse_fraction_value(line):
+    match = re.search(r"\b(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\b", line)
+    if not match:
+        return None
+    used = float(match.group(1))
+    total = float(match.group(2))
+    if total <= 0:
+        return None
+    value = max(0.0, min(100.0, (used / total) * 100.0))
+    return int(value) if value.is_integer() else round(value, 1)
+
+
+def add_agy_line_limit(quota, line, fallback_index=1):
+    if not re.search(r"\b(quota|limit|usage|remaining|left|available|used|refresh|reset|messages?|tasks?|requests?|tokens?|daily|today|local|cloud|gemini|claude|gpt)\b", line, re.I):
+        return False
+    key, label = generic_quota_key_and_label(line, fallback_index)
+    if key in quota["limits"]:
+        return False
+    percent = parse_percent_value(line)
+    if percent is not None:
+        return add_percent_limit(quota, key, line, value=percent, label=label)
+    fraction = parse_fraction_value(line)
+    if fraction is None:
+        return False
+    quota["limits"][key] = {"percent": fraction, "model": label}
+    reset = limit_reset_from_line(line)
+    if reset:
+        quota["limits"][key]["resets"] = reset
+    return True
+
+
+def parse_labeled_percent_lines(lines, specs):
+    matches = {}
+    for line in lines:
+        if "%" not in line:
+            continue
+        for key, label, patterns in specs:
+            if any(re.search(pattern, line, re.I) for pattern in patterns):
+                matches.setdefault(key, (line, label))
+                break
+    return matches
+
+
+def codex_status_limit_line(line):
+    return bool(re.search(
+        r"\b(?:context\s+window|5\s*[- ]?\s*h(?:our)?\s+limit|five\s*[- ]?\s*hour\s+limit|weekly\s+limit|7\s*[- ]?\s*day\s+limit)\s*:",
+        line,
+        re.I,
+    ))
+
+
 def agy_model_name_from_line(line):
     if "quota pools" in line.lower() or "," in line or len(line) > 72:
         return None
@@ -86,7 +199,8 @@ def agy_model_name_from_line(line):
 
 
 def parse_codex_quota(screen_text):
-    text = "\n".join(compact_lines(screen_text))
+    lines = compact_lines(screen_text)
+    text = "\n".join(lines)
     quota = {
         "state": "available",
         "source_command": "/status",
@@ -94,12 +208,11 @@ def parse_codex_quota(screen_text):
         "raw_summary": text,
     }
     five_hour = parse_percent_limit(text, (
-        r"5\s*h(?:our)?\s+limit\b.*?(\d{1,3})\s*%\s*(?:left|remaining)?",
-        r"(\d{1,3})\s*%\s*(?:left|remaining).*?5\s*h(?:our)?\s+limit\b",
+        r"5\s*h(?:our)?\s+limit\s*:.*?(\d{1,3})\s*%\s*(?:left|remaining)?",
+        r"five\s*[- ]?\s*hour\s+limit\s*:.*?(\d{1,3})\s*%\s*(?:left|remaining)?",
     ))
     weekly = parse_percent_limit(text, (
-        r"(?:7\s*day|weekly)\b.*?(\d{1,3})\s*%\s*(?:left|remaining)?",
-        r"(\d{1,3})\s*%\s*(?:left|remaining).*?(?:7\s*day|weekly)\b",
+        r"(?:7\s*day|weekly)\s+limit\s*:.*?(\d{1,3})\s*%\s*(?:left|remaining|available)?",
     ))
     reset = parse_reset_text(text)
     if five_hour is not None:
@@ -108,6 +221,25 @@ def parse_codex_quota(screen_text):
             quota["limits"]["five_hour"]["resets"] = reset
     if weekly is not None:
         quota["limits"]["weekly"] = {"percent_left": weekly}
+    status_lines = [line for line in lines if codex_status_limit_line(line)]
+    labeled = parse_labeled_percent_lines(status_lines, (
+        ("five_hour", "5h", (r"\b5\s*[- ]?\s*h(?:our)?\b", r"\bfive\s*[- ]?\s*hour\b")),
+        ("weekly", "weekly", (r"\bweekly\b", r"\b7\s*[- ]?\s*day\b", r"\bweek\b")),
+        ("context", "context", (r"\bcontext\b",)),
+    ))
+    for key, (line, label) in labeled.items():
+        if key not in quota["limits"]:
+            add_percent_limit(quota, key, line, label=label)
+    if "five_hour" not in quota["limits"] and "weekly" not in quota["limits"]:
+        quota["limits"].clear()
+        return quota
+    for line in lines:
+        if "%" not in line or not re.search(r"\b(rate|usage|message|task|limit|remaining|left|available)\b", line, re.I):
+            continue
+        if re.search(r"\b(gpt|model|context)\b", line, re.I):
+            continue
+        if not quota["limits"]:
+            add_percent_limit(quota, "usage", line, label="usage")
     return quota
 
 
@@ -156,6 +288,8 @@ def parse_agy_quota(screen_text):
             quota["current_model"] = current_model
             break
     for idx, line in enumerate(lines):
+        if "%" in line:
+            continue
         model_name = agy_model_name_from_line(line)
         if model_name:
             percent = None
@@ -176,17 +310,23 @@ def parse_agy_quota(screen_text):
                 }
                 if refresh:
                     quota["limits"][key]["refreshes_in"] = refresh
-                if current_model and model_name == current_model:
-                    quota["current_limit"] = key
     daily = parse_percent_limit(text, (
-        r"(?:daily|today|gemini)\b.*?(\d{1,3})\s*%\s*(?:left|remaining|used)?",
-        r"(\d{1,3})\s*%\s*(?:left|remaining).*?(?:daily|today|gemini)\b",
+        r"(?:daily|today)\b.*?(\d{1,3})\s*%\s*(?:left|remaining|used)?",
+        r"(\d{1,3})\s*%\s*(?:left|remaining).*?(?:daily|today)\b",
     ))
     reset = parse_reset_text(text)
     if daily is not None:
         quota["limits"]["daily"] = {"percent": daily}
         if reset:
             quota["limits"]["daily"]["resets"] = reset
+    fallback_index = 1
+    for line in lines:
+        if "%" not in line and not re.search(r"\b\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\b", line):
+            continue
+        before_count = len(quota["limits"])
+        add_agy_line_limit(quota, line, fallback_index)
+        if len(quota["limits"]) > before_count:
+            fallback_index += 1
     return quota
 
 

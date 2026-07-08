@@ -1,6 +1,7 @@
 import glob
 import logging
 import os
+import re
 import select
 import sys
 import termios
@@ -54,6 +55,28 @@ from .cli import (
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
 QUOTA_FRESH_SECONDS = 300
+ANSI_RE = re.compile(
+    r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
+)
+
+
+def visible_len(text):
+    return len(ANSI_RE.sub("", str(text)))
+
+
+def visible_ljust(text, width):
+    text = str(text)
+    return text + (" " * max(0, width - visible_len(text)))
+
+
+def visible_fit(text, width):
+    text = str(text)
+    if visible_len(text) <= width:
+        return visible_ljust(text, width)
+    plain = ANSI_RE.sub("", text)
+    if width <= 3:
+        return plain[:width]
+    return plain[:width - 3] + "..."
 
 
 def interactive_quota_enabled():
@@ -149,6 +172,8 @@ def color_quota_text(text, status):
 
 def quota_text(status, color=True):
     summary = quota_summary(status)
+    if summary == "unknown":
+        summary = "not parsed"
     text = summary or "quota pending"
     if len(text) > 24:
         text = f"{text[:21]}..."
@@ -178,12 +203,39 @@ def any_quota_loading(tool_key=None):
     return False
 
 
-def read_key_byte(timeout=None):
+def read_key_byte(fd=None, timeout=None):
+    fd = sys.stdin.fileno() if fd is None else fd
     if timeout is not None:
-        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        ready, _, _ = select.select([fd], [], [], timeout)
         if not ready:
             return None
-    return sys.stdin.read(1)
+    data = os.read(fd, 1)
+    if not data:
+        return None
+    return data.decode(errors="ignore")
+
+
+def key_from_escape_sequence(fd):
+    sequence = ""
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        ch = read_key_byte(fd, max(0.0, deadline - time.monotonic()))
+        if ch is None:
+            return None
+        sequence += ch
+        if ch.isalpha() or ch == "~":
+            break
+
+    final = sequence[-1:] if sequence else ""
+    if final == 'A':
+        return 'up'
+    if final == 'B':
+        return 'down'
+    if final == 'C':
+        return 'right'
+    if final == 'D':
+        return 'left'
+    return 'esc'
 
 
 def get_key(timeout=None):
@@ -191,25 +243,16 @@ def get_key(timeout=None):
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = read_key_byte(timeout)
+        ch = read_key_byte(fd, timeout)
         if ch is None:
             return None
         if ch == '\x1b':
-            ch2 = read_key_byte(0.12)
+            ch2 = read_key_byte(fd, 0.5)
             if ch2 is None:
                 return 'esc'
-            if ch2 == '[':
-                ch3 = read_key_byte(0.12)
-                if ch3 is None:
-                    return 'esc'
-                if ch3 == 'A':
-                    return 'up'
-                elif ch3 == 'B':
-                    return 'down'
-                elif ch3 == 'C':
-                    return 'right'
-                elif ch3 == 'D':
-                    return 'left'
+            if ch2 in ('[', 'O'):
+                key = key_from_escape_sequence(fd)
+                return key or 'esc'
             return 'esc'
         elif ch in ('\n', '\r'):
             return 'enter'
@@ -230,8 +273,23 @@ def render_status_screen(tool_key):
     metadata = load_metadata()
     profiles = get_display_profiles(tool_key)
 
-    print(f"{CLR_BOLD}{CLR_WHITE}{'Profile':<9} {'Active Account / Tier':<30} {'Status':<12} {'Quota':<24} {'Label':<12}{CLR_RESET}")
-    print("-" * 90)
+    widths = {
+        "profile": 8,
+        "account": 34,
+        "status": 10,
+        "quota": 24,
+        "label": 14,
+    }
+    print(
+        f"{CLR_BOLD}{CLR_WHITE}"
+        f"{'Profile':<{widths['profile']}} "
+        f"{'Active Account / Tier':<{widths['account']}} "
+        f"{'Status':<{widths['status']}} "
+        f"{'Quota':<{widths['quota']}} "
+        f"{'Label':<{widths['label']}}"
+        f"{CLR_RESET}"
+    )
+    print("-" * (sum(widths.values()) + len(widths) - 1))
 
     for n in profiles:
         status = status_with_auto_quota(tool_key, n, metadata)
@@ -239,7 +297,16 @@ def render_status_screen(tool_key):
         lbl_str = f"({status['label']})" if status["label"] else ""
         email_color = CLR_CYAN if status["has_token"] else CLR_RESET
         quota = quota_text(status)
-        print(f"p{status['num']:<7} {email_color}{status['email']:<30}{CLR_RESET} {stat_str:<12} {quota:<24} {CLR_YELLOW}{lbl_str:<12}{CLR_RESET}")
+        profile = f"p{status['num']}"
+        email = f"{email_color}{status['email']}{CLR_RESET}"
+        label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
+        print(
+            f"{visible_fit(profile, widths['profile'])} "
+            f"{visible_fit(email, widths['account'])} "
+            f"{visible_fit(stat_str, widths['status'])} "
+            f"{visible_fit(quota, widths['quota'])} "
+            f"{visible_fit(label, widths['label'])}"
+        )
     print()
     print("Press Enter to return...")
 

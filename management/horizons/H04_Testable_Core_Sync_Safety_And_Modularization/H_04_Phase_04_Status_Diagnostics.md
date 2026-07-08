@@ -24,8 +24,8 @@ Replace ambiguous token presence reporting with a stable diagnostic model.
 ```
 
 `token_state` values are `valid`, `missing`, `invalid`, and `unsupported`.
-`credential_source` values include `wsl-oauth`, `windows-backup`,
-`codex-auth`, and `claude-credentials`.
+`credential_source` values include `wsl-oauth`, `agy-cli-token`,
+`windows-backup`, `codex-auth`, and `claude-credentials`.
 
 ## Acceptance
 

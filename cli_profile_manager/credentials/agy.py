@@ -10,6 +10,7 @@ WINDOWS_TARGET = "gemini:antigravity"
 WINDOWS_USERNAME = "antigravity"
 GOOGLE_ACCOUNTS_FILE = os.path.join(".gemini", "google_accounts.json")
 WSL_OAUTH_FILE = os.path.join(".gemini", "oauth_creds.json")
+AGY_CLI_TOKEN_FILE = os.path.join(".gemini", "antigravity-cli", "antigravity-oauth-token")
 
 
 def account_email_from_google_accounts(profile_home, account_file=GOOGLE_ACCOUNTS_FILE):
@@ -53,6 +54,18 @@ def read_wsl_oauth(token_path):
     return read_json_object(token_path)
 
 
+def read_agy_cli_token(profile_home, token_file=AGY_CLI_TOKEN_FILE):
+    token_path = os.path.join(profile_home, token_file)
+    data = read_json_object(token_path)
+    token = data.get("token")
+    auth_method = data.get("auth_method")
+    if not isinstance(token, str) or not token:
+        raise ValueError("Antigravity CLI token is missing token")
+    if auth_method is not None and not isinstance(auth_method, str):
+        raise ValueError("Antigravity CLI token auth_method must be a string")
+    return data
+
+
 def build_windows_credential(token_data, account=None):
     token_text = json.dumps(token_data, indent=2)
     token_bytes = token_text.encode("utf-8")
@@ -82,4 +95,3 @@ def export_wsl_credential(token_path, profile_home, win_cred_path, account_file=
     account = account_email_from_google_accounts(profile_home, account_file)
     write_json_atomic(win_cred_path, build_windows_credential(token_data, account))
     return win_cred_path
-
