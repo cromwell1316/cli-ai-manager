@@ -20,4 +20,4 @@ Status: completed.
 `python3 -m py_compile profile_manager.py cli_profile_manager/*.py cli_profile_manager/credentials/*.py tests/test_profile_manager.py`
 passes.
 
-`python3 -m pytest -q` passes with 10 tests.
+`python3 -m pytest -q` passes with 20 tests.
