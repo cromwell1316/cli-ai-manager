@@ -21,6 +21,7 @@ DEFAULT_POST_COMMAND_SECONDS = 4.0
 DEFAULT_KEY_DELAY_SECONDS = 0.04
 DEFAULT_AGY_STARTUP_SECONDS = 8.0
 DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
+PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 
 
 QUOTA_COMMANDS = {
@@ -495,6 +496,8 @@ class PersistentQuotaSession:
             startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
             wait_for_startup(master_fd, output, max(0.0, startup_seconds))
             wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+            if proc.poll() is not None:
+                raise QuotaProbeError("process_exit", "CLI process exited during startup", "".join(output))
         except Exception:
             terminate_process(proc, master_fd, output)
             try:
@@ -523,7 +526,10 @@ class PersistentQuotaSession:
             post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
             post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
             wait_after_command(self.master_fd, output, max(0.0, post_command_seconds))
-            return wait_for_idle(self.master_fd, output, idle_seconds, timeout_seconds)
+            snapshot = wait_for_idle(self.master_fd, output, idle_seconds, timeout_seconds)
+            if not self.is_alive():
+                raise QuotaProbeError("process_exit", "CLI process exited during quota probe", snapshot)
+            return snapshot
 
     def close(self):
         proc = self.proc
@@ -546,7 +552,9 @@ class PersistentQuotaSession:
 
 
 PERSISTENT_QUOTA_SESSIONS = {}
+PERSISTENT_QUOTA_PARSER_MISSES = {}
 PERSISTENT_QUOTA_LOCK = threading.Lock()
+INVALIDATING_QUOTA_STATES = {"timeout", "process_exit"}
 
 
 def persistent_quota_session_key(tool_key, command, env, cwd):
@@ -571,6 +579,7 @@ def close_persistent_quota_sessions(tool_key=None, home=None):
                 continue
             sessions.append(session)
             del PERSISTENT_QUOTA_SESSIONS[key]
+            PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
     for session in sessions:
         session.close()
 
@@ -587,12 +596,33 @@ def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_secon
             PERSISTENT_QUOTA_SESSIONS[key] = session
     try:
         return session.snapshot(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
-    except Exception:
-        if not session.is_alive():
+    except Exception as e:
+        invalidating = isinstance(e, QuotaProbeError) and e.state in INVALIDATING_QUOTA_STATES
+        if invalidating or not session.is_alive():
             with PERSISTENT_QUOTA_LOCK:
                 if PERSISTENT_QUOTA_SESSIONS.get(key) is session:
                     del PERSISTENT_QUOTA_SESSIONS[key]
+                    PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+            session.close()
         raise
+
+
+def record_persistent_parser_result(tool_key, command, env, cwd, quota):
+    key = persistent_quota_session_key(tool_key, command, env, cwd)
+    state = quota.get("state")
+    with PERSISTENT_QUOTA_LOCK:
+        if key not in PERSISTENT_QUOTA_SESSIONS:
+            return
+        if state != "parser_miss":
+            PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+            return
+        misses = PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0) + 1
+        if misses < PARSER_MISS_SESSION_INVALIDATION_THRESHOLD:
+            PERSISTENT_QUOTA_PARSER_MISSES[key] = misses
+            return
+        session = PERSISTENT_QUOTA_SESSIONS.pop(key)
+        PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+    session.close()
 
 
 def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
@@ -650,6 +680,14 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
 
 def parse_quota(tool_key, screen_text):
     normalized = strip_terminal_sequences(screen_text)
+    summary = "\n".join(compact_lines(normalized))
+    if not summary.strip():
+        return {
+            "state": "empty_output",
+            "source_command": quota_command_for(tool_key),
+            "limits": {},
+            "warnings": ["quota command returned no readable output"],
+        }
     if detect_auth_required(normalized):
         return {
             "state": "auth_required",
@@ -668,8 +706,11 @@ def parse_quota(tool_key, screen_text):
     result = parser(normalized)
     result["source_command"] = quota_command_for(tool_key)
     if not result.get("limits"):
-        result["state"] = "unknown"
+        result["state"] = "parser_miss"
+        diagnostic = summary[:240]
         result["warnings"] = ["quota output was captured but no known quota fields matched"]
+        if diagnostic:
+            result["diagnostic_summary"] = diagnostic
     return result
 
 
@@ -684,6 +725,8 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
             "limits": {},
             "warnings": [str(e)],
         }
+    if runner is run_persistent_cli_quota_snapshot:
+        record_persistent_parser_result(tool_key, command, env, cwd, quota)
     return {
         "tool": tool_key,
         "profile": profile_name,

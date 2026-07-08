@@ -437,7 +437,17 @@ def agy_quota_cells(status, columns):
         marker = ""
     elif job_state in QUOTA_ACTIVE_JOB_STATES or state == "loading":
         marker = "..."
-    elif job_state in ("retryable", "failed") or state in ("unknown", "error", "timeout", "exception", "auth_required", "missing_cli"):
+    elif job_state in ("retryable", "failed") or state in (
+        "unknown",
+        "error",
+        "timeout",
+        "exception",
+        "auth_required",
+        "missing_cli",
+        "empty_output",
+        "parser_miss",
+        "process_exit",
+    ):
         marker = "!"
     return [marker if idx == 0 else "" for idx, _ in enumerate(columns)]
 
@@ -467,6 +477,27 @@ def any_quota_loading(tool_key=None):
             if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
                 return True
     return False
+
+
+def next_quota_wake_timeout(tool_key=None, now=None, active_timeout=0.5, max_retry_timeout=0.5):
+    now = time.time() if now is None else now
+    next_retry_at = None
+    with INTERACTIVE_QUOTA_LOCK:
+        for (entry_tool, _), entry in INTERACTIVE_QUOTA_CACHE.items():
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+                return active_timeout
+            retry_at = entry.get("next_retry_at")
+            if retry_at is None:
+                continue
+            if entry.get("state") != "retryable" and entry.get("job_state") != "retryable":
+                continue
+            if next_retry_at is None or retry_at < next_retry_at:
+                next_retry_at = retry_at
+    if next_retry_at is None:
+        return None
+    return max(0.0, min(max_retry_timeout, next_retry_at - now))
 
 
 def read_key_byte(fd=None, timeout=None):
@@ -606,7 +637,7 @@ def render_status_screen(tool_key):
 def view_status(tool_key):
     while True:
         render_status_screen(tool_key)
-        key = get_key(timeout=0.5 if any_quota_loading(tool_key) else None)
+        key = get_key(timeout=next_quota_wake_timeout(tool_key))
         if key is None:
             continue
         if key in ("enter", "esc", "q"):

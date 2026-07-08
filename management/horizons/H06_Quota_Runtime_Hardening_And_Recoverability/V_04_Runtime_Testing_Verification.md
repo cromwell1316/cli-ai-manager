@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H06_Quota_Runtime_Hardening_And_Recoverabil
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,6 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `pytest -q` passes using deterministic fake clock inputs for retry timing and
+  fake session classes for PTY recovery behavior.
+- Parser fixtures use synthetic output and do not include real tokens.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H06_Quota_Runtime_Hardening_And_Recoverabil
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,5 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `pytest -q` passes with coverage for active worker timeout, retry wake-up
+  deadlines, expired retry deadlines, and fully idle status screens.

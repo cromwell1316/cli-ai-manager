@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H06_Quota_Runtime_Hardening_And_Recoverabil
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

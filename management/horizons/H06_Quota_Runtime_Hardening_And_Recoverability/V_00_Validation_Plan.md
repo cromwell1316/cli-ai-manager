@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H06_Quota_Runtime_Hardening_And_Recoverabil
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Automated Validation
 
@@ -28,3 +28,10 @@ Open interactive `ai-man`, view AGY status, and verify:
 - retryable quota rows wake and retry without pressing Enter;
 - stale values remain visible during failed refreshes;
 - repeated failures do not permanently poison a persistent session.
+
+## Evidence Collected
+
+- `python3 -m pytest -q` passes.
+- `python3 -m py_compile profile_manager.py cli_profile_manager/*.py cli_profile_manager/credentials/*.py tests/test_profile_manager.py` passes.
+- `./scripts/verify_no_tui_surface.sh` passes.
+- Manual live AGY validation was not run in this environment.

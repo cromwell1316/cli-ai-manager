@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H06_Quota_Runtime_Hardening_And_Recoverabil
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,6 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `pytest -q` passes with fake persistent-session coverage for timeout
+  invalidation, fresh session creation after invalidation, dead-session
+  replacement, parser-miss threshold invalidation, and profile isolation.

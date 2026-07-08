@@ -269,7 +269,7 @@ def test_codex_quota_parser_ignores_generic_non_limit_usage():
         "Usage limits\nMessages remaining: 63%\nRate limit resets at 18:30",
     )
 
-    assert quota["state"] == "unknown"
+    assert quota["state"] == "parser_miss"
     assert quota["limits"] == {}
 
 
@@ -281,7 +281,7 @@ def test_codex_quota_parser_ignores_warning_without_status_breakdown():
         "Heads up, you have less than 10% of your weekly limit left. Run /status for a breakdown.",
     )
 
-    assert quota["state"] == "unknown"
+    assert quota["state"] == "parser_miss"
     assert quota["limits"] == {}
 
 
@@ -332,6 +332,33 @@ def test_interactive_quota_text_marks_unknown_state_as_retrying():
     status = {"quota": {"state": "unknown", "limits": {}}}
 
     assert interactive.quota_text(status, color=False) == "retrying"
+
+
+def test_quota_parser_classifies_empty_parser_miss_and_auth_output():
+    from cli_profile_manager.quota import parse_quota
+
+    empty = parse_quota("agy", " \r\n\t ")
+    miss = parse_quota("agy", "Antigravity changed this screen\nNo quota rows here")
+    auth = parse_quota("agy", "Please sign in to continue")
+
+    assert empty["state"] == "empty_output"
+    assert empty["warnings"] == ["quota command returned no readable output"]
+    assert miss["state"] == "parser_miss"
+    assert "no known quota fields matched" in miss["warnings"][0]
+    assert miss["diagnostic_summary"] == "Antigravity changed this screen\nNo quota rows here"
+    assert auth["state"] == "auth_required"
+
+
+def test_quota_payload_preserves_missing_cli_diagnostic():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError("missing_cli", "agy CLI is not installed or not in PATH")
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "missing_cli"
+    assert payload["quota"]["warnings"] == ["agy CLI is not installed or not in PATH"]
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
@@ -592,6 +619,34 @@ def test_interactive_retry_backoff_prevents_tight_retry_loop(monkeypatch):
     assert calls == [1]
 
 
+def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
+    import cli_profile_manager.interactive as interactive
+
+    interactive.invalidate_quota_cache()
+
+    assert interactive.next_quota_wake_timeout("agy", now=100.0) is None
+
+    interactive.store_quota_cache("agy", 1, {
+        "state": "queued",
+        "job_state": "queued",
+        "quota": {"state": "loading", "limits": {}},
+        "next_retry_at": None,
+    })
+    assert interactive.next_quota_wake_timeout("agy", now=100.0) == 0.5
+
+    interactive.invalidate_quota_cache()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "retryable",
+        "job_state": "retryable",
+        "quota": {"state": "parser_miss", "limits": {}},
+        "next_retry_at": 100.2,
+    })
+    assert interactive.next_quota_wake_timeout("agy", now=100.0) == pytest.approx(0.2)
+    assert interactive.next_quota_wake_timeout("agy", now=100.3) == 0.0
+
+    interactive.invalidate_quota_cache()
+
+
 def test_persistent_quota_runner_reuses_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
@@ -691,6 +746,87 @@ def test_persistent_quota_runner_replaces_dead_session(monkeypatch, tmp_path):
     quota.close_persistent_quota_sessions()
 
 
+def test_persistent_quota_runner_invalidates_timeout_session_only(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    created = []
+    calls = {}
+
+    class FakeSession:
+        def __init__(self, tool_key, command, env, cwd):
+            self.env = env
+            self.cwd = cwd
+            self.closed = False
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            calls[self.cwd] = calls.get(self.cwd, 0) + 1
+            if self.cwd.endswith("p1") and calls[self.cwd] == 1:
+                raise quota.QuotaProbeError("timeout", "timeout waiting for CLI output")
+            return "Daily limit 55% remaining"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setattr(quota, "PersistentQuotaSession", FakeSession)
+    home1 = str(tmp_path / "p1")
+    home2 = str(tmp_path / "p2")
+
+    quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": home2}, home2)
+    with pytest.raises(quota.QuotaProbeError):
+        quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": home1}, home1)
+    assert created[1].closed is True
+    assert created[0].closed is False
+
+    assert quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": home1}, home1) == "Daily limit 55% remaining"
+    assert len(created) == 3
+    quota.close_persistent_quota_sessions()
+
+
+def test_persistent_quota_parser_miss_threshold_invalidates_session(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    created = []
+
+    class FakeSession:
+        def __init__(self, tool_key, command, env, cwd):
+            self.closed = False
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            return "Antigravity layout without quota rows"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setattr(quota, "PersistentQuotaSession", FakeSession)
+    home = str(tmp_path / "p1")
+
+    for _ in range(quota.PARSER_MISS_SESSION_INVALIDATION_THRESHOLD):
+        payload = quota.quota_payload(
+            "agy",
+            "p1",
+            ["agy"],
+            {"HOME": home},
+            home,
+            runner=quota.run_persistent_cli_quota_snapshot,
+        )
+        assert payload["quota"]["state"] == "parser_miss"
+
+    assert created[0].closed is True
+    quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": home}, home)
+    assert len(created) == 2
+    quota.close_persistent_quota_sessions()
+
+
 def test_interactive_invalidate_closes_matching_persistent_session(monkeypatch, tmp_path):
     import cli_profile_manager.interactive as interactive
     import cli_profile_manager.quota as quota
@@ -742,10 +878,12 @@ def test_interactive_agy_quota_cells_render_h05_markers():
         },
     }
     failed = {"quota": {"state": "timeout", "job_state": "retryable", "limits": {}}}
+    parser_miss = {"quota": {"state": "parser_miss", "limits": {}}}
     no_token = {"quota": {"state": "no_token", "limits": {}}}
 
     assert agy_quota_cells(stale, columns)[0] == "94%~"
     assert agy_quota_cells(failed, columns)[0] == "!"
+    assert agy_quota_cells(parser_miss, columns)[0] == "!"
     assert agy_quota_cells(no_token, columns) == ["", "", "", "", "", "", ""]
 
 
