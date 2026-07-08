@@ -90,6 +90,25 @@ def test_status_detection_reports_source_state_account_and_warnings(monkeypatch,
     assert claude["warnings"]
 
 
+def test_agy_status_uses_recent_auth_log_when_google_account_is_placeholder(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    profile_home = tmp_path / "agy-homes" / "p4"
+    write_json(profile_home / ".gemini" / "oauth_creds.json", {"refresh_token": "r"})
+    write_json(profile_home / ".gemini" / "google_accounts.json", {"active": "logged in"})
+    log_path = profile_home / ".gemini" / "antigravity-cli" / "log" / "cli-20260708_133455.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text(
+        "applyAuthResult: email=resolved@example.com, authMethod=consumer, quotaProject=\n",
+        encoding="utf-8",
+    )
+
+    status = pm.status_payload("agy", 4, {})
+
+    assert status["token_state"] == "valid"
+    assert status["email"] == "resolved@example.com"
+    assert status["account"] == "resolved@example.com"
+
+
 def test_quota_parsers_extract_agent_specific_limits():
     from cli_profile_manager.quota import parse_quota
 

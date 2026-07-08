@@ -160,7 +160,7 @@ def read_json_object(path, encoding="utf-8"):
     return core_read_json_object(path, encoding)
 
 def account_email_from_google_accounts(profile_home):
-    return agy_credentials.account_email_from_google_accounts(profile_home, TOOLS["agy"]["acct_file"])
+    return agy_credentials.account_email_from_profile(profile_home, TOOLS["agy"]["acct_file"])
 
 def decode_windows_agy_credential(win_cred_path):
     return agy_credentials.decode_windows_credential(win_cred_path)
@@ -196,27 +196,7 @@ def generate_win_cred_from_linux_token(token_path, win_cred_path, profile_home, 
         if not token_data:
             return False
 
-        # Try to find email
         email = account_email_from_google_accounts(profile_home) or "logged in"
-
-        if email in ("(no login)", "logged in"):
-            log_dir = os.path.join(profile_home, ".gemini", "antigravity-cli", "log")
-            if os.path.exists(log_dir):
-                try:
-                    for log_file in sorted(os.listdir(log_dir), reverse=True):
-                        if log_file.startswith("cli-") and log_file.endswith(".log"):
-                            log_path = os.path.join(log_dir, log_file)
-                            with open(log_path, "r", errors="ignore") as lf:
-                                for line in lf:
-                                    if "email=" in line:
-                                        parts = line.split("email=")
-                                        if len(parts) > 1:
-                                            email = parts[1].split()[0].strip().rstrip(",")
-                                            break
-                        if email not in ("(no login)", "logged in"):
-                            break
-                except Exception:
-                    pass
 
         write_json_atomic(win_cred_path, build_windows_agy_credential(token_data, email))
 
@@ -260,7 +240,7 @@ def get_profile_status(tool_key, n, metadata):
                 token_state = "valid"
                 credential_source = "wsl-oauth"
                 account = account_email_from_google_accounts(profile_home)
-                email = account_email_from_google_accounts(profile_home) or "logged in"
+                email = account or "logged in"
             except Exception as e:
                 token_state = "invalid"
                 credential_source = "wsl-oauth"

@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 
 from .credentials.agy import (
-    account_email_from_google_accounts,
+    account_email_from_profile,
     build_windows_credential,
     decode_windows_credential,
     read_wsl_oauth,
@@ -70,7 +70,7 @@ def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=Fa
             dest = dst_agy / f"cred-p{n}.json"
             try:
                 token_data = read_wsl_oauth(str(token_path))
-                account = account_email_from_google_accounts(str(profile_dir))
+                account = account_email_from_profile(str(profile_dir))
             except Exception as e:
                 result["invalid"] += 1
                 result["items"].append({"source": str(token_path), "destination": str(dest), "status": "invalid", "error": str(e)})
