@@ -309,31 +309,30 @@ def test_interactive_unknown_quota_cache_is_retryable(monkeypatch):
     assert calls == [("agy", 1, 40.0)]
 
 
-def test_interactive_agy_quota_uses_single_probe_slot(monkeypatch):
+def test_interactive_agy_quota_uses_shared_cache(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
-    active = 0
-    peak = 0
+    calls = []
 
     def fake_quota_payload(tool_key, profile_num, timeout_seconds):
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        active -= 1
+        calls.append((tool_key, profile_num, timeout_seconds))
         return {
             "quota": {
                 "state": "available",
-                "limits": {"daily": {"percent": profile_num}},
+                "limits": {"daily": {"percent": 42}},
             },
         }
 
     monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
     interactive.invalidate_quota_cache()
 
-    interactive.load_quota_background("agy", 1)
-    interactive.load_quota_background("agy", 2)
+    first = interactive.ensure_quota_loading("agy", 1)
+    second = interactive.ensure_quota_loading("agy", 2)
+    first["thread"].join(timeout=1)
 
-    assert peak == 1
+    assert calls == [("agy", 1, 40.0)]
+    assert second["quota"]["limits"]["daily"]["percent"] == 42
+    assert interactive.quota_cache_entry("agy", 2)["quota"]["limits"]["daily"]["percent"] == 42
 
 
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])

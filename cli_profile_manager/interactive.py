@@ -101,14 +101,20 @@ def interactive_quota_timeout(tool_key=None):
         return fallback
 
 
+def quota_cache_key(tool_key, profile_num):
+    if tool_key == "agy":
+        return (tool_key, "shared")
+    return (tool_key, profile_num)
+
+
 def quota_cache_entry(tool_key, profile_num):
     with INTERACTIVE_QUOTA_LOCK:
-        return INTERACTIVE_QUOTA_CACHE.get((tool_key, profile_num))
+        return INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
 
 
 def store_quota_cache(tool_key, profile_num, entry):
     with INTERACTIVE_QUOTA_LOCK:
-        INTERACTIVE_QUOTA_CACHE[(tool_key, profile_num)] = entry
+        INTERACTIVE_QUOTA_CACHE[quota_cache_key(tool_key, profile_num)] = entry
 
 
 def load_quota_background(tool_key, profile_num):
@@ -210,7 +216,7 @@ def invalidate_quota_cache(tool_key=None, profile_num=None):
                 if key[0] == tool_key:
                     del INTERACTIVE_QUOTA_CACHE[key]
             return
-        INTERACTIVE_QUOTA_CACHE.pop((tool_key, profile_num), None)
+        INTERACTIVE_QUOTA_CACHE.pop(quota_cache_key(tool_key, profile_num), None)
 
 
 def any_quota_loading(tool_key=None):
