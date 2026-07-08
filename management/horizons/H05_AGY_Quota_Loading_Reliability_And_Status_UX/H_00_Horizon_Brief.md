@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H05_AGY_Quota_Loading_Reliability_And_Statu
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Problem
 

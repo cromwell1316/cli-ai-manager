@@ -5,20 +5,20 @@ Source of Truth: management/horizons/H05_AGY_Quota_Loading_Reliability_And_Statu
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Immediate account/token status render | Planned |
-| Bounded AGY quota worker queue | Planned |
-| Duplicate quota job deduplication | Planned |
-| Persistent per-profile AGY PTY sessions | Planned |
-| Session restart and invalidation hooks | Planned |
-| Fresh cache display | Planned |
-| Stale cache display during refresh | Planned |
-| Failure diagnostics preserved | Planned |
-| Retry backoff | Planned |
-| Separate AGY quota columns | Planned |
-| No-token quota cells stay blank | Planned |
-| Automated scheduler/session/cache/rendering tests | Planned |
-| Manual live AGY validation | Planned |
+| Immediate account/token status render | Implemented |
+| Bounded AGY quota worker queue | Implemented |
+| Duplicate quota job deduplication | Implemented |
+| Persistent per-profile AGY PTY sessions | Implemented |
+| Session restart and invalidation hooks | Implemented |
+| Fresh cache display | Implemented |
+| Stale cache display during refresh | Implemented |
+| Failure diagnostics preserved | Implemented |
+| Retry backoff | Implemented |
+| Separate AGY quota columns | Implemented |
+| No-token quota cells stay blank | Implemented |
+| Automated scheduler/session/cache/rendering tests | Implemented |
+| Manual live AGY validation | Not run in this environment |

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H05_AGY_Quota_Loading_Reliability_And_Statu
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Required Checks
 
@@ -16,4 +16,6 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `pytest -q` passes with persistent session coverage for same-profile reuse,
+  per-profile isolation, dead session replacement, and explicit invalidation.
+- `python -m compileall cli_profile_manager profile_manager.py` passes.

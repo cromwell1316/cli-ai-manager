@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H05_AGY_Quota_Loading_Reliability_And_Statu
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Commands
 
@@ -30,3 +30,11 @@ depend on live credentials or network availability.
   columns without causing every row to become `retry`.
 - Reopening AGY status in the same manager process shows cached values before
   refresh completion.
+
+## Evidence Collected
+
+- `pytest -q` passes.
+- `python -m compileall cli_profile_manager profile_manager.py` passes.
+- `python3 -m py_compile profile_manager.py cli_profile_manager/*.py cli_profile_manager/credentials/*.py tests/test_profile_manager.py` passes.
+- `./scripts/verify_no_tui_surface.sh` passes.
+- Manual live AGY validation was not run in this environment.

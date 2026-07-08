@@ -550,20 +550,27 @@ PERSISTENT_QUOTA_LOCK = threading.Lock()
 
 
 def persistent_quota_session_key(tool_key, command, env, cwd):
+    home = env.get("HOME")
     return (
         tool_key,
         tuple(command),
         os.path.abspath(cwd),
-        env.get("HOME"),
+        os.path.abspath(home) if home else None,
         env.get("CODEX_HOME"),
         env.get("CLAUDE_CONFIG_DIR"),
     )
 
 
-def close_persistent_quota_sessions():
+def close_persistent_quota_sessions(tool_key=None, home=None):
     with PERSISTENT_QUOTA_LOCK:
-        sessions = list(PERSISTENT_QUOTA_SESSIONS.values())
-        PERSISTENT_QUOTA_SESSIONS.clear()
+        sessions = []
+        for key, session in list(PERSISTENT_QUOTA_SESSIONS.items()):
+            if tool_key is not None and key[0] != tool_key:
+                continue
+            if home is not None and key[3] != os.path.abspath(home):
+                continue
+            sessions.append(session)
+            del PERSISTENT_QUOTA_SESSIONS[key]
     for session in sessions:
         session.close()
 
