@@ -157,8 +157,8 @@ available from JSON commands or diagnostics.
 Fresh AGY quota values are colored by remaining percentage: red for 0-20%,
 yellow for 21-40%, and green above 40%. Values older than
 `AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS` are shown in white; the default is
-600 seconds. Press `r` on the interactive status screen to force a fresh quota
-probe for the visible tool.
+600 seconds. Press `r`, `Ctrl+R`, or `к` on the interactive status screen to
+force a fresh quota probe for the visible tool.
 
 Diagnostics are safe by default:
 

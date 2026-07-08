@@ -933,22 +933,63 @@ def test_interactive_email_coloring_preserves_visible_width():
     assert interactive.visible_len(colored) == len("alex123@example.com")
 
 
-def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch):
+@pytest.mark.parametrize("refresh_key", ["r", "R", "ctrl+r", "к", "К"])
+def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch, refresh_key):
     import cli_profile_manager.interactive as interactive
 
     rendered = []
     invalidated = []
-    keys = iter(["r", "enter"])
+    keys = iter([refresh_key, "enter"])
 
-    monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key: rendered.append(tool_key))
+    monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key, status_message=None: rendered.append((tool_key, status_message)))
     monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
     monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool_key: None)
     monkeypatch.setattr(interactive, "invalidate_quota_cache", lambda tool_key=None, profile_num=None: invalidated.append((tool_key, profile_num)))
 
     interactive.view_status("agy")
 
-    assert rendered == ["agy", "agy"]
+    assert rendered == [("agy", None), ("agy", "Refreshing quota now...")]
     assert invalidated == [("agy", None)]
+
+
+def test_interactive_get_key_reads_ctrl_r(monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    import cli_profile_manager.interactive as interactive
+
+    class FakeStdin:
+        def fileno(self):
+            return 0
+
+    data = [b"\x12"]
+
+    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin())
+    monkeypatch.setattr(interactive.os, "read", lambda _fd, _size: data.pop(0))
+    monkeypatch.setattr(interactive.termios, "tcgetattr", lambda _fd: object())
+    monkeypatch.setattr(interactive.termios, "tcsetattr", lambda *_args: None)
+    monkeypatch.setattr(interactive.tty, "setraw", lambda _fd: None)
+    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r if data else [], [], []))
+
+    assert interactive.get_key() == "ctrl+r"
+
+
+def test_interactive_get_key_reads_cyrillic_refresh_key(monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    import cli_profile_manager.interactive as interactive
+
+    class FakeStdin:
+        def fileno(self):
+            return 0
+
+    data = [bytes([byte]) for byte in "к".encode("utf-8")]
+
+    monkeypatch.setattr(interactive.sys, "stdin", FakeStdin())
+    monkeypatch.setattr(interactive.os, "read", lambda _fd, _size: data.pop(0))
+    monkeypatch.setattr(interactive.termios, "tcgetattr", lambda _fd: object())
+    monkeypatch.setattr(interactive.termios, "tcsetattr", lambda *_args: None)
+    monkeypatch.setattr(interactive.tty, "setraw", lambda _fd: None)
+    monkeypatch.setattr(interactive.select, "select", lambda r, _w, _e, _t: (r if data else [], [], []))
+
+    assert interactive.get_key() == "к"
 
 
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])

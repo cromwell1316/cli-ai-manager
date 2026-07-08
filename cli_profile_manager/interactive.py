@@ -619,10 +619,29 @@ def read_key_byte(fd=None, timeout=None):
         ready, _, _ = select.select([fd], [], [], timeout)
         if not ready:
             return None
-    data = os.read(fd, 1)
-    if not data:
+    first = os.read(fd, 1)
+    if not first:
         return None
-    return data.decode(errors="ignore")
+    first_byte = first[0]
+    if first_byte < 0x80:
+        return first.decode(errors="ignore")
+    if 0xC0 <= first_byte < 0xE0:
+        remaining = 1
+    elif 0xE0 <= first_byte < 0xF0:
+        remaining = 2
+    elif 0xF0 <= first_byte < 0xF8:
+        remaining = 3
+    else:
+        return first.decode(errors="ignore")
+    data = bytearray(first)
+    deadline = time.monotonic() + 0.05
+    while remaining > 0 and time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], max(0.0, deadline - time.monotonic()))
+        if not ready:
+            break
+        data.extend(os.read(fd, 1))
+        remaining -= 1
+    return bytes(data).decode(errors="ignore")
 
 
 def key_from_escape_sequence(fd):
@@ -668,13 +687,15 @@ def get_key(timeout=None):
             return 'enter'
         elif ch == '\x03': # Ctrl+C
             return 'ctrl+c'
+        elif ch == '\x12': # Ctrl+R
+            return 'ctrl+r'
         else:
             return ch
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def render_status_screen(tool_key):
+def render_status_screen(tool_key, status_message=None):
     clear_screen()
     tool_name = TOOLS[tool_key]["name"]
     print_header(f"STATUS: {tool_name.upper()}")
@@ -744,19 +765,24 @@ def render_status_screen(tool_key):
             f"{visible_fit(label, widths['label'])}"
         )
     print()
+    if status_message:
+        print(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
     print("Press Enter/q to return, r to refresh quota now...")
 
 
 def view_status(tool_key):
+    status_message = None
     while True:
-        render_status_screen(tool_key)
+        render_status_screen(tool_key, status_message)
+        status_message = None
         key = get_key(timeout=next_quota_wake_timeout(tool_key))
         if key is None:
             continue
         if key in ("enter", "esc", "q"):
             return
-        elif key in ("r", "R"):
+        elif key in ("r", "R", "ctrl+r", "к", "К"):
             invalidate_quota_cache(tool_key)
+            status_message = "Refreshing quota now..."
             continue
         elif key == "ctrl+c":
             sys.exit(0)
