@@ -371,6 +371,10 @@ def quota_summary(status):
     state = quota.get("state", "unknown")
     if state != "available":
         return state
+    if quota.get("source_command") == "/usage":
+        agy = agy_quota_summary(quota)
+        if agy:
+            return agy
     labels = {
         "five_hour": "5h",
         "weekly": "week",
@@ -398,6 +402,55 @@ def quota_summary(status):
             label = labels.get(name, data.get("model", name))
             parts.append(f"{label}:{value:g}%")
     return ", ".join(parts) or state
+
+
+def agy_quota_summary(quota):
+    limits = quota.get("limits", {})
+    groups = {
+        "flash": [],
+        "pro": [],
+        "claude": [],
+        "gpt": [],
+        "other": [],
+    }
+    for name, data in limits.items():
+        value = data.get("percent_left", data.get("percent"))
+        if value is None:
+            continue
+        model = data.get("model", name)
+        model_l = model.lower()
+        if "gemini" in model_l and "flash" in model_l:
+            label = "F"
+            bucket = "flash"
+        elif "gemini" in model_l and "pro" in model_l:
+            label = "P"
+            bucket = "pro"
+        elif "claude" in model_l:
+            label = "C"
+            bucket = "claude"
+        elif "gpt" in model_l:
+            label = "G"
+            bucket = "gpt"
+        else:
+            label = model[:8]
+            bucket = "other"
+        if "medium" in model_l:
+            tier = "M"
+        elif "high" in model_l:
+            tier = "H"
+        elif "low" in model_l:
+            tier = "L"
+        elif "sonnet" in model_l:
+            tier = "S"
+        elif "opus" in model_l:
+            tier = "O"
+        else:
+            tier = ""
+        groups[bucket].append(f"{label}{tier}:{value:g}%")
+    parts = []
+    for bucket in ("flash", "pro", "claude", "gpt", "other"):
+        parts.extend(groups[bucket])
+    return " ".join(parts)
 
 def print_status_table(tool_key, statuses):
     has_quota = any("quota" in status for status in statuses)

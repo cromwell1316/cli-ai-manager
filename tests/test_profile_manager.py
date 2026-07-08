@@ -124,7 +124,7 @@ def test_agy_quota_parser_extracts_common_usage_variants():
     assert quota["limits"]["local_messages"]["percent_left"] == 73
     assert quota["limits"]["cloud_tasks"]["percent"] == 60
     assert quota["limits"]["gemini_2_5_pro_quota"]["percent_left"] == 41
-    assert quota_summary({"quota": quota}) == "local:73%, cloud:60%, Gemini 2.5 Pro quota:41%"
+    assert quota_summary({"quota": quota}) == "P:41% local:73% cloud:60%"
 
 
 def test_agy_quota_parser_extracts_models_and_quota_output():
@@ -155,7 +155,7 @@ def test_agy_quota_parser_extracts_models_and_quota_output():
     assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
     assert quota["limits"]["claude_sonnet_4_6_thinking"]["percent"] == 100
     assert "usage_1" not in quota["limits"]
-    assert quota_summary({"quota": quota}) == "Gemini 3.5 Flash (Medium):0%"
+    assert quota_summary({"quota": quota}) == "FM:0% PL:5% CS:100%"
 
 
 def test_codex_quota_parser_extracts_status_limit_variants():

@@ -196,13 +196,13 @@ def color_quota_text(text, status):
     return f"{color}{text}{CLR_RESET}"
 
 
-def quota_text(status, color=True):
+def quota_text(status, color=True, width=24):
     summary = quota_summary(status)
     if summary == "unknown":
         summary = "retrying"
     text = summary or "quota pending"
-    if len(text) > 24:
-        text = f"{text[:21]}..."
+    if len(text) > width:
+        text = f"{text[:max(0, width - 3)]}..."
     return color_quota_text(text, status) if color else text
 
 
@@ -301,9 +301,9 @@ def render_status_screen(tool_key):
 
     widths = {
         "profile": 8,
-        "account": 34,
+        "account": 32,
         "status": 10,
-        "quota": 24,
+        "quota": 52,
         "label": 14,
     }
     print(
@@ -322,7 +322,7 @@ def render_status_screen(tool_key):
         stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
         lbl_str = f"({status['label']})" if status["label"] else ""
         email_color = CLR_CYAN if status["has_token"] else CLR_RESET
-        quota = quota_text(status)
+        quota = quota_text(status, width=widths["quota"])
         profile = f"p{status['num']}"
         email = f"{email_color}{status['email']}{CLR_RESET}"
         label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
