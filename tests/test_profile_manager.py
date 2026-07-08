@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -372,6 +373,74 @@ def test_interactive_agy_quota_cache_is_per_profile(monkeypatch):
     assert interactive.quota_cache_key("agy", 1) != interactive.quota_cache_key("agy", 2)
     assert interactive.quota_cache_entry("agy", 1)["quota"]["limits"]["daily"]["percent"] == 41
     assert interactive.quota_cache_entry("agy", 2)["quota"]["limits"]["daily"]["percent"] == 42
+
+
+def test_interactive_quota_loads_are_not_serialized(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        calls.append(profile_num)
+        if len(calls) == 2:
+            entered.set()
+        release.wait(1)
+        return {
+            "quota": {
+                "state": "available",
+                "limits": {"daily": {"percent": 40 + profile_num}},
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    interactive.invalidate_quota_cache()
+
+    first = interactive.ensure_quota_loading("agy", 1)
+    second = interactive.ensure_quota_loading("agy", 2)
+
+    assert entered.wait(0.5)
+    release.set()
+    first["thread"].join(timeout=1)
+    second["thread"].join(timeout=1)
+    assert sorted(calls) == [1, 2]
+
+
+def test_persistent_quota_runner_reuses_session(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    created = []
+
+    class FakeSession:
+        def __init__(self, tool_key, command, env, cwd):
+            self.tool_key = tool_key
+            self.command = command
+            self.env = env
+            self.cwd = cwd
+            self.closed = False
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            return "Daily limit 50% remaining"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setattr(quota, "PersistentQuotaSession", FakeSession)
+
+    env = {"HOME": str(tmp_path / "p1")}
+    first = quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path))
+    second = quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path))
+
+    assert first == "Daily limit 50% remaining"
+    assert second == "Daily limit 50% remaining"
+    assert len(created) == 1
+    quota.close_persistent_quota_sessions()
 
 
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])

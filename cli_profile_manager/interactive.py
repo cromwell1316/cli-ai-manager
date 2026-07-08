@@ -54,11 +54,6 @@ from .cli import (
 
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
-INTERACTIVE_QUOTA_SEMAPHORES = {
-    "agy": threading.BoundedSemaphore(1),
-    "codex": threading.BoundedSemaphore(2),
-    "claude": threading.BoundedSemaphore(2),
-}
 QUOTA_FRESH_SECONDS = 300
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
@@ -117,12 +112,7 @@ def store_quota_cache(tool_key, profile_num, entry):
 
 def load_quota_background(tool_key, profile_num):
     try:
-        semaphore = INTERACTIVE_QUOTA_SEMAPHORES.get(tool_key)
-        if semaphore is None:
-            quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
-        else:
-            with semaphore:
-                quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
+        quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
     except Exception as e:
         quota = {
             "state": "error",

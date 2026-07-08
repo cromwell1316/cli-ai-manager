@@ -47,7 +47,10 @@ from cli_profile_manager.paths import (
     refresh_from_env as core_refresh_paths_from_env,
     resolve_sync_bases as core_resolve_sync_bases,
 )
-from cli_profile_manager.quota import quota_payload as core_quota_payload
+from cli_profile_manager.quota import (
+    quota_payload as core_quota_payload,
+    run_persistent_cli_quota_snapshot,
+)
 from cli_profile_manager.sync import (
     deletion_preflight_paths as core_deletion_preflight_paths,
     is_windows_agy_backup_name as core_is_windows_agy_backup_name,
@@ -322,19 +325,35 @@ def status_payload(tool_key, n, metadata=None):
     status["exists"] = n in get_occupied_profiles(tool_key)
     return status
 
-def quota_payload(tool_key, n, timeout_seconds=None):
+def quota_payload(tool_key, n, timeout_seconds=None, runner=run_persistent_cli_quota_snapshot):
     tool = TOOLS[tool_key]
     home = profile_home(tool_key, n)
     command = [tool["cmd"]]
     timeout = timeout_seconds if timeout_seconds is not None else 20
-    return core_quota_payload(
-        tool_key,
-        f"p{n}",
-        command,
-        make_tool_env(tool_key, n),
-        home,
-        timeout_seconds=timeout,
-    )
+    kwargs = {"timeout_seconds": timeout}
+    if runner is not None:
+        kwargs["runner"] = runner
+    try:
+        return core_quota_payload(
+            tool_key,
+            f"p{n}",
+            command,
+            make_tool_env(tool_key, n),
+            home,
+            **kwargs,
+        )
+    except TypeError as e:
+        if "unexpected keyword argument 'runner'" not in str(e):
+            raise
+        kwargs.pop("runner", None)
+        return core_quota_payload(
+            tool_key,
+            f"p{n}",
+            command,
+            make_tool_env(tool_key, n),
+            home,
+            **kwargs,
+        )
 
 def status_payload_with_quota(tool_key, n, metadata=None, timeout_seconds=None):
     status = status_payload(tool_key, n, metadata)

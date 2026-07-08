@@ -1,4 +1,5 @@
 import os
+import atexit
 import re
 import select
 import shutil
@@ -7,6 +8,7 @@ import subprocess
 import fcntl
 import struct
 import termios
+import threading
 import time
 
 
@@ -450,6 +452,140 @@ def terminate_process(proc, master_fd, output):
             proc.kill()
         except OSError:
             pass
+
+
+class PersistentQuotaSession:
+    def __init__(self, tool_key, command, env, cwd):
+        self.tool_key = tool_key
+        self.command = list(command)
+        self.env = env.copy()
+        self.cwd = cwd
+        self.proc = None
+        self.master_fd = None
+        self.lock = threading.Lock()
+
+    def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+        if os.name == "nt":
+            raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
+        try:
+            import pty
+        except ImportError as e:
+            raise QuotaProbeError("unsupported", "PTY support is not available") from e
+        if shutil.which(self.command[0]) is None:
+            raise QuotaProbeError("missing_cli", f"{self.command[0]} CLI is not installed or not in PATH")
+
+        master_fd, slave_fd = pty.openpty()
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
+        env = self.env.copy()
+        env.setdefault("TERM", "xterm-256color")
+        proc = subprocess.Popen(
+            self.command,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=self.cwd,
+            env=env,
+            start_new_session=True,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        output = []
+        try:
+            startup_default = DEFAULT_AGY_STARTUP_SECONDS if self.tool_key == "agy" else DEFAULT_STARTUP_SECONDS
+            startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
+            wait_for_startup(master_fd, output, max(0.0, startup_seconds))
+            wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+        except Exception:
+            terminate_process(proc, master_fd, output)
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+            raise
+        self.proc = proc
+        self.master_fd = master_fd
+
+    def is_alive(self):
+        return self.proc is not None and self.proc.poll() is None and self.master_fd is not None
+
+    def snapshot(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+        with self.lock:
+            if not self.is_alive():
+                self.close()
+                self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
+            read_available(self.master_fd)
+            slash_command = quota_command_for(self.tool_key)
+            if not slash_command:
+                raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
+            key_delay_seconds = float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", DEFAULT_KEY_DELAY_SECONDS))
+            output = []
+            send_interactive_command(self.master_fd, slash_command, max(0.0, key_delay_seconds))
+            post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
+            post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
+            wait_after_command(self.master_fd, output, max(0.0, post_command_seconds))
+            return wait_for_idle(self.master_fd, output, idle_seconds, timeout_seconds)
+
+    def close(self):
+        proc = self.proc
+        master_fd = self.master_fd
+        self.proc = None
+        self.master_fd = None
+        if proc is None or master_fd is None:
+            return
+        output = []
+        terminate_process(proc, master_fd, output)
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+
+PERSISTENT_QUOTA_SESSIONS = {}
+PERSISTENT_QUOTA_LOCK = threading.Lock()
+
+
+def persistent_quota_session_key(tool_key, command, env, cwd):
+    return (
+        tool_key,
+        tuple(command),
+        os.path.abspath(cwd),
+        env.get("HOME"),
+        env.get("CODEX_HOME"),
+        env.get("CLAUDE_CONFIG_DIR"),
+    )
+
+
+def close_persistent_quota_sessions():
+    with PERSISTENT_QUOTA_LOCK:
+        sessions = list(PERSISTENT_QUOTA_SESSIONS.values())
+        PERSISTENT_QUOTA_SESSIONS.clear()
+    for session in sessions:
+        session.close()
+
+
+atexit.register(close_persistent_quota_sessions)
+
+
+def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+    key = persistent_quota_session_key(tool_key, command, env, cwd)
+    with PERSISTENT_QUOTA_LOCK:
+        session = PERSISTENT_QUOTA_SESSIONS.get(key)
+        if session is None:
+            session = PersistentQuotaSession(tool_key, command, env, cwd)
+            PERSISTENT_QUOTA_SESSIONS[key] = session
+    try:
+        return session.snapshot(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
+    except Exception:
+        if not session.is_alive():
+            with PERSISTENT_QUOTA_LOCK:
+                if PERSISTENT_QUOTA_SESSIONS.get(key) is session:
+                    del PERSISTENT_QUOTA_SESSIONS[key]
+        raise
 
 
 def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
