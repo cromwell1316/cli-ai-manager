@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H08_Distribution_Configuration_And_User_Exp
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 

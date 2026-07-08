@@ -53,6 +53,7 @@ ai-man list codex --json
 ai-man status claude p1
 ai-man status codex p1 --quota --json
 ai-man quota codex p1 --json
+ai-man config show --json
 ai-man launch agy p2 -- --help
 ai-man login codex p3
 ai-man import agy /mnt/c/Users/Oliver/agy-homes/cred-p1.json p1
@@ -68,6 +69,7 @@ Command grammar:
 ai-man list <tool> [--json] [--quota] [--timeout seconds]
 ai-man status <tool> <profile> [--json] [--quota] [--timeout seconds]
 ai-man quota <tool> <profile> [--json] [--timeout seconds]
+ai-man config show [--json]
 ai-man diagnostics [tool] [--json] [--show-accounts]
 ai-man launch <tool> <profile> [-- args...]
 ai-man login <tool> [profile]
@@ -93,6 +95,40 @@ Exit codes:
 ```
 
 `clear` refuses to delete a profile unless `--yes` is supplied.
+
+## Configuration
+
+Inspect the effective configuration and supported environment variables with:
+
+```bash
+ai-man config show
+ai-man config show --json
+```
+
+The JSON output includes profile roots, metadata and sync roots, quota tuning
+values, supported environment variables, and warnings for invalid numeric
+overrides. Environment variables remain the source of truth for overrides.
+
+Supported environment variables:
+
+```text
+AI_MAN_AGY_HOME                         Antigravity profile root
+AI_MAN_CODEX_HOME                       Codex profile root
+AI_MAN_CLAUDE_HOME                      Claude profile root
+AI_MAN_METADATA_DIR                     metadata and labels directory
+AI_MAN_WSL_HOME                         WSL sync root override
+AI_MAN_WINDOWS_HOME                     Windows sync root override
+AI_MAN_INTERACTIVE_QUOTA                enable/disable background quota loading
+AI_MAN_INTERACTIVE_QUOTA_TIMEOUT        generic interactive quota timeout
+AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT    AGY interactive quota timeout
+AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY AGY quota worker count
+AI_MAN_QUOTA_STARTUP_SECONDS            native CLI startup wait
+AI_MAN_QUOTA_POST_COMMAND_SECONDS       post slash-command wait
+AI_MAN_QUOTA_KEY_DELAY_SECONDS          PTY slash-command key delay
+AI_MAN_AGY_QUOTA_COMMAND                AGY quota command override
+AI_MAN_CODEX_QUOTA_COMMAND              Codex quota command override
+AI_MAN_CLAUDE_QUOTA_COMMAND             Claude quota command override
+```
 
 Quota probing uses a PTY and the native CLI for each profile, because these
 agents render usage data only in terminal mode. The default quota commands are
@@ -129,6 +165,25 @@ The diagnostics payload reports configured profile roots, CLI availability,
 quota scheduler/cache state, and persistent quota sessions. Account identifiers
 are redacted unless `--show-accounts` is supplied; token-like values are always
 redacted.
+
+## Install Verification And Rollback
+
+The installer is idempotent: running it again replaces the same local aliases
+with symlinks to the current checkout.
+
+```bash
+./install.sh
+./scripts/verify_install.sh
+```
+
+Set `AI_MAN_INSTALL_BIN_DIR=/path/to/bin` to install and verify aliases outside
+`~/.local/bin`.
+
+Manual rollback removes only the command aliases created by the installer:
+
+```bash
+rm -f ~/.local/bin/ai-man ~/.local/bin/profile-man ~/.local/bin/pman
+```
 
 Optional live AGY validation is available for local troubleshooting:
 
@@ -233,6 +288,8 @@ cli-profile-manager/
 ├── profile_manager.py
 ├── install.sh
 ├── scripts/
+│   ├── validate_agy_quota_live.py
+│   ├── verify_install.sh
 │   └── verify_no_tui_surface.sh
 ├── management/
 │   └── horizons/

@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import shutil
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -100,6 +101,9 @@ CLR_CYAN = "\033[36m"
 CLR_WHITE = "\033[37m"
 CLR_BG_CYAN = "\033[46m"
 CLR_BLACK_TEXT = "\033[30m"
+ANSI_RE = re.compile(
+    r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
+)
 
 def load_metadata():
     return core_load_metadata()
@@ -384,6 +388,21 @@ def print_json_error(message, code, error_type="runtime_error"):
         },
     })
 
+def visible_len(text):
+    return len(ANSI_RE.sub("", str(text)))
+
+def plain_fit(text, width):
+    text = str(text)
+    if width <= 0:
+        return ""
+    length = visible_len(text)
+    if length <= width:
+        return text + (" " * (width - length))
+    plain = ANSI_RE.sub("", text)
+    if width <= 3:
+        return plain[:width]
+    return plain[:width - 3] + "..."
+
 def quota_summary(status):
     quota = status.get("quota")
     if not quota:
@@ -480,16 +499,83 @@ def agy_quota_entries(quota):
 def agy_quota_summary(quota):
     return " ".join(f"{label}:{value}" for label, value in agy_quota_entries(quota))
 
-def print_status_table(tool_key, statuses):
+def status_table_lines(tool_key, statuses, terminal_width=None):
+    terminal_width = terminal_width or shutil.get_terminal_size((120, 24)).columns
+    terminal_width = max(72, terminal_width)
     has_quota = any("quota" in status for status in statuses)
-    quota_header = f" {'Quota':<24}" if has_quota else ""
-    print(f"{'Profile':<8} {'Account':<32} {'Token':<8} {'Label':<16}{quota_header} Home")
-    print("-" * (121 if has_quota else 96))
+    fixed = 8 + 1 + 8 + 1 + 1
+    quota_width = 24 if has_quota else 0
+    if has_quota:
+        fixed += quota_width + 1
+    home_width = 24 if terminal_width >= 112 else 0
+    if home_width:
+        fixed += home_width + 1
+    label_width = 16 if terminal_width >= 96 else 10
+    fixed += label_width + 1
+    account_width = max(18, terminal_width - fixed)
+    if terminal_width < 90 and has_quota:
+        quota_width = 18
+        fixed = 8 + 1 + 8 + 1 + quota_width + 1 + label_width + 1
+        account_width = max(16, terminal_width - fixed)
+
+    headers = [
+        ("Profile", 8),
+        ("Account", account_width),
+        ("Token", 8),
+    ]
+    if has_quota:
+        headers.append(("Quota", quota_width))
+    headers.append(("Label", label_width))
+    if home_width:
+        headers.append(("Home", home_width))
+    lines = [" ".join(plain_fit(name, width) for name, width in headers)]
+    lines.append("-" * min(terminal_width, len(lines[0])))
     for status in statuses:
         token = status.get("token_state") or ("yes" if status["has_token"] else "no")
         label = status["label"] or ""
-        quota = f" {quota_summary(status):<24}" if has_quota else ""
-        print(f"{status['profile']:<8} {status['email']:<32} {token:<8} {label:<16}{quota} {status['home']}")
+        row = [
+            plain_fit(status["profile"], 8),
+            plain_fit(status["email"], account_width),
+            plain_fit(token, 8),
+        ]
+        if has_quota:
+            row.append(plain_fit(quota_summary(status), quota_width))
+        row.append(plain_fit(label, label_width))
+        if home_width:
+            row.append(plain_fit(status["home"], home_width))
+        lines.append(" ".join(row).rstrip())
+    return lines
+
+def print_status_table(tool_key, statuses):
+    for line in status_table_lines(tool_key, statuses):
+        print(line)
+
+def cmd_config_show(args):
+    from cli_profile_manager.config import effective_config_payload
+
+    payload = effective_config_payload()
+    if args.json:
+        print_json_payload(payload)
+        return EXIT_OK
+    print("Configuration")
+    print("Profile roots:")
+    for tool_key, root in payload["profile_roots"].items():
+        print(f"  {tool_key}: {root}")
+    print(f"Metadata: {payload['metadata_dir']}")
+    print(f"Sync roots: wsl={payload['sync_roots']['wsl']} windows={payload['sync_roots']['windows']}")
+    quota = payload["quota"]
+    print(
+        "Quota: "
+        f"enabled={quota['interactive_enabled']} "
+        f"timeout={quota['interactive_timeout']} "
+        f"agy_timeout={quota['interactive_agy_timeout']} "
+        f"agy_workers={quota['interactive_agy_concurrency']}"
+    )
+    if payload["warnings"]:
+        print("Warnings:")
+        for warning in payload["warnings"]:
+            print(f"  {warning}")
+    return EXIT_OK
 
 def cmd_list(args):
     metadata = load_metadata()
@@ -583,7 +669,7 @@ def run_cli_tool(tool_key, n, extra_args=None):
         return completed.returncode
 
     if shutil.which(tool["cmd"]) is None:
-        print_error(f"{tool['cmd']} CLI is not installed or not in PATH")
+        print_error(f"{tool['cmd']} CLI is not installed or not in PATH; install it or adjust PATH")
         return EXIT_NOT_FOUND
     os.makedirs(profile_home(tool_key, n), exist_ok=True)
     cmd = [tool["cmd"]] + extra_args
@@ -628,7 +714,7 @@ def cmd_launch(args):
         print_json_payload(dry_payload) if args.json else print(" ".join(shlex.quote(part) for part in dry_payload["command"]))
         return EXIT_OK
     if not status["has_token"]:
-        message = f"profile p{n} has no token; use login or import first"
+        message = f"profile p{n} has no token; run ai-man login {args.tool} p{n} or import credentials first"
         if args.json:
             print_json_error(message, EXIT_NO_TOKEN, "no_token")
         else:
@@ -1074,6 +1160,13 @@ def build_parser():
     diagnostics_p.add_argument("--json", action="store_true")
     diagnostics_p.add_argument("--show-accounts", action="store_true", help="include full account identifiers")
     diagnostics_p.set_defaults(func=cmd_diagnostics)
+
+    config_p = sub.add_parser("config", help="inspect effective runtime configuration")
+    config_p.set_defaults(func=cmd_config_show, json=False)
+    config_sub = config_p.add_subparsers(dest="config_command")
+    config_show_p = config_sub.add_parser("show", help="show effective paths, quota settings, and env overrides")
+    config_show_p.add_argument("--json", action="store_true")
+    config_show_p.set_defaults(func=cmd_config_show)
 
     return parser
 

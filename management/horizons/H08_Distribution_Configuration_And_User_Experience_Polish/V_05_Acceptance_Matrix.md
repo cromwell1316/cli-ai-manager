@@ -5,16 +5,16 @@ Source of Truth: management/horizons/H08_Distribution_Configuration_And_User_Exp
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Effective config visibility | Planned |
-| Env var documentation | Planned |
-| Invalid config diagnostics | Planned |
-| Idempotent install verification | Planned |
-| Narrow terminal table rendering | Planned |
-| Long account/label rendering | Planned |
-| Stable AGY quota columns | Planned |
-| Actionable human errors | Planned |
-| Backward-compatible JSON and exit codes | Planned |
+| Effective config visibility | Implemented |
+| Env var documentation | Implemented |
+| Invalid config diagnostics | Implemented |
+| Idempotent install verification | Implemented |
+| Narrow terminal table rendering | Implemented |
+| Long account/label rendering | Implemented |
+| Stable AGY quota columns | Implemented |
+| Actionable human errors | Implemented |
+| Backward-compatible JSON and exit codes | Implemented |

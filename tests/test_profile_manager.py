@@ -1047,6 +1047,93 @@ def test_diagnostics_command_json_does_not_print_token_like_values(monkeypatch, 
     assert "[redacted-token]" in completed.stdout
 
 
+def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+        "AI_MAN_WSL_HOME": str(tmp_path / "wsl"),
+        "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
+        "AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY": "not-a-number",
+        "AI_MAN_INTERACTIVE_QUOTA_TIMEOUT": "0",
+        "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "config", "show", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is True
+    assert payload["profile_roots"]["agy"] == str(tmp_path / "agy-homes")
+    assert payload["quota"]["interactive_agy_concurrency"] == 2
+    assert payload["quota"]["interactive_timeout"] == 12.0
+    assert any("AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY" in warning for warning in payload["warnings"])
+    assert any("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT" in warning for warning in payload["warnings"])
+    assert "sk-test-secret" not in completed.stdout
+    assert payload["quota"]["commands"]["agy"] == "[redacted-token]"
+
+
+def test_status_table_lines_fit_narrow_width_and_preserve_quota():
+    from cli_profile_manager.cli import CLR_RED, CLR_RESET, status_table_lines, visible_len
+
+    statuses = [{
+        "profile": "p12",
+        "email": f"{CLR_RED}invalid token: Antigravity CLI token is missing token field with long details{CLR_RESET}",
+        "has_token": False,
+        "token_state": "invalid",
+        "label": "very-long-profile-label-for-terminal",
+        "home": "/home/example/agy-homes/p12",
+        "quota": {
+            "state": "available",
+            "source_command": "/usage",
+            "limits": {
+                "gemini_3_5_flash_medium": {"model": "Gemini 3.5 Flash (Medium)", "percent": 94},
+            },
+        },
+    }]
+
+    lines = status_table_lines("agy", statuses, terminal_width=80)
+
+    assert all(visible_len(line) <= 80 for line in lines)
+    assert "Quota" in lines[0]
+    assert "FM:94%" in lines[2]
+    assert "..." in lines[2]
+
+
+def test_install_script_is_idempotent_and_verifiable(tmp_path):
+    env = os.environ.copy()
+    env["AI_MAN_INSTALL_BIN_DIR"] = str(tmp_path / "bin")
+
+    for _ in range(2):
+        installed = subprocess.run(
+            ["bash", str(ROOT / "install.sh")],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert installed.returncode == 0, installed.stderr
+
+    verified = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "verify_install.sh")],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert verified.returncode == 0, verified.stderr
+    assert "install verification passed" in verified.stdout
+
+
 def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

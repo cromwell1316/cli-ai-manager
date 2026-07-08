@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H08_Distribution_Configuration_And_User_Exp
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,5 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `tests/test_profile_manager.py::test_install_script_is_idempotent_and_verifiable`
+- `./scripts/verify_install.sh`

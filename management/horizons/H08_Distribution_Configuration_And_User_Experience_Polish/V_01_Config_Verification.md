@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H08_Distribution_Configuration_And_User_Exp
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,5 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `python3 profile_manager.py config show --json`
+- `tests/test_profile_manager.py::test_config_show_json_reports_effective_values_and_invalid_env_warnings`
