@@ -284,6 +284,11 @@ def parse_agy_quota(screen_text):
         "limits": {},
         "raw_summary": text,
     }
+    account_match = re.search(r"\bAccount:\s*([^\s│]+@[^\s│]+)", text, re.I)
+    if not account_match:
+        account_match = re.search(r"\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b", text, re.I)
+    if account_match:
+        quota["account"] = account_match.group(1)
     current_model = None
     for line in lines:
         if line.startswith("└ Models & Quota"):

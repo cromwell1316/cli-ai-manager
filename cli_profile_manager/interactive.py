@@ -301,9 +301,9 @@ def render_status_screen(tool_key):
 
     widths = {
         "profile": 8,
-        "account": 32,
+        "account": 38 if tool_key == "agy" else 32,
         "status": 10,
-        "quota": 52,
+        "quota": 46 if tool_key == "agy" else 52,
         "label": 14,
     }
     print(
@@ -324,7 +324,11 @@ def render_status_screen(tool_key):
         email_color = CLR_CYAN if status["has_token"] else CLR_RESET
         quota = quota_text(status, width=widths["quota"])
         profile = f"p{status['num']}"
-        email = f"{email_color}{status['email']}{CLR_RESET}"
+        display_email = status["email"]
+        quota_account = (status.get("quota") or {}).get("account")
+        if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
+            display_email = quota_account
+        email = f"{email_color}{display_email}{CLR_RESET}"
         label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
         print(
             f"{visible_fit(profile, widths['profile'])} "

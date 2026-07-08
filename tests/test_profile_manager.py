@@ -150,12 +150,49 @@ def test_agy_quota_parser_extracts_models_and_quota_output():
     )
 
     assert quota["state"] == "available"
+    assert quota["account"] == "user@example.com"
     assert quota["current_limit"] == "gemini_3_5_flash_medium"
     assert quota["limits"]["gemini_3_5_flash_medium"]["percent"] == 0
     assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
     assert quota["limits"]["claude_sonnet_4_6_thinking"]["percent"] == 100
     assert "usage_1" not in quota["limits"]
     assert quota_summary({"quota": quota}) == "FM:0% PL:5% CS:100%"
+
+
+def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
+    from cli_profile_manager.cli import quota_summary
+    from cli_profile_manager.quota import parse_quota
+
+    quota = parse_quota(
+        "agy",
+        """
+        Account: nikitosz1357@gmail.com
+        ALL MODELS
+        Gemini 3.5 Flash (Medium)
+        [░░░░░░░░░░] 0.00%
+        Refreshes in 100h 18m
+        Gemini 3.5 Flash (High)
+        [░░░░░░░░░░] 0.00%
+        Refreshes in 100h 18m
+        Gemini 3.5 Flash (Low)
+        [░░░░░░░░░░] 0.00%
+        Refreshes in 100h 18m
+        Gemini 3.1 Pro (Low)
+        [███░░░░░░░] 5.00%
+        5% remaining · Refreshes in 76h 19m
+        Gemini 3.1 Pro (High)
+        [███░░░░░░░] 5.00%
+        5% remaining · Refreshes in 76h 19m
+        """,
+    )
+
+    assert quota["account"] == "nikitosz1357@gmail.com"
+    assert quota["limits"]["gemini_3_5_flash_medium"]["percent"] == 0
+    assert quota["limits"]["gemini_3_5_flash_high"]["percent"] == 0
+    assert quota["limits"]["gemini_3_5_flash_low"]["percent"] == 0
+    assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
+    assert quota["limits"]["gemini_3_1_pro_high"]["percent"] == 5
+    assert quota_summary({"quota": quota}) == "FM:0% FH:0% FL:0% PL:5% PH:5%"
 
 
 def test_codex_quota_parser_extracts_status_limit_variants():
