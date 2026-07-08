@@ -933,6 +933,24 @@ def test_interactive_email_coloring_preserves_visible_width():
     assert interactive.visible_len(colored) == len("alex123@example.com")
 
 
+def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    rendered = []
+    invalidated = []
+    keys = iter(["r", "enter"])
+
+    monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key: rendered.append(tool_key))
+    monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
+    monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool_key: None)
+    monkeypatch.setattr(interactive, "invalidate_quota_cache", lambda tool_key=None, profile_num=None: invalidated.append((tool_key, profile_num)))
+
+    interactive.view_status("agy")
+
+    assert rendered == ["agy", "agy"]
+    assert invalidated == [("agy", None)]
+
+
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])
 def test_interactive_get_key_reads_up_arrow_sequences(monkeypatch, sequence):
     sys.path.insert(0, str(ROOT))

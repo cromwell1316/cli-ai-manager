@@ -744,7 +744,7 @@ def render_status_screen(tool_key):
             f"{visible_fit(label, widths['label'])}"
         )
     print()
-    print("Press Enter to return...")
+    print("Press Enter/q to return, r to refresh quota now...")
 
 
 def view_status(tool_key):
@@ -755,6 +755,9 @@ def view_status(tool_key):
             continue
         if key in ("enter", "esc", "q"):
             return
+        elif key in ("r", "R"):
+            invalidate_quota_cache(tool_key)
+            continue
         elif key == "ctrl+c":
             sys.exit(0)
 
