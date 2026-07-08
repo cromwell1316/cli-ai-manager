@@ -265,13 +265,13 @@ def test_interactive_visible_padding_ignores_ansi_codes():
     assert interactive.visible_len(interactive.visible_fit(f"{interactive.CLR_RED}invalid token: Antigravity CLI token is missing token{interactive.CLR_RESET}", 34)) == 34
 
 
-def test_interactive_quota_text_does_not_show_unknown_state():
+def test_interactive_quota_text_marks_unknown_state_as_retrying():
     sys.path.insert(0, str(ROOT))
     import cli_profile_manager.interactive as interactive
 
     status = {"quota": {"state": "unknown", "limits": {}}}
 
-    assert interactive.quota_text(status, color=False) == "not parsed"
+    assert interactive.quota_text(status, color=False) == "retrying"
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
@@ -280,7 +280,7 @@ def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
     monkeypatch.delenv("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", raising=False)
     monkeypatch.delenv("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", raising=False)
 
-    assert interactive.interactive_quota_timeout("agy") == 24.0
+    assert interactive.interactive_quota_timeout("agy") == 40.0
     assert interactive.interactive_quota_timeout("codex") == 12.0
 
 
@@ -306,7 +306,34 @@ def test_interactive_unknown_quota_cache_is_retryable(monkeypatch):
     entry = interactive.quota_cache_entry("agy", 1)
 
     assert entry["state"] == "retryable"
-    assert calls == [("agy", 1, 24.0)]
+    assert calls == [("agy", 1, 40.0)]
+
+
+def test_interactive_agy_quota_uses_single_probe_slot(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    active = 0
+    peak = 0
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        active -= 1
+        return {
+            "quota": {
+                "state": "available",
+                "limits": {"daily": {"percent": profile_num}},
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    interactive.invalidate_quota_cache()
+
+    interactive.load_quota_background("agy", 1)
+    interactive.load_quota_background("agy", 2)
+
+    assert peak == 1
 
 
 @pytest.mark.parametrize("sequence", ["\x1b[A", "\x1bOA", "\x1b[1;2A", "\x1b[1;5A"])

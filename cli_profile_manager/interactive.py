@@ -54,6 +54,11 @@ from .cli import (
 
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
+INTERACTIVE_QUOTA_SEMAPHORES = {
+    "agy": threading.BoundedSemaphore(1),
+    "codex": threading.BoundedSemaphore(2),
+    "claude": threading.BoundedSemaphore(2),
+}
 QUOTA_FRESH_SECONDS = 300
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
@@ -85,8 +90,8 @@ def interactive_quota_enabled():
 
 def interactive_quota_timeout(tool_key=None):
     if tool_key == "agy":
-        raw = os.environ.get("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "24"))
-        fallback = 24.0
+        raw = os.environ.get("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "40"))
+        fallback = 40.0
     else:
         raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "12")
         fallback = 12.0
@@ -108,7 +113,12 @@ def store_quota_cache(tool_key, profile_num, entry):
 
 def load_quota_background(tool_key, profile_num):
     try:
-        quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
+        semaphore = INTERACTIVE_QUOTA_SEMAPHORES.get(tool_key)
+        if semaphore is None:
+            quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
+        else:
+            with semaphore:
+                quota = quota_payload(tool_key, profile_num, interactive_quota_timeout(tool_key))["quota"]
     except Exception as e:
         quota = {
             "state": "error",
@@ -183,7 +193,7 @@ def color_quota_text(text, status):
 def quota_text(status, color=True):
     summary = quota_summary(status)
     if summary == "unknown":
-        summary = "not parsed"
+        summary = "retrying"
     text = summary or "quota pending"
     if len(text) > 24:
         text = f"{text[:21]}..."
