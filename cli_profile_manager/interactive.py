@@ -102,8 +102,6 @@ def interactive_quota_timeout(tool_key=None):
 
 
 def quota_cache_key(tool_key, profile_num):
-    if tool_key == "agy":
-        return (tool_key, "shared")
     return (tool_key, profile_num)
 
 

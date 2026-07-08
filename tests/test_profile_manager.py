@@ -346,7 +346,7 @@ def test_interactive_unknown_quota_cache_is_retryable(monkeypatch):
     assert calls == [("agy", 1, 40.0)]
 
 
-def test_interactive_agy_quota_uses_shared_cache(monkeypatch):
+def test_interactive_agy_quota_cache_is_per_profile(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
     calls = []
@@ -356,7 +356,7 @@ def test_interactive_agy_quota_uses_shared_cache(monkeypatch):
         return {
             "quota": {
                 "state": "available",
-                "limits": {"daily": {"percent": 42}},
+                "limits": {"daily": {"percent": 40 + profile_num}},
             },
         }
 
@@ -366,9 +366,11 @@ def test_interactive_agy_quota_uses_shared_cache(monkeypatch):
     first = interactive.ensure_quota_loading("agy", 1)
     second = interactive.ensure_quota_loading("agy", 2)
     first["thread"].join(timeout=1)
+    second["thread"].join(timeout=1)
 
-    assert calls == [("agy", 1, 40.0)]
-    assert second["quota"]["limits"]["daily"]["percent"] == 42
+    assert calls == [("agy", 1, 40.0), ("agy", 2, 40.0)]
+    assert interactive.quota_cache_key("agy", 1) != interactive.quota_cache_key("agy", 2)
+    assert interactive.quota_cache_entry("agy", 1)["quota"]["limits"]["daily"]["percent"] == 41
     assert interactive.quota_cache_entry("agy", 2)["quota"]["limits"]["daily"]["percent"] == 42
 
 
