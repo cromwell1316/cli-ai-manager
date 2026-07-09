@@ -1,0 +1,34 @@
+# H_02 Phase 02 Resource Limit Config Surface
+
+Owner: cli-profile-manager
+Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_System_Protection/README.md
+Lifecycle: living
+Document Class: implementation phase
+
+Status: planned.
+
+## Objective
+
+Expose resource limits as explicit, documented configuration.
+
+## Scope
+
+- Add environment variables for defaults such as:
+  - `AI_MAN_PROCESS_LIMITS`
+  - `AI_MAN_PROCESS_MEMORY_MB`
+  - `AI_MAN_PROCESS_CPU_PERCENT`
+  - `AI_MAN_PROCESS_MAX_PROCESSES`
+  - `AI_MAN_PROCESS_NICE`
+  - `AI_MAN_PROCESS_IONICE_CLASS`
+  - `AI_MAN_QUOTA_PROCESS_MEMORY_MB`
+  - `AI_MAN_QUOTA_PROCESS_CPU_PERCENT`
+- Support disabling limits explicitly for debugging.
+- Validate numeric ranges and report warnings for invalid values.
+- Include effective policy in `config show --json`.
+- Include active backend and policy in diagnostics.
+
+## Acceptance
+
+- Invalid limit values fall back safely with warnings.
+- Defaults are conservative and do not break normal CLI startup.
+- Config output shows exactly what policy will be applied.
