@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,18 @@ Exercise failure paths and recovery guidance end to end.
 - Failure drills have deterministic expected results.
 - Recovery guidance is actionable.
 - Audit and diagnostics agree on failure facts.
+
+## Evidence
+
+Validated deterministic failure drills in a temporary environment:
+
+| Failure Drill | Expected Result | Observed |
+| --- | --- | --- |
+| Quota on missing-token profile | Exit code `4` (`no_token`) | `4` |
+| Import missing source file | Exit code `3` (`not_found`) | `3` |
+| Clear profile without `--yes` | Exit code `2` (`confirmation_required`) | `2` |
+| Sync missing source root | Exit code `3` (`not_found`) during initial drill | `3` |
+
+The sync missing-root finding was caused by an incomplete temporary fixture. The
+successful sync dry-run scenario passed after creating both WSL and Windows
+roots, confirming the command behavior and the failure reporting path.

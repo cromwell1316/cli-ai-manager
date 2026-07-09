@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,19 @@ Define and run realistic workflows across the whole application.
 - Scenario matrix covers all major workflows.
 - Each scenario has expected outputs and side effects.
 - Failures identify owning subsystem.
+
+## Evidence
+
+Validated in a temporary metadata/profile environment:
+
+| Scenario | Evidence |
+| --- | --- |
+| Config | `config show --json` returned `ok: true` |
+| List | `list agy --json` returned 12 visible profiles |
+| Status | `status agy p1 --json` and `status codex p1 --json` reported active tokens |
+| Import | `import codex <path> p2 --dry-run --json` returned `would_import: true` |
+| Export | `export codex p1 --dry-run --json` returned `would_export: true` |
+| Sync | `sync --from wsl --mode soft --dry-run --yes --json` returned `ok: true` |
+| Audit | `audit list --json --limit 20` returned 20 audit events |
+| Runtime service | `service start --json` reported running; `service stop --json` returned `ok: true` |
+| Diagnostics | `diagnostics --json` completed successfully in a temporary environment |

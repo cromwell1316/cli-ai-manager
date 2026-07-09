@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -23,3 +23,10 @@ runtime service state, and sync operations interact.
 
 Run a deliberate end-to-end sweep with scenario matrices, failure drills,
 performance budgets, compatibility checks, and no-secret verification.
+
+## Outcome
+
+The end-to-end sweep passed for the current local Linux/WSL workspace. All
+automated tests passed, install verification passed, runtime service lifecycle
+commands passed, benchmark results were captured, and no test secrets were
+found in H22 JSON/error artifacts.

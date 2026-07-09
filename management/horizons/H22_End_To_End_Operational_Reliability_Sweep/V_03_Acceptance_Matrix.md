@@ -5,17 +5,17 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| End-to-end scenario matrix | Planned |
-| Interactive workflow evidence | Planned |
-| Noninteractive workflow evidence | Planned |
-| Failure drills | Planned |
-| Recovery guidance verification | Planned |
-| Performance budgets | Planned |
-| Install/update verification | Planned |
-| Linux/WSL compatibility evidence | Planned |
-| No-secret persistence evidence | Planned |
-| Final operational readiness summary | Planned |
+| End-to-end scenario matrix | Implemented |
+| Interactive workflow evidence | Covered by renderer/key-loop tests; live manual UI not required |
+| Noninteractive workflow evidence | Implemented |
+| Failure drills | Implemented |
+| Recovery guidance verification | Implemented |
+| Performance budgets | Implemented |
+| Install/update verification | Implemented |
+| Linux/WSL compatibility evidence | Implemented with temporary roots |
+| No-secret persistence evidence | Implemented |
+| Final operational readiness summary | Implemented |

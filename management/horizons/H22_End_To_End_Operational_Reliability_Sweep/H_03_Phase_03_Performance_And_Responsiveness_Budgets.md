@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -25,3 +25,31 @@ experience sluggish.
 - Performance budgets are documented.
 - Benchmark results are captured.
 - Any regression has an owner and remediation plan.
+
+## Evidence
+
+Runtime benchmark command:
+
+```bash
+python3 scripts/benchmark_runtime.py --scenario all --iterations 20 --json
+```
+
+Local benchmark summary:
+
+| Scenario | Median |
+| --- | ---: |
+| python-startup | 14.484 ms |
+| import-profile-manager | 27.385 ms |
+| parse-args | 5.176 ms |
+| command-config-json | 33.441 ms |
+| command-list-agy-json | 5.537 ms |
+| command-status-agy-json | 5.364 ms |
+| command-diagnostics-agy-json | 81.079 ms |
+| help | 43.755 ms |
+| list-agy-json | 79.021 ms |
+| diagnostics-agy-json | 218.450 ms |
+| config-json | 140.400 ms |
+| status-redraw | 0.466 ms |
+| quota-parser | 0.138 ms |
+
+No H22 performance blocker was identified in this run.

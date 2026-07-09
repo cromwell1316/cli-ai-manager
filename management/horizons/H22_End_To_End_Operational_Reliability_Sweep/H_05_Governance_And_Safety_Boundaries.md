@@ -5,7 +5,14 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
+
+## Evidence
+
+- Destructive checks used temporary directories only.
+- Live external CLI validation was not required for this sweep.
+- Test secret strings were checked against H22 JSON/error artifacts and were
+  not found.
 
 ## Boundaries
 

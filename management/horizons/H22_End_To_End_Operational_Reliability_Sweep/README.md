@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H22_End_To_End_Operational_Reliability_Swee
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -29,6 +29,18 @@ works coherently under realistic user workflows and failures.
 - Do not skip lower-level horizon validation.
 - Do not rely on live external services unless marked as optional manual
   evidence.
+
+## Implementation Summary
+
+- Ran the full automated test suite and operational smoke checks.
+- Verified install aliases, no-TUI surface, diagnostics, audit status, service
+  status, service start/stop, config, list, status, import dry-run, export
+  dry-run, sync dry-run, audit listing, and expected failure exits.
+- Measured startup, command, diagnostics, status redraw, and quota parser
+  performance through the runtime benchmark harness.
+- Verified generated H22 JSON/error artifacts do not contain test secrets.
+- Corrected this horizon's validation commands to match the current CLI and
+  script surface.
 
 ## Files
 
