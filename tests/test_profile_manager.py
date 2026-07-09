@@ -509,6 +509,18 @@ def test_interactive_quota_text_marks_unknown_state_as_retrying():
     assert interactive.quota_text(status, color=False) == "retrying"
 
 
+def test_quota_state_machine_rejects_illegal_transitions():
+    import cli_profile_manager.interactive as interactive
+
+    assert interactive.validate_quota_transition("queued", "running") is True
+
+    with pytest.raises(ValueError, match="illegal quota pipeline transition"):
+        interactive.validate_quota_transition("available", "running")
+
+    with pytest.raises(ValueError, match="unknown quota pipeline state"):
+        interactive.validate_quota_transition("queued", "mystery")
+
+
 def test_quota_parser_classifies_empty_parser_miss_and_auth_output():
     from cli_profile_manager.quota import parse_quota
 
@@ -724,6 +736,7 @@ def test_interactive_quota_scheduler_reports_coalesced_jobs(monkeypatch):
     first["future"].result(timeout=1)
     metrics = scheduler.metrics_snapshot()
     assert metrics["submitted"] == before["submitted"] + 1
+    assert metrics["queued"] == before["queued"] + 1
     assert metrics["coalesced"] == before["coalesced"] + 1
     assert metrics["started"] >= before["started"] + 1
     assert metrics["completed"] >= before["completed"] + 1
@@ -832,6 +845,30 @@ def test_interactive_retry_backoff_prevents_tight_retry_loop(monkeypatch):
 
     assert second["job_state"] == "retryable"
     assert calls == [1]
+
+
+def test_interactive_auth_required_maps_to_terminal_state(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        return {
+            "quota": {
+                "state": "auth_required",
+                "limits": {},
+                "warnings": ["CLI reported that authentication is required"],
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    interactive.invalidate_quota_cache()
+
+    entry = interactive.ensure_quota_loading("agy", 1)
+    entry["future"].result(timeout=1)
+    refreshed = interactive.quota_cache_entry("agy", 1)
+
+    assert refreshed["machine_state"] == "auth_required"
+    assert refreshed["quota"]["pipeline_state"] == "auth_required"
+    assert refreshed["last_error"]["state"] == "auth_required"
 
 
 def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
@@ -1719,6 +1756,9 @@ def test_diagnostics_json_redacts_accounts_and_reports_runtime(monkeypatch, tmp_
     assert payload["ok"] is True
     assert payload["tools"]["codex"]["cli_available"] in (True, False)
     assert payload["quota_runtime"]["cache"] == []
+    assert "queued" in payload["quota_runtime"]["states"]
+    assert "timeout" in payload["quota_runtime"]["failure_states"]
+    assert "running" in payload["quota_runtime"]["legal_transitions"]["queued"]
     assert "persistent_sessions" in payload
     assert "user@example.com" not in rendered
     assert "redacted:" in rendered

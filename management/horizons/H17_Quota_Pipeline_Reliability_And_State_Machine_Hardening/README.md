@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H17_Quota_Pipeline_Reliability_And_State_Ma
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -20,6 +20,17 @@ parallel profile refreshes and flaky native CLIs.
 - Add deterministic tests for concurrency, timeout, parser miss, auth failure,
   and process exit paths.
 - Integrate audit and diagnostics for quota lifecycle events.
+
+## Completion Notes
+
+- Implemented explicit runtime quota pipeline states, legal transition
+  validation, failure taxonomy, diagnostics exposure, and audit transition
+  events.
+- Preserved existing CLI quota output compatibility while adding
+  `machine_state`, `state_machine`, and `pipeline_state` diagnostics.
+- Verified with `pytest -q`: 103 passed.
+- Verified quota-parser benchmark and diagnostics JSON commands from the
+  validation plan.
 
 ## Non-Goals
 

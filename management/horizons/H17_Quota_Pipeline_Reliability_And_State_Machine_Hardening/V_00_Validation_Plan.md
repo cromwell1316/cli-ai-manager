@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H17_Quota_Pipeline_Reliability_And_State_Ma
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Automated Validation
 
@@ -21,3 +21,9 @@ python3 profile_manager.py diagnostics --json
 - Scheduler concurrency tests.
 - PTY lifecycle tests.
 - Diagnostics and audit evidence.
+
+## Result
+
+- `pytest -q`: 103 passed.
+- `python3 scripts/benchmark_runtime.py --scenario quota-parser --iterations 100 --json`: ok.
+- `python3 profile_manager.py diagnostics --json`: ok.

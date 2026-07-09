@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H17_Quota_Pipeline_Reliability_And_State_Ma
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: completed.
 
 ## Boundaries
 

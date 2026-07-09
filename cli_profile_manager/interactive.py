@@ -96,6 +96,42 @@ QUOTA_FRESH_SECONDS = 300
 QUOTA_STALE_SECONDS = 3600
 QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
 QUOTA_ACTIVE_JOB_STATES = ("queued", "running")
+QUOTA_PIPELINE_STATES = (
+    "empty",
+    "queued",
+    "running",
+    "available",
+    "stale_refreshing",
+    "retry_wait",
+    "failed",
+    "auth_required",
+    "disabled",
+)
+QUOTA_FAILURE_STATES = (
+    "timeout",
+    "parser_miss",
+    "missing_cli",
+    "process_exit",
+    "auth_required",
+    "empty_output",
+    "pty_failure",
+    "exception",
+    "resource_limited",
+    "unsupported",
+    "unknown",
+)
+QUOTA_LEGAL_TRANSITIONS = {
+    None: {"empty", "queued", "disabled"},
+    "empty": {"queued", "disabled"},
+    "queued": {"running", "available", "retry_wait", "failed", "auth_required", "disabled"},
+    "running": {"available", "retry_wait", "failed", "auth_required", "disabled"},
+    "available": {"queued", "stale_refreshing", "disabled"},
+    "stale_refreshing": {"available", "retry_wait", "failed", "auth_required", "disabled"},
+    "retry_wait": {"queued", "disabled"},
+    "failed": {"queued", "disabled"},
+    "auth_required": {"queued", "disabled"},
+    "disabled": {"queued"},
+}
 INTERACTIVE_QUOTA_SCHEDULER = None
 INTERACTIVE_QUOTA_SCHEDULER_LOCK = threading.Lock()
 STATUS_RENDERER = TerminalFrameRenderer(cache_key="status")
@@ -145,6 +181,7 @@ class InteractiveQuotaScheduler:
         self.metrics_lock = threading.Lock()
         self.metrics = {
             "submitted": 0,
+            "queued": 0,
             "coalesced": 0,
             "started": 0,
             "completed": 0,
@@ -171,6 +208,7 @@ class InteractiveQuotaScheduler:
     def submit(self, tool_key, profile_num, priority=10):
         future = Future()
         self.increment_metric("submitted")
+        self.increment_metric("queued")
         self.queue.put((priority, next(self.sequence), tool_key, profile_num, future, time.time()))
         return future
 
@@ -237,6 +275,63 @@ def quota_cache_key(tool_key, profile_num):
     return (tool_key, profile_num)
 
 
+def validate_quota_transition(previous_state, next_state):
+    if next_state not in QUOTA_PIPELINE_STATES:
+        raise ValueError(f"unknown quota pipeline state: {next_state}")
+    allowed = QUOTA_LEGAL_TRANSITIONS.get(previous_state)
+    if allowed is None or next_state not in allowed:
+        raise ValueError(f"illegal quota pipeline transition: {previous_state} -> {next_state}")
+    return True
+
+
+def transition_quota_entry(entry, next_state, tool_key=None, profile_num=None, reason=None, now=None):
+    previous = entry.get("machine_state")
+    validate_quota_transition(previous, next_state)
+    entry["machine_state"] = next_state
+    entry["state_machine"] = {
+        "state": next_state,
+        "previous_state": previous,
+        "reason": reason,
+        "transitioned_at": time.time() if now is None else now,
+    }
+    quota = entry.get("quota")
+    if isinstance(quota, dict):
+        quota["pipeline_state"] = next_state
+    if tool_key is not None and profile_num is not None:
+        _audit().record(
+            "quota",
+            "transitioned",
+            tool=tool_key,
+            profile=f"p{profile_num}",
+            result=next_state,
+            details={"from": previous, "to": next_state, "reason": reason},
+        )
+    return entry
+
+
+def quota_entry_machine_state(entry):
+    state = entry.get("machine_state")
+    if state:
+        return state
+    legacy = entry.get("state")
+    job_state = entry.get("job_state")
+    quota = entry.get("quota") or {}
+    quota_state = quota.get("state")
+    if legacy == "ready" and quota_state == "available":
+        return "available"
+    if legacy == "queued" and quota_state == "available":
+        return "stale_refreshing"
+    if job_state == "queued":
+        return "queued"
+    if job_state == "running":
+        return "running"
+    if legacy == "retryable":
+        return "auth_required" if quota_state == "auth_required" else "retry_wait"
+    if legacy == "failed":
+        return "failed"
+    return "empty"
+
+
 def quota_cache_entry(tool_key, profile_num):
     with INTERACTIVE_QUOTA_LOCK:
         return INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
@@ -244,6 +339,7 @@ def quota_cache_entry(tool_key, profile_num):
 
 def store_quota_cache(tool_key, profile_num, entry):
     with INTERACTIVE_QUOTA_LOCK:
+        entry.setdefault("machine_state", quota_entry_machine_state(entry))
         INTERACTIVE_QUOTA_CACHE[quota_cache_key(tool_key, profile_num)] = entry
 
 
@@ -280,6 +376,7 @@ def loading_quota(job_state="queued"):
     return {
         "state": "loading",
         "job_state": job_state,
+        "pipeline_state": job_state,
         "limits": {},
         "warnings": ["quota is loading"],
     }
@@ -303,9 +400,11 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
         if state == "available":
             quota["fetched_at"] = now
             quota["job_state"] = "ready"
+            quota["pipeline_state"] = "available"
             entry = {
                 "state": "ready",
                 "job_state": "ready",
+                "machine_state": current.get("machine_state", "running"),
                 "quota": quota,
                 "fetched_at": now,
                 "started_at": current.get("started_at"),
@@ -313,6 +412,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "last_error": None,
                 "next_retry_at": None,
             }
+            transition_quota_entry(entry, "available", tool_key, profile_num, "probe_succeeded", now)
         else:
             last_error = {
                 "state": state,
@@ -323,6 +423,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
             if had_previous:
                 preserved = dict(previous_quota)
                 preserved["job_state"] = "retryable"
+                preserved["pipeline_state"] = "retry_wait"
                 preserved["last_error"] = last_error
                 preserved["warnings"] = list(previous_quota.get("warnings") or [])
                 if last_error["message"] and last_error["message"] not in preserved["warnings"]:
@@ -330,10 +431,13 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 entry_quota = preserved
             else:
                 quota["job_state"] = "retryable"
+                quota["pipeline_state"] = "auth_required" if state == "auth_required" else "retry_wait"
                 entry_quota = quota
+            machine_state = "auth_required" if state == "auth_required" else "retry_wait"
             entry = {
                 "state": "retryable",
                 "job_state": "retryable",
+                "machine_state": current.get("machine_state", "running"),
                 "quota": entry_quota,
                 "fetched_at": current.get("fetched_at"),
                 "started_at": current.get("started_at"),
@@ -341,6 +445,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "last_error": last_error,
                 "next_retry_at": now + delay,
             }
+            transition_quota_entry(entry, machine_state, tool_key, profile_num, state, now)
         INTERACTIVE_QUOTA_CACHE[key] = entry
         return entry
 
@@ -350,11 +455,14 @@ def load_quota_background(tool_key, profile_num):
     with INTERACTIVE_QUOTA_LOCK:
         entry = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
         if entry is not None:
+            if entry.get("machine_state") not in ("running", "stale_refreshing"):
+                transition_quota_entry(entry, "running", tool_key, profile_num, "worker_started", now)
             entry["state"] = "running"
             entry["job_state"] = "running"
             entry["started_at"] = now
             if (entry.get("quota") or {}).get("state") == "loading":
                 entry["quota"]["job_state"] = "running"
+                entry["quota"]["pipeline_state"] = "running"
     monotonic = getattr(time, "monotonic", time.time)
     started = monotonic()
     logging.debug("quota job start tool=%s profile=p%s", tool_key, profile_num)
@@ -386,6 +494,7 @@ def ensure_quota_loading(tool_key, profile_num):
             entry = {
                 "state": "queued",
                 "job_state": "queued",
+                "machine_state": "empty",
                 "quota": loading_quota("queued"),
                 "fetched_at": None,
                 "started_at": None,
@@ -393,6 +502,7 @@ def ensure_quota_loading(tool_key, profile_num):
                 "last_error": None,
                 "next_retry_at": None,
             }
+            transition_quota_entry(entry, "queued", tool_key, profile_num, "cache_miss", now)
             INTERACTIVE_QUOTA_CACHE[key] = entry
             should_submit = True
         elif entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
@@ -402,10 +512,13 @@ def ensure_quota_loading(tool_key, profile_num):
             entry["state"] = "ready"
             entry["job_state"] = "ready"
             entry["quota"]["job_state"] = "ready"
+            entry["machine_state"] = "available"
+            entry["quota"]["pipeline_state"] = "available"
             return entry
         elif entry.get("state") == "retryable" and not retry_allowed(entry, now):
             return entry
         elif quota_entry_stale_usable(entry, now) or entry.get("state") in ("retryable", "failed", "ready"):
+            previous_machine = quota_entry_machine_state(entry)
             entry["state"] = "queued"
             entry["job_state"] = "queued"
             entry["started_at"] = None
@@ -413,6 +526,9 @@ def ensure_quota_loading(tool_key, profile_num):
                 entry["quota"]["job_state"] = "queued"
             else:
                 entry["quota"] = loading_quota("queued")
+            target_state = "stale_refreshing" if quota_entry_stale_usable(entry, now) else "queued"
+            if previous_machine != target_state:
+                transition_quota_entry(entry, target_state, tool_key, profile_num, "refresh_due", now)
             should_submit = True
         else:
             return entry
@@ -439,6 +555,7 @@ def status_with_auto_quota_snapshot(tool_key, status):
     if not status["has_token"]:
         status["quota"] = {
             "state": "no_token",
+            "pipeline_state": "disabled",
             "limits": {},
             "warnings": ["profile has no token"],
         }
@@ -608,6 +725,7 @@ def force_quota_refresh(tool_key=None):
             if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
                 record_quota_job_coalesced()
                 continue
+            previous_machine = quota_entry_machine_state(entry)
             entry["state"] = "queued"
             entry["job_state"] = "queued"
             entry["started_at"] = None
@@ -618,6 +736,9 @@ def force_quota_refresh(tool_key=None):
                 entry["quota"] = quota
             else:
                 entry["quota"] = loading_quota("queued")
+            target_state = "stale_refreshing" if (quota.get("state") == "available" and quota.get("limits")) else "queued"
+            if previous_machine != target_state:
+                transition_quota_entry(entry, target_state, entry_tool, profile_num, "forced_refresh")
             submissions.append((entry_tool, profile_num))
     for entry_tool, profile_num in submissions:
         future = quota_scheduler().submit(entry_tool, profile_num, priority=0)
@@ -716,7 +837,10 @@ def quota_runtime_snapshot(tool_key=None):
                 "profile": f"p{profile_num}",
                 "state": entry.get("state"),
                 "job_state": entry.get("job_state"),
+                "machine_state": quota_entry_machine_state(entry),
+                "state_machine": entry.get("state_machine"),
                 "quota_state": quota.get("state"),
+                "quota_pipeline_state": quota.get("pipeline_state"),
                 "has_limits": bool(quota.get("limits")),
                 "fetched_age_seconds": None if entry.get("fetched_at") is None else round(now - entry["fetched_at"], 3),
                 "started_age_seconds": None if entry.get("started_at") is None else round(now - entry["started_at"], 3),
@@ -736,6 +860,9 @@ def quota_runtime_snapshot(tool_key=None):
             }
     return {
         "enabled": interactive_quota_enabled(),
+        "states": list(QUOTA_PIPELINE_STATES),
+        "failure_states": list(QUOTA_FAILURE_STATES),
+        "legal_transitions": {key or "start": sorted(value) for key, value in QUOTA_LEGAL_TRANSITIONS.items()},
         "next_wake_timeout": next_quota_wake_timeout(tool_key),
         "active_jobs": any_quota_loading(tool_key),
         "scheduler": scheduler_payload,
