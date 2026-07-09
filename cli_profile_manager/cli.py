@@ -4,26 +4,9 @@
 import os
 import sys
 import json
-import base64
 import argparse
-import shlex
-import subprocess
-import shutil
-import logging
 import re
-from pathlib import Path
-from datetime import datetime
 
-from cli_profile_manager.credentials import agy as agy_credentials
-from cli_profile_manager.credentials import claude as claude_credentials
-from cli_profile_manager.credentials import codex as codex_credentials
-from cli_profile_manager.credentials.common import (
-    ensure_parent as core_ensure_parent,
-    read_json_object as core_read_json_object,
-    write_json_atomic as core_write_json_atomic,
-    write_text_atomic as core_write_text_atomic,
-)
-from cli_profile_manager.diagnostics import diagnostics_payload
 from cli_profile_manager.metadata import (
     METADATA_DIR as CORE_METADATA_DIR,
     METADATA_PATH as CORE_METADATA_PATH,
@@ -49,30 +32,9 @@ from cli_profile_manager.paths import (
     refresh_from_env as core_refresh_paths_from_env,
     resolve_sync_bases as core_resolve_sync_bases,
 )
-from cli_profile_manager.quota import (
-    quota_payload as core_quota_payload,
-    run_persistent_cli_quota_snapshot,
-)
-from cli_profile_manager.sync import (
-    deletion_preflight_paths as core_deletion_preflight_paths,
-    is_windows_agy_backup_name as core_is_windows_agy_backup_name,
-    path_is_within as core_path_is_within,
-    profile_number_from_dir_name as core_profile_number_from_dir_name,
-    sync_agy_credentials_between_bases as core_sync_agy_credentials_between_bases,
-    sync_profiles_between_bases,
-)
 
 core_refresh_paths_from_env()
 core_refresh_metadata_from_env()
-
-# Setup logging
-log_file = os.path.join(Path(__file__).resolve().parents[1], "ai-man.log")
-logging.basicConfig(
-    filename=log_file,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
 
 # Base configuration paths
 METADATA_DIR = CORE_METADATA_DIR
@@ -88,6 +50,17 @@ AGY_WINDOWS_USERNAME = "antigravity"
 
 # Tool configurations
 TOOLS = CORE_TOOLS
+agy_credentials = None
+claude_credentials = None
+codex_credentials = None
+core_quota_payload = None
+run_persistent_cli_quota_snapshot = None
+core_credentials_common = None
+core_sync = None
+core_logging = None
+core_shutil = None
+core_shlex = None
+core_subprocess = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -104,6 +77,102 @@ CLR_BLACK_TEXT = "\033[30m"
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
 )
+
+def _logging():
+    global core_logging
+    if core_logging is None:
+        import logging
+        from pathlib import Path
+
+        log_file = os.path.join(Path(__file__).resolve().parents[1], "ai-man.log")
+        logging.basicConfig(
+            filename=log_file,
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        core_logging = logging
+    return core_logging
+
+def _shutil():
+    global core_shutil
+    if core_shutil is None:
+        import shutil
+
+        core_shutil = shutil
+    return core_shutil
+
+def _shlex():
+    global core_shlex
+    if core_shlex is None:
+        import shlex
+
+        core_shlex = shlex
+    return core_shlex
+
+def _subprocess():
+    global core_subprocess
+    if core_subprocess is None:
+        import subprocess
+
+        core_subprocess = subprocess
+    return core_subprocess
+
+def _agy_credentials():
+    global agy_credentials
+    if agy_credentials is None:
+        from cli_profile_manager.credentials import agy as module
+
+        agy_credentials = module
+    return agy_credentials
+
+def _claude_credentials():
+    global claude_credentials
+    if claude_credentials is None:
+        from cli_profile_manager.credentials import claude as module
+
+        claude_credentials = module
+    return claude_credentials
+
+def _codex_credentials():
+    global codex_credentials
+    if codex_credentials is None:
+        from cli_profile_manager.credentials import codex as module
+
+        codex_credentials = module
+    return codex_credentials
+
+def _quota_payload_func():
+    global core_quota_payload
+    if core_quota_payload is None:
+        from cli_profile_manager.quota import quota_payload as func
+
+        core_quota_payload = func
+    return core_quota_payload
+
+def _persistent_quota_runner():
+    global run_persistent_cli_quota_snapshot
+    if run_persistent_cli_quota_snapshot is None:
+        from cli_profile_manager.quota import run_persistent_cli_quota_snapshot as func
+
+        run_persistent_cli_quota_snapshot = func
+    return run_persistent_cli_quota_snapshot
+
+def _credentials_common():
+    global core_credentials_common
+    if core_credentials_common is None:
+        from cli_profile_manager.credentials import common as module
+
+        core_credentials_common = module
+    return core_credentials_common
+
+def _sync_module():
+    global core_sync
+    if core_sync is None:
+        from cli_profile_manager import sync as module
+
+        core_sync = module
+    return core_sync
 
 def load_metadata():
     return core_load_metadata()
@@ -133,7 +202,7 @@ def is_valid_display_profile(tool_key, n):
     return core_is_valid_display_profile(tool_key, n)
 
 def ensure_parent(path):
-    return core_ensure_parent(path)
+    return _credentials_common().ensure_parent(path)
 
 def normalize_credential_path(tool_key, cred_file):
     return core_normalize_credential_path(tool_key, cred_file)
@@ -151,30 +220,30 @@ def make_tool_env(tool_key, n):
     return core_make_tool_env(tool_key, n)
 
 def write_text_atomic(path, content):
-    return core_write_text_atomic(path, content)
+    return _credentials_common().write_text_atomic(path, content)
 
 def write_json_atomic(path, data):
-    return core_write_json_atomic(path, data)
+    return _credentials_common().write_json_atomic(path, data)
 
 def read_json_object(path, encoding="utf-8"):
-    return core_read_json_object(path, encoding)
+    return _credentials_common().read_json_object(path, encoding)
 
 def account_email_from_google_accounts(profile_home):
-    return agy_credentials.account_email_from_profile(profile_home, TOOLS["agy"]["acct_file"])
+    return _agy_credentials().account_email_from_profile(profile_home, TOOLS["agy"]["acct_file"])
 
 def decode_windows_agy_credential(win_cred_path):
-    return agy_credentials.decode_windows_credential(win_cred_path)
+    return _agy_credentials().decode_windows_credential(win_cred_path)
 
 def read_wsl_agy_oauth(token_path):
-    return agy_credentials.read_wsl_oauth(token_path)
+    return _agy_credentials().read_wsl_oauth(token_path)
 
 def build_windows_agy_credential(token_data, account=None):
-    return agy_credentials.build_windows_credential(token_data, account)
+    return _agy_credentials().build_windows_credential(token_data, account)
 
 def import_windows_agy_credential(win_cred_path, profile_num):
     dest_home = profile_home("agy", profile_num)
     dest_file = credential_path("agy", profile_num)
-    return agy_credentials.import_windows_credential(
+    return _agy_credentials().import_windows_credential(
         win_cred_path,
         dest_home,
         dest_file,
@@ -183,7 +252,7 @@ def import_windows_agy_credential(win_cred_path, profile_num):
 
 def export_wsl_agy_credential(profile_num, win_cred_path):
     home = profile_home("agy", profile_num)
-    return agy_credentials.export_wsl_credential(
+    return _agy_credentials().export_wsl_credential(
         credential_path("agy", profile_num),
         home,
         win_cred_path,
@@ -200,16 +269,82 @@ def generate_win_cred_from_linux_token(token_path, win_cred_path, profile_home, 
 
         write_json_atomic(win_cred_path, build_windows_agy_credential(token_data, email))
 
-        logging.info(f"Generated Windows credential {win_cred_path} for account {email}")
+        _logging().info(f"Generated Windows credential {win_cred_path} for account {email}")
         return True
     except Exception as e:
-        logging.error(f"Failed to generate Windows cred from Linux token: {e}")
+        _logging().error(f"Failed to generate Windows cred from Linux token: {e}")
         return False
 
-def get_profile_status(tool_key, n, metadata):
+
+class CommandSnapshot:
+    def __init__(self, metadata=None):
+        self.metadata = load_metadata() if metadata is None else metadata
+        self.occupied_by_tool = {}
+        self.display_by_tool = {}
+        self.status_by_profile = {}
+        self.account_by_profile = {}
+
+    def occupied_profiles(self, tool_key):
+        if tool_key not in self.occupied_by_tool:
+            self.occupied_by_tool[tool_key] = core_get_occupied_profiles(tool_key)
+        return self.occupied_by_tool[tool_key]
+
+    def display_profiles(self, tool_key):
+        if tool_key not in self.display_by_tool:
+            profiles = set(self.occupied_profiles(tool_key))
+            profiles.update(range(1, DISPLAY_SLOT_COUNT + 1))
+            self.display_by_tool[tool_key] = sorted(profiles)
+        return self.display_by_tool[tool_key]
+
+    def first_free_profile(self, tool_key):
+        occupied = set(self.occupied_profiles(tool_key))
+        n = 1
+        while n in occupied:
+            n += 1
+        return n
+
+    def account_email(self, tool_key, n, home):
+        key = (tool_key, n)
+        if key not in self.account_by_profile:
+            self.account_by_profile[key] = (
+                account_email_from_google_accounts(home) if tool_key == "agy" else None
+            )
+        return self.account_by_profile[key]
+
+    def status(self, tool_key, n):
+        key = (tool_key, n)
+        if key not in self.status_by_profile:
+            self.status_by_profile[key] = _status_payload(
+                tool_key,
+                n,
+                self.metadata,
+                occupied_profiles=self.occupied_profiles(tool_key),
+                account_email_provider=lambda home, _tool=tool_key, _n=n: self.account_email(_tool, _n, home),
+            )
+        return self.status_by_profile[key]
+
+    def status_with_quota(self, tool_key, n, timeout_seconds=None):
+        status = dict(self.status(tool_key, n))
+        if status["has_token"]:
+            status["quota"] = quota_payload(tool_key, n, timeout_seconds)["quota"]
+        else:
+            status["quota"] = {
+                "state": "no_token",
+                "limits": {},
+                "warnings": ["profile has no token"],
+            }
+        return status
+
+
+def command_snapshot():
+    return CommandSnapshot()
+
+
+def get_profile_status(tool_key, n, metadata, account_email_provider=None):
     tool = TOOLS[tool_key]
     profile_home = os.path.join(tool["base_dir"], f"p{n}")
     cred_path = os.path.join(profile_home, tool["cred_file"])
+    account_lookup = account_email_provider or account_email_from_google_accounts
 
     email = "(no login)"
     has_token = False
@@ -227,7 +362,7 @@ def get_profile_status(tool_key, n, metadata):
                     has_token = True
                     token_state = "valid"
                     credential_source = "windows-backup"
-                    email = account or account_email_from_google_accounts(profile_home) or "logged in"
+                    email = account or account_lookup(profile_home) or "logged in"
                 except Exception as e:
                     token_state = "invalid"
                     credential_source = "windows-backup"
@@ -239,7 +374,7 @@ def get_profile_status(tool_key, n, metadata):
                 has_token = True
                 token_state = "valid"
                 credential_source = "wsl-oauth"
-                account = account_email_from_google_accounts(profile_home)
+                account = account_lookup(profile_home)
                 email = account or "logged in"
             except Exception as e:
                 token_state = "invalid"
@@ -247,14 +382,14 @@ def get_profile_status(tool_key, n, metadata):
                 warnings.append(str(e))
                 email = f"invalid token: {e}"
         else:
-            read_agy_cli_token = getattr(agy_credentials, "read_agy_cli_token", None)
+            read_agy_cli_token = getattr(_agy_credentials(), "read_agy_cli_token", None)
             if read_agy_cli_token is not None:
                 try:
                     read_agy_cli_token(profile_home)
                     has_token = True
                     token_state = "valid"
                     credential_source = "agy-cli-token"
-                    account = account_email_from_google_accounts(profile_home)
+                    account = account_lookup(profile_home)
                     email = account or "logged in"
                 except FileNotFoundError:
                     pass
@@ -271,7 +406,7 @@ def get_profile_status(tool_key, n, metadata):
     if tool_key == "codex":
         if has_token:
             try:
-                email = codex_credentials.account_from_auth(cred_path)
+                email = _codex_credentials().account_from_auth(cred_path)
                 token_state = "valid"
                 account = email
             except Exception as e:
@@ -282,7 +417,7 @@ def get_profile_status(tool_key, n, metadata):
     elif tool_key == "claude":
         if has_token:
             try:
-                email = claude_credentials.account_summary(cred_path)
+                email = _claude_credentials().account_summary(cred_path)
                 token_state = "valid"
                 account = email
             except Exception as e:
@@ -304,22 +439,31 @@ def get_profile_status(tool_key, n, metadata):
         "home": profile_home
     }
 
-def status_payload(tool_key, n, metadata=None):
-    metadata = metadata if metadata is not None else load_metadata()
-    status = get_profile_status(tool_key, n, metadata)
-    status["exists"] = n in get_occupied_profiles(tool_key)
+def _status_payload(tool_key, n, metadata, occupied_profiles=None, account_email_provider=None):
+    occupied_profiles = get_occupied_profiles(tool_key) if occupied_profiles is None else occupied_profiles
+    status = get_profile_status(tool_key, n, metadata, account_email_provider=account_email_provider)
+    status["exists"] = n in occupied_profiles
     return status
 
-def quota_payload(tool_key, n, timeout_seconds=None, runner=run_persistent_cli_quota_snapshot):
+
+def status_payload(tool_key, n, metadata=None, snapshot=None):
+    if snapshot is not None:
+        return snapshot.status(tool_key, n)
+    metadata = metadata if metadata is not None else load_metadata()
+    return _status_payload(tool_key, n, metadata)
+
+def quota_payload(tool_key, n, timeout_seconds=None, runner=None):
     tool = TOOLS[tool_key]
     home = profile_home(tool_key, n)
     command = [tool["cmd"]]
     timeout = timeout_seconds if timeout_seconds is not None else 20
     kwargs = {"timeout_seconds": timeout}
+    if runner is None:
+        runner = _persistent_quota_runner()
     if runner is not None:
         kwargs["runner"] = runner
     try:
-        return core_quota_payload(
+        return _quota_payload_func()(
             tool_key,
             f"p{n}",
             command,
@@ -331,7 +475,7 @@ def quota_payload(tool_key, n, timeout_seconds=None, runner=run_persistent_cli_q
         if "unexpected keyword argument 'runner'" not in str(e):
             raise
         kwargs.pop("runner", None)
-        return core_quota_payload(
+        return _quota_payload_func()(
             tool_key,
             f"p{n}",
             command,
@@ -340,7 +484,9 @@ def quota_payload(tool_key, n, timeout_seconds=None, runner=run_persistent_cli_q
             **kwargs,
         )
 
-def status_payload_with_quota(tool_key, n, metadata=None, timeout_seconds=None):
+def status_payload_with_quota(tool_key, n, metadata=None, timeout_seconds=None, snapshot=None):
+    if snapshot is not None:
+        return snapshot.status_with_quota(tool_key, n, timeout_seconds)
     status = status_payload(tool_key, n, metadata)
     if status["has_token"]:
         status["quota"] = quota_payload(tool_key, n, timeout_seconds)["quota"]
@@ -367,6 +513,11 @@ def print_json_error(message, code, error_type="runtime_error"):
             "code": code,
         },
     })
+
+def diagnostics_payload(*args, **kwargs):
+    from cli_profile_manager.diagnostics import diagnostics_payload as func
+
+    return func(*args, **kwargs)
 
 def visible_len(text):
     return len(ANSI_RE.sub("", str(text)))
@@ -480,7 +631,7 @@ def agy_quota_summary(quota):
     return " ".join(f"{label}:{value}" for label, value in agy_quota_entries(quota))
 
 def status_table_lines(tool_key, statuses, terminal_width=None):
-    terminal_width = terminal_width or shutil.get_terminal_size((120, 24)).columns
+    terminal_width = terminal_width or _shutil().get_terminal_size((120, 24)).columns
     terminal_width = max(72, terminal_width)
     has_quota = any("quota" in status for status in statuses)
     fixed = 8 + 1 + 8 + 1 + 1
@@ -561,15 +712,15 @@ def cmd_config_show(args):
     return EXIT_OK
 
 def cmd_list(args):
-    metadata = load_metadata()
-    profiles = get_display_profiles(args.tool)
+    snapshot = command_snapshot()
+    profiles = snapshot.display_profiles(args.tool)
     if args.quota:
-        statuses = [status_payload_with_quota(args.tool, n, metadata, args.timeout) for n in profiles]
+        statuses = [snapshot.status_with_quota(args.tool, n, args.timeout) for n in profiles]
     else:
-        statuses = [status_payload(args.tool, n, metadata) for n in profiles]
+        statuses = [snapshot.status(args.tool, n) for n in profiles]
     payload = {
         "tool": args.tool,
-        "next_profile": f"p{first_free_profile(args.tool)}",
+        "next_profile": f"p{snapshot.first_free_profile(args.tool)}",
         "profiles": statuses,
     }
     if args.json:
@@ -589,10 +740,11 @@ def cmd_status(args):
         else:
             print_error(str(e))
         return EXIT_USAGE
+    snapshot = command_snapshot()
     if args.quota:
-        status = status_payload_with_quota(args.tool, n, timeout_seconds=args.timeout)
+        status = snapshot.status_with_quota(args.tool, n, args.timeout)
     else:
-        status = status_payload(args.tool, n)
+        status = snapshot.status(args.tool, n)
     if args.json:
         print_json_payload(status)
     else:
@@ -608,7 +760,8 @@ def cmd_quota(args):
         else:
             print_error(str(e))
         return EXIT_USAGE
-    status = status_payload(args.tool, n)
+    snapshot = command_snapshot()
+    status = snapshot.status(args.tool, n)
     if not status["has_token"]:
         message = f"profile p{n} has no token; use login or import first"
         if args.json:
@@ -634,31 +787,31 @@ def run_cli_tool(tool_key, n, extra_args=None):
         if not os.path.exists(switcher):
             print_error(f"Windows agy launch requires Credential Manager switcher: {switcher}")
             return EXIT_NOT_FOUND
-        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        powershell = _shutil().which("powershell.exe") or _shutil().which("powershell")
         if powershell is None:
             print_error("PowerShell is required for Windows agy Credential Manager switching")
             return EXIT_NOT_FOUND
         os.makedirs(profile_home(tool_key, n), exist_ok=True)
-        quoted_args = " ".join(shlex.quote(arg) for arg in extra_args)
+        quoted_args = " ".join(_shlex().quote(arg) for arg in extra_args)
         command = (
-            f"& {shlex.quote(switcher)} Set-AgyCred {n}; "
-            f"$env:USERPROFILE={shlex.quote(profile_home(tool_key, n))}; "
+            f"& {_shlex().quote(switcher)} Set-AgyCred {n}; "
+            f"$env:USERPROFILE={_shlex().quote(profile_home(tool_key, n))}; "
             f"$env:HOME=$env:USERPROFILE; "
-            f"& {shlex.quote(tool['cmd'])}"
+            f"& {_shlex().quote(tool['cmd'])}"
         )
         if quoted_args:
             command = f"{command} {quoted_args}"
-        completed = subprocess.run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        completed = _subprocess().run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
         return completed.returncode
 
-    if shutil.which(tool["cmd"]) is None:
+    if _shutil().which(tool["cmd"]) is None:
         print_error(f"{tool['cmd']} CLI is not installed or not in PATH; install it or adjust PATH")
         return EXIT_NOT_FOUND
     os.makedirs(profile_home(tool_key, n), exist_ok=True)
     cmd = [tool["cmd"]] + extra_args
-    logging.info(f"Launching {tool_key} profile p{n}: {' '.join(cmd)}")
+    _logging().info(f"Launching {tool_key} profile p{n}: {' '.join(cmd)}")
     try:
-        completed = subprocess.run(cmd, env=make_tool_env(tool_key, n))
+        completed = _subprocess().run(cmd, env=make_tool_env(tool_key, n))
         return completed.returncode
     except KeyboardInterrupt:
         return 130
@@ -683,18 +836,19 @@ def cmd_launch(args):
     }
     if args.tool == "agy":
         dry_payload["environment"]["HOME"] = profile_home(args.tool, n)
-    if not is_valid_display_profile(args.tool, n):
+    snapshot = command_snapshot()
+    if n not in snapshot.display_profiles(args.tool):
         message = f"profile p{n} does not exist and is outside visible slots"
         if args.json:
             print_json_error(message, EXIT_USAGE, "usage_error")
         else:
             print_error(message)
         return EXIT_USAGE
-    status = status_payload(args.tool, n)
+    status = snapshot.status(args.tool, n)
     dry_payload["status"] = status
     dry_payload["would_launch"] = status["has_token"]
     if args.dry_run:
-        print_json_payload(dry_payload) if args.json else print(" ".join(shlex.quote(part) for part in dry_payload["command"]))
+        print_json_payload(dry_payload) if args.json else print(" ".join(_shlex().quote(part) for part in dry_payload["command"]))
         return EXIT_OK
     if not status["has_token"]:
         message = f"profile p{n} has no token; run ai-man login {args.tool} p{n} or import credentials first"
@@ -728,7 +882,7 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
     else:
         ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        shutil.copy2(source, tmp_path)
+        _shutil().copy2(source, tmp_path)
         os.replace(tmp_path, dest_file)
     return n, dest_file
 
@@ -855,7 +1009,7 @@ def export_credential_file(tool_key, profile_num, to_path=None):
     else:
         ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        shutil.copy2(src_file, tmp_path)
+        _shutil().copy2(src_file, tmp_path)
         os.replace(tmp_path, dest_file)
     return dest_file
 
@@ -949,7 +1103,7 @@ def clear_profile_data(tool_key, n):
     if not target.startswith(base + os.sep):
         raise ValueError(f"refusing to clear unsafe path: {target}")
     if os.path.exists(home):
-        shutil.rmtree(home)
+        _shutil().rmtree(home)
     return home
 
 def resolve_sync_bases(direction):
@@ -964,23 +1118,23 @@ def count_files_under(path):
     return total
 
 def profile_number_from_dir_name(name):
-    return core_profile_number_from_dir_name(name)
+    return _sync_module().profile_number_from_dir_name(name)
 
 def is_windows_agy_backup_name(name):
-    return core_is_windows_agy_backup_name(name)
+    return _sync_module().is_windows_agy_backup_name(name)
 
 def path_is_within(child, parent):
-    return core_path_is_within(child, parent)
+    return _sync_module().path_is_within(child, parent)
 
 def deletion_preflight_paths(path):
-    return core_deletion_preflight_paths(path)
+    return _sync_module().deletion_preflight_paths(path)
 
 def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=False):
-    return core_sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
+    return _sync_module().sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
 
 def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     src_base, dst_base = resolve_sync_bases(direction)
-    return sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
+    return _sync_module().sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
 
 def cmd_sync(args):
     try:
@@ -1033,10 +1187,32 @@ def diagnostics_status_provider(tool_key, n):
         }
 
 def cmd_diagnostics(args):
+    snapshot = command_snapshot()
+
+    def snapshot_status_provider(tool_key, n):
+        try:
+            return snapshot.status(tool_key, n)
+        except Exception as e:
+            return {
+                "has_token": False,
+                "token_state": "diagnostic_error",
+                "credential_source": None,
+                "account": None,
+                "email": None,
+                "warnings": [str(e)],
+            }
+
+    def snapshot_profile_index(tool_key):
+        return {
+            "occupied_profiles": snapshot.occupied_profiles(tool_key),
+            "display_profiles": snapshot.display_profiles(tool_key),
+        }
+
     payload = diagnostics_payload(
         args.tool,
-        status_provider=diagnostics_status_provider,
+        status_provider=snapshot_status_provider,
         show_accounts=args.show_accounts,
+        profile_index_provider=snapshot_profile_index,
     )
     if args.json:
         print_json_payload(payload)

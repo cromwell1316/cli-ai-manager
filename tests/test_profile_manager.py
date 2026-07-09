@@ -1,10 +1,13 @@
 import base64
+import contextlib
+import io
 import importlib
 import json
 import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +41,14 @@ def make_id_token(email):
     return f"{header}.{payload}.sig"
 
 
+def run_in_process_command(pm, argv):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        rc = pm.run_cli(argv)
+    return rc, stdout.getvalue(), stderr.getvalue()
+
+
 def test_parse_profile_accepts_p_prefix_and_rejects_invalid(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
 
@@ -48,6 +59,99 @@ def test_parse_profile_accepts_p_prefix_and_rejects_invalid(monkeypatch, tmp_pat
         pm.parse_profile("p0")
     with pytest.raises(ValueError):
         pm.parse_profile("abc")
+
+
+def test_help_and_config_show_do_not_import_quota_module(tmp_path):
+    env = os.environ.copy()
+    env.update(
+        {
+            "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+            "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+            "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+            "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+            "AI_MAN_WSL_HOME": str(tmp_path / "wsl"),
+            "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
+        }
+    )
+    code = r"""
+import contextlib
+import io
+import json
+import sys
+import profile_manager
+
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    try:
+        profile_manager.main(["--help"])
+    except SystemExit as exc:
+        if exc.code != 0:
+            raise
+help_imported = "cli_profile_manager.quota" in sys.modules
+
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    rc = profile_manager.main(["config", "show", "--json"])
+if rc != 0:
+    raise SystemExit(rc)
+
+print(json.dumps({
+    "help_imported_quota": help_imported,
+    "config_imported_quota": "cli_profile_manager.quota" in sys.modules,
+    "config_imported_interactive": "cli_profile_manager.interactive" in sys.modules,
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload == {
+        "help_imported_quota": False,
+        "config_imported_quota": False,
+        "config_imported_interactive": False,
+    }
+
+
+def test_in_process_command_perf_budgets(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    agy_token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"
+    write_json(agy_token, {"refresh_token": "synthetic"})
+    write_json(tmp_path / "agy-homes" / "p1" / ".gemini" / "google_accounts.json", {"active": "bench@example.com"})
+    write_json(tmp_path / "metadata" / "profiles_metadata.json", {"agy": {"p1": {"label": "bench"}}})
+
+    commands = {
+        "config show --json": ["config", "show", "--json"],
+        "list agy --json": ["list", "agy", "--json"],
+        "status agy p1 --json": ["status", "agy", "p1", "--json"],
+        "diagnostics agy --json": ["diagnostics", "agy", "--json"],
+    }
+    budgets_ms = {
+        "config show --json": 60.0,
+        "list agy --json": 100.0,
+        "status agy p1 --json": 80.0,
+        "diagnostics agy --json": 180.0,
+    }
+    failures = []
+
+    for name, argv in commands.items():
+        values = []
+        for _ in range(5):
+            started = time.perf_counter()
+            rc, stdout, stderr = run_in_process_command(pm, argv)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            values.append(elapsed_ms)
+            assert rc == 0, stderr
+            assert stdout.strip()
+        median_ms = sorted(values)[len(values) // 2]
+        if median_ms > budgets_ms[name]:
+            failures.append(f"{name}: median {median_ms:.3f}ms > budget {budgets_ms[name]:.3f}ms")
+
+    assert not failures, "; ".join(failures)
 
 
 def test_first_free_profile_uses_env_home(monkeypatch, tmp_path):
@@ -107,6 +211,57 @@ def test_agy_status_uses_recent_auth_log_when_google_account_is_placeholder(monk
     assert status["token_state"] == "valid"
     assert status["email"] == "resolved@example.com"
     assert status["account"] == "resolved@example.com"
+
+
+def test_command_snapshot_reuses_profile_discovery_and_status(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    calls = []
+
+    monkeypatch.setattr(cli, "core_get_occupied_profiles", lambda tool: calls.append(tool) or [1])
+    monkeypatch.setattr(cli, "get_profile_status", lambda tool, n, metadata, account_email_provider=None: {
+        "num": n,
+        "profile": f"p{n}",
+        "email": "(no login)",
+        "has_token": False,
+        "token_state": "missing",
+        "credential_source": None,
+        "account": None,
+        "warnings": [],
+        "label": "",
+        "home": str(tmp_path / f"{tool}-homes" / f"p{n}"),
+    })
+
+    snapshot = pm.command_snapshot()
+
+    assert snapshot.display_profiles("codex")[:2] == [1, 2]
+    assert snapshot.first_free_profile("codex") == 2
+    assert snapshot.status("codex", 1) is snapshot.status("codex", 1)
+    assert calls == ["codex"]
+
+
+def test_command_snapshot_reuses_agy_account_lookup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"
+    write_json(token, {"refresh_token": "r"})
+    calls = []
+
+    monkeypatch.setattr(
+        cli,
+        "account_email_from_google_accounts",
+        lambda home: calls.append(home) or "agy@example.com",
+    )
+
+    snapshot = pm.command_snapshot()
+    first = snapshot.status("agy", 1)
+    second = snapshot.status("agy", 1)
+
+    assert first is second
+    assert first["account"] == "agy@example.com"
+    assert calls == [str(tmp_path / "agy-homes" / "p1")]
 
 
 def test_quota_parsers_extract_agent_specific_limits():
@@ -1334,6 +1489,34 @@ def test_diagnostics_json_redacts_accounts_and_reports_runtime(monkeypatch, tmp_
     assert "persistent_sessions" in payload
     assert "user@example.com" not in rendered
     assert "redacted:" in rendered
+
+
+def test_diagnostics_reuses_supplied_profile_indexes(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.diagnostics as diagnostics
+
+    monkeypatch.setattr(
+        diagnostics,
+        "get_occupied_profiles",
+        lambda tool: pytest.fail("diagnostics should reuse supplied occupied index"),
+    )
+    monkeypatch.setattr(
+        diagnostics,
+        "get_display_profiles",
+        lambda tool: pytest.fail("diagnostics should reuse supplied display index"),
+    )
+
+    payload = diagnostics.diagnostics_payload(
+        "codex",
+        status_provider=lambda tool, num: {"has_token": False, "token_state": "missing"},
+        profile_index_provider=lambda tool: {
+            "occupied_profiles": [1],
+            "display_profiles": [1],
+        },
+    )
+
+    assert payload["tools"]["codex"]["occupied_profiles"] == ["p1"]
+    assert payload["tools"]["codex"]["visible_profiles"] == ["p1"]
 
 
 def test_diagnostics_command_json_does_not_print_token_like_values(monkeypatch, tmp_path):

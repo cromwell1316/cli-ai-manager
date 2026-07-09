@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,7 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- Caches are fields on `CommandSnapshot`; each CLI command creates a fresh
+  snapshot and there is no process-global status or account cache.
+- Direct import/export/clear/sync helpers still call direct filesystem helpers
+  and do not retain command snapshots.

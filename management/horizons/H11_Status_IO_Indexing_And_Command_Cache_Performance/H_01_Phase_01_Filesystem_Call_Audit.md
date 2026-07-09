@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -28,3 +28,12 @@ command.
 
 - Tests can detect accidental repeated profile scans.
 - Evidence records call counts for 1-profile and 12-profile fixtures.
+
+## Evidence
+
+- `tests/test_profile_manager.py::test_command_snapshot_reuses_profile_discovery_and_status`
+  verifies that one command snapshot performs one occupied-profile discovery for
+  repeated display, first-free, and status access.
+- `python3 scripts/benchmark_runtime.py --scenario command-execute --json`
+  passed with 12 profiles; median timings were `list agy --json` 5.495 ms,
+  `status agy --json` 3.059 ms, and `diagnostics agy --json` 4.285 ms.

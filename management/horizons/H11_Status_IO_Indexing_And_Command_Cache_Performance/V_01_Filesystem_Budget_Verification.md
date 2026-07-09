@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -17,4 +17,6 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `tests/test_profile_manager.py::test_command_snapshot_reuses_profile_discovery_and_status`
+  fails if a command snapshot repeats occupied-profile discovery for one tool.
+- Full validation: `python3 -m pytest -q` passed with 76 tests.

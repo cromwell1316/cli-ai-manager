@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -23,3 +23,10 @@ command execution.
 
 - Diagnostics and status reuse account lookup results inside one command.
 - No credential token values are cached or logged.
+
+## Evidence
+
+- `tests/test_profile_manager.py::test_command_snapshot_reuses_agy_account_lookup`
+  verifies AGY account lookup is cached per profile inside the command snapshot.
+- The snapshot stores derived account identifiers only, not raw OAuth or CLI
+  token payloads.

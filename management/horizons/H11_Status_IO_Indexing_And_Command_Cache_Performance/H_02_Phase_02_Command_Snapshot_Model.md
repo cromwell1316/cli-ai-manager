@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,11 @@ metadata, status payloads, and account lookup results through one command.
 - One command execution performs one profile discovery pass per relevant tool.
 - Rendering does not trigger new status/account reads.
 - Existing CLI and interactive tests still pass.
+
+## Evidence
+
+- `CommandSnapshot` in `cli_profile_manager/cli.py` carries metadata,
+  occupied/display profile indexes, status payloads, and AGY account lookup
+  results for one command execution.
+- Direct helpers remain compatible: `status_payload()` and
+  `status_payload_with_quota()` still work without a snapshot.

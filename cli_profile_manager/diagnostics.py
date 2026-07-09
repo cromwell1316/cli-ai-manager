@@ -63,10 +63,16 @@ def relevant_env_snapshot():
     return {key: os.environ.get(key) for key in keys if key in os.environ}
 
 
-def tool_diagnostics(tool_key, status_provider=None, show_accounts=False):
+def tool_diagnostics(
+    tool_key,
+    status_provider=None,
+    show_accounts=False,
+    occupied_profiles=None,
+    display_profiles=None,
+):
     tool = TOOLS[tool_key]
-    occupied = get_occupied_profiles(tool_key)
-    display = get_display_profiles(tool_key)
+    occupied = get_occupied_profiles(tool_key) if occupied_profiles is None else occupied_profiles
+    display = get_display_profiles(tool_key) if display_profiles is None else display_profiles
     profiles = []
     status_provider = status_provider or (lambda _tool, _num: None)
     for num in display:
@@ -101,7 +107,12 @@ def tool_diagnostics(tool_key, status_provider=None, show_accounts=False):
     }
 
 
-def diagnostics_payload(tool_key=None, status_provider=None, show_accounts=False):
+def diagnostics_payload(
+    tool_key=None,
+    status_provider=None,
+    show_accounts=False,
+    profile_index_provider=None,
+):
     from .interactive import quota_runtime_snapshot
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
@@ -109,7 +120,12 @@ def diagnostics_payload(tool_key=None, status_provider=None, show_accounts=False
         "ok": True,
         "generated_at": int(time.time()),
         "tools": {
-            key: tool_diagnostics(key, status_provider=status_provider, show_accounts=show_accounts)
+            key: tool_diagnostics(
+                key,
+                status_provider=status_provider,
+                show_accounts=show_accounts,
+                **(profile_index_provider(key) if profile_index_provider else {}),
+            )
             for key in selected_tools
         },
         "environment": relevant_env_snapshot(),

@@ -7,6 +7,7 @@ import os
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -57,6 +58,20 @@ def run_command(args):
         raise RuntimeError(f"command failed: {' '.join(args)} -> {completed.returncode}")
 
 
+def run_python(args):
+    completed = subprocess.run(
+        [sys.executable] + args,
+        cwd=str(ROOT),
+        env=os.environ.copy(),
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"python failed: {' '.join(args)} -> {completed.returncode}")
+
+
 def scenario_commands(iterations):
     scenarios = {
         "help": ["--help"],
@@ -65,6 +80,105 @@ def scenario_commands(iterations):
         "config-json": ["config", "show", "--json"],
     }
     return [summarize(name, time_call(lambda args=args: run_command(args), iterations)) for name, args in scenarios.items()]
+
+
+def scenario_python_startup(iterations):
+    return [summarize("python-startup", time_call(lambda: run_python(["-c", "pass"]), iterations))]
+
+
+def scenario_import_profile_manager(iterations):
+    return [
+        summarize(
+            "import-profile-manager",
+            time_call(lambda: run_python(["-c", "import profile_manager"]), iterations),
+        )
+    ]
+
+
+@contextlib.contextmanager
+def fake_runtime():
+    old_env = os.environ.copy()
+    with tempfile.TemporaryDirectory(prefix="ai-man-bench-") as tmp:
+        tmp_path = Path(tmp)
+        os.environ.update(
+            {
+                "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+                "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+                "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+                "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+                "AI_MAN_WSL_HOME": str(tmp_path / "wsl"),
+                "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
+            }
+        )
+        agy_home = tmp_path / "agy-homes" / "p1" / ".gemini"
+        agy_home.mkdir(parents=True)
+        (agy_home / "oauth_creds.json").write_text(json.dumps({"refresh_token": "synthetic"}), encoding="utf-8")
+        (agy_home / "google_accounts.json").write_text(json.dumps({"active": "bench@example.com"}), encoding="utf-8")
+        (tmp_path / "metadata").mkdir(parents=True)
+        (tmp_path / "metadata" / "profiles_metadata.json").write_text(
+            json.dumps({"agy": {"p1": {"label": "bench"}}}),
+            encoding="utf-8",
+        )
+        try:
+            from cli_profile_manager import metadata, paths
+
+            paths.refresh_from_env()
+            metadata.refresh_from_env()
+            yield tmp_path
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+            from cli_profile_manager import metadata, paths
+
+            paths.refresh_from_env()
+            metadata.refresh_from_env()
+
+
+def scenario_parse_args(iterations):
+    from cli_profile_manager import cli
+
+    samples = (
+        ["--help"],
+        ["config", "show", "--json"],
+        ["list", "agy", "--json"],
+        ["status", "agy", "p1", "--json"],
+        ["diagnostics", "agy", "--json"],
+    )
+
+    def parse_all():
+        parser = cli.build_parser()
+        for argv in samples:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    parser.parse_args(argv)
+                except SystemExit as exc:
+                    if exc.code != 0:
+                        raise
+
+    return [summarize("parse-args", time_call(parse_all, iterations))]
+
+
+def scenario_command_execute(iterations):
+    from cli_profile_manager import cli
+
+    commands = {
+        "command-config-json": ["config", "show", "--json"],
+        "command-list-agy-json": ["list", "agy", "--json"],
+        "command-status-agy-json": ["status", "agy", "p1", "--json"],
+        "command-diagnostics-agy-json": ["diagnostics", "agy", "--json"],
+    }
+
+    def run_in_process(argv):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.run_cli(argv)
+        if rc != 0:
+            raise RuntimeError(f"in-process command failed: {' '.join(argv)} -> {rc}")
+
+    with fake_runtime():
+        return [
+            summarize(name, time_call(lambda argv=argv: run_in_process(argv), iterations))
+            for name, argv in commands.items()
+        ]
 
 
 def fake_status(num):
@@ -139,11 +253,23 @@ def scenario_quota_parser(iterations):
 def run_benchmark(args):
     if args.scenario == "commands":
         return scenario_commands(args.iterations)
+    if args.scenario == "python-startup":
+        return scenario_python_startup(args.iterations)
+    if args.scenario == "import-profile-manager":
+        return scenario_import_profile_manager(args.iterations)
+    if args.scenario == "parse-args":
+        return scenario_parse_args(args.iterations)
+    if args.scenario == "command-execute":
+        return scenario_command_execute(args.iterations)
     if args.scenario == "status-redraw":
         return scenario_status_redraw(args.iterations, args.profiles)
     if args.scenario == "quota-parser":
         return scenario_quota_parser(args.iterations)
     results = []
+    results.extend(scenario_python_startup(max(1, min(args.iterations, 5))))
+    results.extend(scenario_import_profile_manager(max(1, min(args.iterations, 5))))
+    results.extend(scenario_parse_args(args.iterations))
+    results.extend(scenario_command_execute(args.iterations))
     results.extend(scenario_commands(max(1, min(args.iterations, 5))))
     results.extend(scenario_status_redraw(args.iterations, args.profiles))
     results.extend(scenario_quota_parser(args.iterations))
@@ -152,7 +278,20 @@ def run_benchmark(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Local runtime benchmarks for cli-profile-manager.")
-    parser.add_argument("--scenario", choices=["all", "commands", "status-redraw", "quota-parser"], default="all")
+    parser.add_argument(
+        "--scenario",
+        choices=[
+            "all",
+            "commands",
+            "python-startup",
+            "import-profile-manager",
+            "parse-args",
+            "command-execute",
+            "status-redraw",
+            "quota-parser",
+        ],
+        default="all",
+    )
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--profiles", type=int, default=12)
     parser.add_argument("--json", action="store_true")

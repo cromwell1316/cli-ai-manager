@@ -1,9 +1,20 @@
 import os
+import re
 from pathlib import Path
 
-from .diagnostics import redact_sensitive
 from .metadata import METADATA_DIR
 from .paths import TOOLS, resolve_sync_bases
+
+
+TOKEN_LIKE_RE = re.compile(
+    r"(?i)(sk-[a-z0-9_-]+|xox[a-z]-[a-z0-9-]+|gh[pousr]_[a-z0-9_]+|ya29\.[a-z0-9._-]+|refresh_token)"
+)
+
+
+def redact_sensitive(value):
+    if not isinstance(value, str):
+        return value
+    return TOKEN_LIKE_RE.sub("[redacted-token]", value)
 
 
 CONFIG_ENV_VARS = [

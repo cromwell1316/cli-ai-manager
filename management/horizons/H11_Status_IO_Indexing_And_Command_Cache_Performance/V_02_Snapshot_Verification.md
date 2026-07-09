@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -15,4 +15,8 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `list`, `status`, `quota`, `launch`, and `diagnostics` command paths create
+  command-scoped snapshots where status/profile discovery is needed.
+- `python3 profile_manager.py list agy --json` and
+  `python3 profile_manager.py diagnostics agy --json` both completed
+  successfully.

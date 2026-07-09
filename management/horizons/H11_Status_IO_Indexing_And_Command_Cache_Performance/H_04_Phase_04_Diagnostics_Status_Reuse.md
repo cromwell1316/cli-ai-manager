@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H11_Status_IO_Indexing_And_Command_Cache_Pe
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,10 @@ instead of repeating similar discovery work.
 
 - Diagnostics uses measured status snapshots.
 - JSON output remains backward compatible.
+
+## Evidence
+
+- `cmd_diagnostics()` now builds one `CommandSnapshot` and passes snapshot-backed
+  status and profile indexes into `diagnostics_payload()`.
+- `tests/test_profile_manager.py::test_diagnostics_reuses_supplied_profile_indexes`
+  verifies diagnostics does not rescan profile roots when indexes are supplied.
