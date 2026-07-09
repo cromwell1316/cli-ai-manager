@@ -50,6 +50,8 @@ AGY_WINDOWS_USERNAME = "antigravity"
 
 # Tool configurations
 TOOLS = CORE_TOOLS
+SERVICE_ENV_TRUE = ("1", "true", "yes", "on")
+SERVICE_MUTATING_COMMANDS = {"clear", "export", "import", "label", "login", "sync"}
 agy_credentials = None
 claude_credentials = None
 codex_credentials = None
@@ -61,6 +63,7 @@ core_logging = None
 core_shutil = None
 core_shlex = None
 core_subprocess = None
+core_runtime_service = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -118,6 +121,14 @@ def _subprocess():
         core_subprocess = subprocess
     return core_subprocess
 
+def _runtime_service():
+    global core_runtime_service
+    if core_runtime_service is None:
+        from cli_profile_manager import runtime_service as module
+
+        core_runtime_service = module
+    return core_runtime_service
+
 def _agy_credentials():
     global agy_credentials
     if agy_credentials is None:
@@ -173,6 +184,11 @@ def _sync_module():
 
         core_sync = module
     return core_sync
+
+def _process_policy():
+    from cli_profile_manager import process_policy as module
+
+    return module
 
 def load_metadata():
     return core_load_metadata()
@@ -809,9 +825,22 @@ def run_cli_tool(tool_key, n, extra_args=None):
         return EXIT_NOT_FOUND
     os.makedirs(profile_home(tool_key, n), exist_ok=True)
     cmd = [tool["cmd"]] + extra_args
-    _logging().info(f"Launching {tool_key} profile p{n}: {' '.join(cmd)}")
+    cmd, preexec_fn, policy = _process_policy().prepare_popen(
+        cmd,
+        tier="launch",
+        needs_pty=False,
+        unit_name=f"ai-man-{tool_key}-p{n}",
+    )
+    _logging().info(
+        "Launching %s profile p%s backend=%s policy_enabled=%s: %s",
+        tool_key,
+        n,
+        policy.get("backend"),
+        policy.get("enabled"),
+        " ".join(cmd),
+    )
     try:
-        completed = _subprocess().run(cmd, env=make_tool_env(tool_key, n))
+        completed = _subprocess().run(cmd, env=make_tool_env(tool_key, n), preexec_fn=preexec_fn)
         return completed.returncode
     except KeyboardInterrupt:
         return 130
@@ -1173,6 +1202,59 @@ def cmd_sync(args):
             print(f"  {path}")
     return EXIT_OK
 
+def cmd_service(args):
+    runtime = _runtime_service()
+    action = args.service_action
+    if action == "run":
+        try:
+            runtime.serve_forever()
+            return EXIT_OK
+        except Exception as e:
+            print_error(f"service failed: {e}")
+            return EXIT_RUNTIME
+    if action == "status":
+        payload = {"ok": True, "service": runtime.service_status()}
+        try:
+            health = runtime.service_health() if payload["service"]["running"] else None
+        except Exception:
+            health = None
+        if health:
+            payload["service"]["health"] = health
+        if args.json:
+            print_json_payload(payload)
+        else:
+            state = "running" if payload["service"]["running"] else "stopped"
+            if payload["service"]["stale"]:
+                state = "stale"
+            print(f"Service: {state}")
+            print(f"Socket: {payload['service']['socket_path']}")
+            print(f"PID: {payload['service']['pid'] or '-'}")
+        return EXIT_OK
+    if action == "start":
+        payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        if args.json:
+            print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
+        else:
+            print("Service running" if payload.get("ok") else f"Service failed: {payload.get('error', 'unknown error')}")
+        return EXIT_OK if payload.get("ok") else EXIT_RUNTIME
+    if action == "stop":
+        payload = runtime.stop_service()
+        if args.json:
+            print_json_payload({"ok": True, "service": payload})
+        else:
+            print("Service stopped" if payload.get("stopped") else "Service was not running")
+        return EXIT_OK
+    if action == "restart":
+        runtime.stop_service()
+        payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        if args.json:
+            print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
+        else:
+            print("Service restarted" if payload.get("ok") else f"Service failed: {payload.get('error', 'unknown error')}")
+        return EXIT_OK if payload.get("ok") else EXIT_RUNTIME
+    print_error(f"unknown service action: {action}")
+    return EXIT_USAGE
+
 def diagnostics_status_provider(tool_key, n):
     try:
         return status_payload(tool_key, n)
@@ -1327,6 +1409,16 @@ def build_parser():
     config_show_p.add_argument("--json", action="store_true")
     config_show_p.set_defaults(func=cmd_config_show)
 
+    service_p = sub.add_parser("service", help="manage optional long-lived local runtime")
+    service_p.set_defaults(func=cmd_service, service_action="status", json=False)
+    service_sub = service_p.add_subparsers(dest="service_action")
+    for action in ("start", "stop", "restart", "status"):
+        action_p = service_sub.add_parser(action)
+        action_p.add_argument("--json", action="store_true")
+        action_p.set_defaults(func=cmd_service)
+    run_p = service_sub.add_parser("run", help=argparse.SUPPRESS)
+    run_p.set_defaults(func=cmd_service, json=False)
+
     return parser
 
 def normalize_launch_argv(argv):
@@ -1368,13 +1460,59 @@ def normalize_launch_argv(argv):
 
 def run_cli(argv):
     argv = normalize_launch_argv(argv)
+    if should_use_service(argv):
+        result = try_run_service_command(argv)
+        if result is not None:
+            return result
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         return None
     if getattr(args, "args", None) and args.args[:1] == ["--"]:
         args.args = args.args[1:]
-    return args.func(args)
+    result = args.func(args)
+    notify_service_after_command(argv, result)
+    return result
+
+def should_use_service(argv):
+    if os.environ.get("AI_MAN_SERVICE_CLIENT_ACTIVE") == "1":
+        return False
+    if str(os.environ.get("AI_MAN_SERVICE", "")).lower() not in SERVICE_ENV_TRUE:
+        return False
+    runtime = _runtime_service()
+    return runtime.eligible_argv(argv)
+
+def try_run_service_command(argv):
+    runtime = _runtime_service()
+    old_active = os.environ.get("AI_MAN_SERVICE_CLIENT_ACTIVE")
+    os.environ["AI_MAN_SERVICE_CLIENT_ACTIVE"] = "1"
+    try:
+        try:
+            response = runtime.run_via_service(argv)
+        except Exception:
+            return None
+    finally:
+        if old_active is None:
+            os.environ.pop("AI_MAN_SERVICE_CLIENT_ACTIVE", None)
+        else:
+            os.environ["AI_MAN_SERVICE_CLIENT_ACTIVE"] = old_active
+    if not response.get("ok"):
+        return None
+    stdout = response.get("stdout") or ""
+    stderr = response.get("stderr") or ""
+    if stdout:
+        print(stdout, end="")
+    if stderr:
+        print(stderr, end="", file=sys.stderr)
+    return int(response.get("returncode", EXIT_RUNTIME))
+
+def notify_service_after_command(argv, result):
+    if result != EXIT_OK:
+        return
+    if not argv or argv[0] not in SERVICE_MUTATING_COMMANDS:
+        return
+    runtime = _runtime_service()
+    runtime.invalidate_service()
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv

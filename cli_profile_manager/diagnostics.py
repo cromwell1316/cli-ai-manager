@@ -59,6 +59,17 @@ def relevant_env_snapshot():
         "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
         "AI_MAN_QUOTA_SESSION_MAX",
+        "AI_MAN_PROCESS_LIMITS",
+        "AI_MAN_PROCESS_MEMORY_MB",
+        "AI_MAN_PROCESS_CPU_PERCENT",
+        "AI_MAN_PROCESS_MAX_PROCESSES",
+        "AI_MAN_PROCESS_NICE",
+        "AI_MAN_PROCESS_IONICE_CLASS",
+        "AI_MAN_PROCESS_IONICE_LEVEL",
+        "AI_MAN_PROCESS_SYSTEMD",
+        "AI_MAN_QUOTA_PROCESS_LIMITS",
+        "AI_MAN_QUOTA_PROCESS_MEMORY_MB",
+        "AI_MAN_QUOTA_PROCESS_CPU_PERCENT",
     ]
     return {key: os.environ.get(key) for key in keys if key in os.environ}
 
@@ -114,6 +125,8 @@ def diagnostics_payload(
     profile_index_provider=None,
 ):
     from .interactive import quota_runtime_snapshot
+    from .process_policy import diagnostics_payload as process_policy_diagnostics
+    from .runtime_service import service_status
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
     payload = {
@@ -129,6 +142,8 @@ def diagnostics_payload(
             for key in selected_tools
         },
         "environment": relevant_env_snapshot(),
+        "process_limits": process_policy_diagnostics(),
+        "service_runtime": service_status(),
         "quota_runtime": quota_runtime_snapshot(tool_key),
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
     }

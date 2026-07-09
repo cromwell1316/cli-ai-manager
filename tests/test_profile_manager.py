@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -757,15 +758,22 @@ def test_interactive_status_collection_does_not_wait_for_quota_worker(monkeypatc
     interactive.quota_cache_entry("agy", 1)["future"].result(timeout=1)
 
 
-def test_interactive_stale_quota_survives_failed_refresh(monkeypatch):
+@pytest.mark.parametrize(
+    ("state", "warning"),
+    [
+        ("timeout", "timeout waiting for CLI output"),
+        ("resource_limited", "failed to apply quota process limits with backend setrlimit"),
+    ],
+)
+def test_interactive_stale_quota_survives_failed_refresh(monkeypatch, state, warning):
     import cli_profile_manager.interactive as interactive
 
     def fake_quota_payload(tool_key, profile_num, timeout_seconds):
         return {
             "quota": {
-                "state": "timeout",
+                "state": state,
                 "limits": {},
-                "warnings": ["timeout waiting for CLI output"],
+                "warnings": [warning],
             },
         }
 
@@ -796,8 +804,8 @@ def test_interactive_stale_quota_survives_failed_refresh(monkeypatch):
     assert refreshed["state"] == "retryable"
     assert refreshed["quota"]["state"] == "available"
     assert refreshed["quota"]["limits"]["daily"]["percent"] == 77
-    assert refreshed["last_error"]["state"] == "timeout"
-    assert "timeout waiting for CLI output" in refreshed["quota"]["warnings"]
+    assert refreshed["last_error"]["state"] == state
+    assert warning in refreshed["quota"]["warnings"]
 
 
 def test_interactive_retry_backoff_prevents_tight_retry_loop(monkeypatch):
@@ -1559,6 +1567,8 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS": "120",
         "AI_MAN_QUOTA_SESSION_MAX": "3",
         "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
+        "AI_MAN_PROCESS_MEMORY_MB": "bad",
+        "AI_MAN_QUOTA_PROCESS_CPU_PERCENT": "5",
     })
 
     completed = subprocess.run(
@@ -1582,6 +1592,130 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
     assert any("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT" in warning for warning in payload["warnings"])
     assert "sk-test-secret" not in completed.stdout
     assert payload["quota"]["commands"]["agy"] == "[redacted-token]"
+    assert payload["process_limits"]["launch"]["memory_mb"] == 4096
+    assert payload["process_limits"]["quota"]["cpu_percent"] == 150
+    assert "backend" in payload["process_limits"]["launch"]
+    assert any("AI_MAN_PROCESS_MEMORY_MB" in warning for warning in payload["warnings"])
+    assert any("AI_MAN_QUOTA_PROCESS_CPU_PERCENT" in warning for warning in payload["warnings"])
+
+
+def test_process_policy_builds_systemd_scope_command(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    monkeypatch.setattr(process_policy, "systemd_user_scope_available", lambda: True)
+    monkeypatch.setenv("AI_MAN_PROCESS_MEMORY_MB", "2048")
+    monkeypatch.setenv("AI_MAN_PROCESS_CPU_PERCENT", "250")
+    monkeypatch.setenv("AI_MAN_PROCESS_MAX_PROCESSES", "64")
+
+    command, preexec_fn, policy = process_policy.prepare_popen(
+        ["agy", "--version"],
+        tier="launch",
+        unit_name="ai-man-test",
+    )
+
+    assert policy["backend"] == "systemd-run"
+    assert preexec_fn is None
+    assert command[:4] == ["systemd-run", "--user", "--scope", "--quiet"]
+    assert "MemoryMax=2048M" in command
+    assert "CPUQuota=250%" in command
+    assert "TasksMax=64" in command
+    assert command[-2:] == ["agy", "--version"]
+
+
+def test_process_policy_fallback_prepares_preexec(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    monkeypatch.setattr(process_policy, "systemd_user_scope_available", lambda: False)
+    monkeypatch.setenv("AI_MAN_PROCESS_SYSTEMD", "0")
+    monkeypatch.setenv("AI_MAN_PROCESS_LIMITS", "1")
+
+    command, preexec_fn, policy = process_policy.prepare_popen(["codex"], tier="launch")
+
+    assert policy["backend"] in ("setrlimit", "priority-only")
+    assert command[-1] == "codex"
+    assert callable(preexec_fn) or policy["backend"] == "priority-only"
+
+
+def test_run_cli_tool_uses_process_policy_wrapper(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    captured = {}
+
+    class FakePolicy:
+        @staticmethod
+        def prepare_popen(command, tier, needs_pty, unit_name=None):
+            captured["policy_args"] = (command, tier, needs_pty, unit_name)
+            return ["wrapped"] + command, "preexec", {"backend": "test", "enabled": True}
+
+    class FakeCompleted:
+        returncode = 7
+
+    class FakeSubprocess:
+        @staticmethod
+        def run(command, env=None, preexec_fn=None):
+            captured["run"] = (command, env, preexec_fn)
+            return FakeCompleted()
+
+    monkeypatch.setattr(cli, "_process_policy", lambda: FakePolicy)
+    monkeypatch.setattr(cli._shutil(), "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli, "_subprocess", lambda: FakeSubprocess)
+
+    rc = pm.run_cli_tool("codex", 1, ["--help"])
+
+    assert rc == 7
+    assert captured["policy_args"] == (["codex", "--help"], "launch", False, "ai-man-codex-p1")
+    assert captured["run"][0] == ["wrapped", "codex", "--help"]
+    assert captured["run"][2] == "preexec"
+
+
+def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    captured = {}
+
+    class FakeProc:
+        pid = 123
+        returncode = 0
+
+        def poll(self):
+            return self.returncode
+
+    def fake_prepare(command, tier, needs_pty):
+        captured["policy_args"] = (command, tier, needs_pty)
+        return ["wrapped"] + list(command), "preexec", {"backend": "setrlimit"}
+
+    def fake_popen(command, **kwargs):
+        captured["popen"] = (command, kwargs)
+        return FakeProc()
+
+    monkeypatch.setitem(sys.modules, "pty", types.SimpleNamespace(openpty=lambda: (10, 11)))
+    monkeypatch.setattr(quota.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(quota.fcntl, "ioctl", lambda *args: None)
+    monkeypatch.setattr(quota.os, "close", lambda fd: None)
+    monkeypatch.setattr(quota, "prepare_popen", fake_prepare)
+    monkeypatch.setattr(quota.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(quota, "wait_for_startup", lambda *args: None)
+    monkeypatch.setattr(quota, "wait_for_idle", lambda *args: "quota screen")
+    monkeypatch.setattr(quota, "send_interactive_command", lambda *args: None)
+    monkeypatch.setattr(quota, "wait_after_command", lambda *args: None)
+
+    screen = quota.run_cli_quota_snapshot("agy", ["agy"], {}, str(tmp_path))
+
+    assert screen == "quota screen"
+    assert captured["policy_args"] == (["agy"], "quota", True)
+    assert captured["popen"][0] == ["wrapped", "agy"]
+    assert captured["popen"][1]["preexec_fn"] == "preexec"
+
+
+def test_diagnostics_reports_process_limits(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+
+    payload = pm.diagnostics_payload("codex", status_provider=lambda tool, num: None)
+
+    assert payload["process_limits"]["supported"] in (True, False)
+    assert "launch" in payload["process_limits"]["policies"]
+    assert "quota" in payload["process_limits"]["policies"]
 
 
 def test_runtime_benchmark_quota_parser_outputs_json():
@@ -1762,3 +1896,149 @@ def test_launch_flags_after_profile_are_normalized_before_tool_args(monkeypatch,
         "--",
         "--help",
     ]
+
+
+def test_runtime_service_paths_are_user_only(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    runtime_service.ensure_runtime_dir()
+    status = runtime_service.service_status()
+
+    assert status["runtime_dir"] == str(tmp_path / "metadata" / "runtime")
+    assert status["runtime_dir_mode"] == "0o700"
+    assert status["socket_path"].endswith("service.sock")
+    assert status["running"] is False
+
+
+def test_service_status_json_and_diagnostics_include_runtime(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    status = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "service", "status", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    diagnostics = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "diagnostics", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert status.returncode == 0, status.stderr
+    assert diagnostics.returncode == 0, diagnostics.stderr
+    service_payload = json.loads(status.stdout)
+    diagnostics_payload = json.loads(diagnostics.stdout)
+    assert service_payload["service"]["running"] is False
+    assert diagnostics_payload["service_runtime"]["socket_path"] == service_payload["service"]["socket_path"]
+
+
+def test_service_mode_falls_back_when_service_absent(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_SERVICE": "1",
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "config", "show", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout)["ok"] is True
+
+
+def test_service_backed_output_matches_one_shot(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+    write_json(tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json", {"refresh_token": "r"})
+    write_json(tmp_path / "agy-homes" / "p1" / ".gemini" / "google_accounts.json", {"active": "agy@example.com"})
+
+    start = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "service", "start", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    try:
+        assert start.returncode == 0, start.stderr
+        start_payload = json.loads(start.stdout)
+        assert start_payload["service"]["running"] is True
+        assert start_payload["service"]["socket_mode"] == "0o600"
+
+        one_shot = subprocess.run(
+            [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
+            env={**env, "AI_MAN_SERVICE": "0"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        service_backed = subprocess.run(
+            [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
+            env={**env, "AI_MAN_SERVICE": "1"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert one_shot.returncode == 0, one_shot.stderr
+        assert service_backed.returncode == 0, service_backed.stderr
+        assert json.loads(service_backed.stdout) == json.loads(one_shot.stdout)
+    finally:
+        subprocess.run(
+            [sys.executable, str(ROOT / "profile_manager.py"), "service", "stop", "--json"],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+
+def test_mutating_command_notifies_runtime_invalidation(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    calls = []
+
+    class FakeRuntime:
+        def service_mode_enabled(self):
+            return False
+
+        def eligible_argv(self, argv):
+            return False
+
+        def mutates_runtime_state(self, argv):
+            return bool(argv and argv[0] == "label")
+
+        def invalidate_service(self):
+            calls.append("invalidate")
+
+    monkeypatch.setattr(cli, "_runtime_service", lambda: FakeRuntime())
+
+    rc, _, stderr = run_in_process_command(pm, ["label", "agy", "p1", "bench"])
+
+    assert rc == 0, stderr
+    assert calls == ["invalidate"]

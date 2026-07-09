@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -26,3 +26,12 @@ resource policy.
 - Launch, login, and add flows use the wrapper.
 - Tests verify backend command construction without invoking real systemd.
 - Fallback behavior is deterministic when resource controls are unavailable.
+
+## Evidence
+
+- `cli_profile_manager/process_policy.py` selects `systemd-run`, `setrlimit`,
+  `priority-only`, `disabled`, or `unsupported` backends deterministically.
+- `tests/test_profile_manager.py::test_process_policy_builds_systemd_scope_command`
+  covers systemd command construction without requiring live systemd in CI.
+- `tests/test_profile_manager.py::test_run_cli_tool_uses_process_policy_wrapper`
+  verifies launch/login/add native CLI paths route through the wrapper.

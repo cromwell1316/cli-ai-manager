@@ -1,0 +1,367 @@
+import contextlib
+import io
+import json
+import os
+import signal
+import socket
+import stat
+import sys
+import time
+from pathlib import Path
+
+from . import metadata, paths
+
+
+PROTOCOL_VERSION = 1
+DEFAULT_CLIENT_TIMEOUT_SECONDS = 0.75
+MAX_REQUEST_BYTES = 1024 * 1024
+RUNTIME_DIR_NAME = "runtime"
+SOCKET_NAME = "service.sock"
+PID_NAME = "service.pid"
+LOG_NAME = "service.log"
+READ_ONLY_COMMANDS = {"config", "diagnostics", "list", "status"}
+MUTATING_COMMANDS = {"clear", "export", "import", "label", "login", "sync"}
+
+
+class ServiceError(RuntimeError):
+    pass
+
+
+def runtime_dir():
+    return Path(metadata.METADATA_DIR) / RUNTIME_DIR_NAME
+
+
+def socket_path():
+    return runtime_dir() / SOCKET_NAME
+
+
+def pid_path():
+    return runtime_dir() / PID_NAME
+
+
+def log_path():
+    return runtime_dir() / LOG_NAME
+
+
+def ensure_runtime_dir():
+    directory = runtime_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    return directory
+
+
+def _user_only_mode(path):
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except OSError:
+        return None
+    return oct(mode)
+
+
+def _read_pid():
+    try:
+        return int(pid_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _process_alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def cleanup_stale_files():
+    pid = _read_pid()
+    if pid and _process_alive(pid):
+        return False
+    removed = False
+    for path in (socket_path(), pid_path()):
+        try:
+            path.unlink()
+            removed = True
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+    return removed
+
+
+def service_status():
+    ensure_runtime_dir()
+    pid = _read_pid()
+    socket_exists = socket_path().exists()
+    alive = _process_alive(pid)
+    stale = bool((pid or socket_exists) and not alive)
+    return {
+        "enabled_env": service_mode_enabled(),
+        "running": bool(alive and socket_exists),
+        "pid": pid,
+        "stale": stale,
+        "socket_path": str(socket_path()),
+        "pid_path": str(pid_path()),
+        "log_path": str(log_path()),
+        "runtime_dir": str(runtime_dir()),
+        "runtime_dir_mode": _user_only_mode(runtime_dir()),
+        "socket_mode": _user_only_mode(socket_path()) if socket_exists else None,
+        "protocol_version": PROTOCOL_VERSION,
+    }
+
+
+def service_mode_enabled(env=None):
+    env = os.environ if env is None else env
+    return str(env.get("AI_MAN_SERVICE", "")).lower() in ("1", "true", "yes", "on")
+
+
+def eligible_argv(argv):
+    if not argv:
+        return False
+    command = argv[0]
+    if command not in READ_ONLY_COMMANDS:
+        return False
+    if command == "service":
+        return False
+    if command in ("list", "status") and "--quota" in argv:
+        return False
+    return True
+
+
+def mutates_runtime_state(argv):
+    return bool(argv and argv[0] in MUTATING_COMMANDS)
+
+
+def encode_message(payload):
+    return (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+
+
+def read_message(stream):
+    data = stream.readline(MAX_REQUEST_BYTES + 1)
+    if len(data) > MAX_REQUEST_BYTES:
+        raise ServiceError("request too large")
+    if not data:
+        raise ServiceError("empty request")
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ServiceError(f"invalid json: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ServiceError("request must be a JSON object")
+    return payload
+
+
+def request(payload, timeout_seconds=DEFAULT_CLIENT_TIMEOUT_SECONDS):
+    sock_path = socket_path()
+    if not sock_path.exists():
+        raise ServiceError("service socket is not present")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(timeout_seconds)
+        client.connect(str(sock_path))
+        client.sendall(encode_message(payload))
+        with client.makefile("rb") as stream:
+            return read_message(stream)
+
+
+def execute_argv(argv):
+    from . import cli
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    old_service = os.environ.get("AI_MAN_SERVICE")
+    os.environ["AI_MAN_SERVICE"] = "0"
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = cli.run_cli(list(argv))
+        return {
+            "ok": True,
+            "returncode": 0 if rc is None else rc,
+            "stdout": stdout.getvalue(),
+            "stderr": stderr.getvalue(),
+        }
+    finally:
+        if old_service is None:
+            os.environ.pop("AI_MAN_SERVICE", None)
+        else:
+            os.environ["AI_MAN_SERVICE"] = old_service
+
+
+class RuntimeState:
+    def __init__(self):
+        self.started_at = time.time()
+        self.generation = 0
+        self.requests = 0
+
+    def invalidate(self):
+        self.generation += 1
+
+    def health(self):
+        return {
+            "ok": True,
+            "pid": os.getpid(),
+            "started_at": self.started_at,
+            "uptime_seconds": round(time.time() - self.started_at, 3),
+            "generation": self.generation,
+            "requests": self.requests,
+        }
+
+
+def _validate_peer(sock):
+    if not hasattr(socket, "SO_PEERCRED"):
+        return True
+    try:
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+    except OSError:
+        return False
+    pid = int.from_bytes(creds[0:4], sys.byteorder)
+    uid = int.from_bytes(creds[4:8], sys.byteorder)
+    return pid > 0 and uid == os.getuid()
+
+
+def handle_payload(payload, state):
+    state.requests += 1
+    if payload.get("version") != PROTOCOL_VERSION:
+        return {"ok": False, "error": {"type": "protocol_error", "message": "unsupported protocol version"}}
+    action = payload.get("action")
+    if action == "health":
+        return state.health()
+    if action == "invalidate":
+        state.invalidate()
+        return {"ok": True, "generation": state.generation}
+    if action == "shutdown":
+        return {"ok": True, "shutdown": True}
+    if action == "run":
+        argv = payload.get("argv")
+        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+            return {"ok": False, "error": {"type": "usage_error", "message": "argv must be a string list"}}
+        if not eligible_argv(argv):
+            return {"ok": False, "error": {"type": "not_eligible", "message": "command is not service eligible"}}
+        result = execute_argv(argv)
+        result["generation"] = state.generation
+        return result
+    return {"ok": False, "error": {"type": "usage_error", "message": "unknown action"}}
+
+
+def serve_forever():
+    ensure_runtime_dir()
+    cleanup_stale_files()
+    if socket_path().exists():
+        raise ServiceError(f"service socket already exists: {socket_path()}")
+    state = RuntimeState()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        old_umask = os.umask(0o177)
+        try:
+            server.bind(str(socket_path()))
+        finally:
+            os.umask(old_umask)
+        try:
+            os.chmod(socket_path(), 0o600)
+        except OSError:
+            pass
+        server.listen(16)
+        pid_path().write_text(str(os.getpid()), encoding="utf-8")
+        try:
+            os.chmod(pid_path(), 0o600)
+        except OSError:
+            pass
+        running = True
+        while running:
+            conn, _ = server.accept()
+            with conn:
+                with conn.makefile("rb") as stream:
+                    try:
+                        if not _validate_peer(conn):
+                            response = {"ok": False, "error": {"type": "permission_denied", "message": "unexpected peer user"}}
+                        else:
+                            response = handle_payload(read_message(stream), state)
+                    except Exception as exc:
+                        response = {"ok": False, "error": {"type": "runtime_error", "message": str(exc)}}
+                    if response.get("shutdown"):
+                        running = False
+                    conn.sendall(encode_message(response))
+    finally:
+        server.close()
+        for path in (socket_path(), pid_path()):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
+
+
+def start_service(script_path):
+    ensure_runtime_dir()
+    cleanup_stale_files()
+    current = service_status()
+    if current["running"]:
+        return {**current, "ok": True, "started": False}
+    log_file = open(log_path(), "ab", buffering=0)
+    try:
+        proc = __import__("subprocess").Popen(
+            [sys.executable, str(script_path), "service", "run"],
+            stdin=__import__("subprocess").DEVNULL,
+            stdout=log_file,
+            stderr=log_file,
+            close_fds=True,
+            start_new_session=True,
+        )
+    finally:
+        log_file.close()
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        status = service_status()
+        if status["running"]:
+            return {**status, "ok": True, "started": True}
+        if proc.poll() is not None:
+            break
+        time.sleep(0.05)
+    return {**service_status(), "ok": False, "started": False, "error": "service did not become ready"}
+
+
+def stop_service(timeout_seconds=3.0):
+    status = service_status()
+    if not status["pid"] and not socket_path().exists():
+        cleanup_stale_files()
+        return {**service_status(), "ok": True, "stopped": False}
+    if status["running"]:
+        try:
+            request({"version": PROTOCOL_VERSION, "action": "shutdown"}, timeout_seconds=0.5)
+        except Exception:
+            pass
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            if not _process_alive(status["pid"]):
+                cleanup_stale_files()
+                return {**service_status(), "ok": True, "stopped": True}
+            time.sleep(0.05)
+        try:
+            os.kill(status["pid"], signal.SIGTERM)
+        except OSError:
+            pass
+    cleanup_stale_files()
+    return {**service_status(), "ok": True, "stopped": True}
+
+
+def service_health():
+    response = request({"version": PROTOCOL_VERSION, "action": "health"}, timeout_seconds=0.5)
+    return response if response.get("ok") else None
+
+
+def invalidate_service():
+    try:
+        return request({"version": PROTOCOL_VERSION, "action": "invalidate"}, timeout_seconds=0.25)
+    except Exception:
+        return None
+
+
+def run_via_service(argv, timeout_seconds=DEFAULT_CLIENT_TIMEOUT_SECONDS):
+    return request({"version": PROTOCOL_VERSION, "action": "run", "argv": list(argv)}, timeout_seconds=timeout_seconds)

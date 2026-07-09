@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -25,3 +25,10 @@ native CLI misbehaves.
 - Diagnostics explain whether process isolation is active.
 - Users can identify a resource-limit failure without reading raw logs.
 - Cleanup commands do not touch unrelated processes.
+
+## Evidence
+
+- `diagnostics --json` includes `process_limits.supported`,
+  `systemd_user_scope_available`, and per-tier policy/backend data.
+- Quota limit application failures report `quota.state=resource_limited` with a
+  warning naming the backend.

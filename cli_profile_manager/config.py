@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .metadata import METADATA_DIR
 from .paths import TOOLS, resolve_sync_bases
+from .process_policy import process_policy
 
 
 TOKEN_LIKE_RE = re.compile(
@@ -58,6 +59,12 @@ CONFIG_ENV_VARS = [
         "name": "AI_MAN_INTERACTIVE_QUOTA",
         "description": "enable automatic interactive quota loading",
         "default": "1",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_SERVICE",
+        "description": "enable optional local runtime service client for eligible read-only commands",
+        "default": "0",
         "type": "bool",
     },
     {
@@ -140,6 +147,72 @@ CONFIG_ENV_VARS = [
         "description": "Claude quota slash command override",
         "default": "/usage",
         "type": "string",
+    },
+    {
+        "name": "AI_MAN_PROCESS_LIMITS",
+        "description": "enable process resource limits",
+        "default": "1",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_PROCESS_MEMORY_MB",
+        "description": "foreground launch memory cap in MB",
+        "default": "4096",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_CPU_PERCENT",
+        "description": "foreground launch CPU quota percent",
+        "default": "300",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_MAX_PROCESSES",
+        "description": "foreground launch process count cap",
+        "default": "256",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_NICE",
+        "description": "foreground launch nice adjustment",
+        "default": "5",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_IONICE_CLASS",
+        "description": "foreground launch ionice class",
+        "default": "2",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_IONICE_LEVEL",
+        "description": "foreground launch ionice level",
+        "default": "6",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_PROCESS_SYSTEMD",
+        "description": "prefer systemd user scopes when available",
+        "default": "1",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_LIMITS",
+        "description": "enable quota probe process limits",
+        "default": "1",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_MEMORY_MB",
+        "description": "quota probe memory cap in MB",
+        "default": "1536",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_CPU_PERCENT",
+        "description": "quota probe CPU quota percent",
+        "default": "150",
+        "type": "int",
     },
 ]
 
@@ -257,6 +330,13 @@ def effective_config_payload():
             "claude": redact_sensitive(os.environ.get("AI_MAN_CLAUDE_QUOTA_COMMAND", "/usage")),
         },
     }
+    process_limits = {
+        "launch": process_policy("launch"),
+        "quota": process_policy("quota"),
+        "validation": process_policy("validation"),
+    }
+    for policy in process_limits.values():
+        warnings.extend(policy.get("warnings", []))
     return {
         "ok": True,
         "profile_roots": {tool: config["base_dir"] for tool, config in TOOLS.items()},
@@ -266,6 +346,7 @@ def effective_config_payload():
             "windows": str(Path(windows_base)),
         },
         "quota": quota,
+        "process_limits": process_limits,
         "environment": [_env_item(definition) for definition in CONFIG_ENV_VARS],
         "warnings": warnings,
     }

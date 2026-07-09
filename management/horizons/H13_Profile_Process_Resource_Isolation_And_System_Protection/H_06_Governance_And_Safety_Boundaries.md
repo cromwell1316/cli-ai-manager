@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

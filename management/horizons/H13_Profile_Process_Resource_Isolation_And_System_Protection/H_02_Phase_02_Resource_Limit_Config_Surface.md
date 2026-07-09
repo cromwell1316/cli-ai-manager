@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -32,3 +32,10 @@ Expose resource limits as explicit, documented configuration.
 - Invalid limit values fall back safely with warnings.
 - Defaults are conservative and do not break normal CLI startup.
 - Config output shows exactly what policy will be applied.
+
+## Evidence
+
+- `config show --json` includes `process_limits.launch`,
+  `process_limits.quota`, and `process_limits.validation`.
+- `tests/test_profile_manager.py::test_config_show_json_reports_effective_values_and_invalid_env_warnings`
+  verifies invalid process limit values produce warnings and safe fallbacks.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -16,4 +16,8 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `tests/test_profile_manager.py::test_quota_pty_uses_quota_process_policy`
+  verifies quota PTY startup passes through the quota process policy.
+- Existing scheduler/session tests continue to pass with policy wrapping.
+- `tests/test_profile_manager.py::test_interactive_stale_quota_survives_failed_refresh`
+  covers stale quota preservation for `resource_limited` failures.

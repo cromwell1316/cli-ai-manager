@@ -12,6 +12,8 @@ import termios
 import threading
 import time
 
+from .process_policy import prepare_popen
+
 
 DEFAULT_COLS = 120
 DEFAULT_ROWS = 40
@@ -484,8 +486,9 @@ class PersistentQuotaSession:
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
         env = self.env.copy()
         env.setdefault("TERM", "xterm-256color")
+        command, preexec_fn, policy = prepare_popen(self.command, tier="quota", needs_pty=True)
         proc = subprocess.Popen(
-            self.command,
+            command,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
@@ -493,6 +496,7 @@ class PersistentQuotaSession:
             env=env,
             start_new_session=True,
             close_fds=True,
+            preexec_fn=preexec_fn,
         )
         os.close(slave_fd)
         output = []
@@ -502,6 +506,12 @@ class PersistentQuotaSession:
             wait_for_startup(master_fd, output, max(0.0, startup_seconds))
             wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
             if proc.poll() is not None:
+                if proc.returncode == 125:
+                    raise QuotaProbeError(
+                        "resource_limited",
+                        f"failed to apply quota process limits with backend {policy.get('backend')}",
+                        "".join(output),
+                    )
                 raise QuotaProbeError("process_exit", "CLI process exited during startup", "".join(output))
         except Exception:
             terminate_process(proc, master_fd, output)
@@ -560,7 +570,7 @@ class PersistentQuotaSession:
 PERSISTENT_QUOTA_SESSIONS = {}
 PERSISTENT_QUOTA_PARSER_MISSES = {}
 PERSISTENT_QUOTA_LOCK = threading.Lock()
-INVALIDATING_QUOTA_STATES = {"timeout", "process_exit"}
+INVALIDATING_QUOTA_STATES = {"timeout", "process_exit", "resource_limited"}
 
 
 def persistent_session_ttl_seconds():
@@ -732,6 +742,7 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
     fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
     env = env.copy()
     env.setdefault("TERM", "xterm-256color")
+    command, preexec_fn, policy = prepare_popen(command, tier="quota", needs_pty=True)
     proc = subprocess.Popen(
         command,
         stdin=slave_fd,
@@ -741,6 +752,7 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
         env=env,
         start_new_session=True,
         close_fds=True,
+        preexec_fn=preexec_fn,
     )
     os.close(slave_fd)
     output = []
@@ -749,6 +761,12 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
         startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
         wait_for_startup(master_fd, output, max(0.0, startup_seconds))
         wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+        if proc.poll() == 125:
+            raise QuotaProbeError(
+                "resource_limited",
+                f"failed to apply quota process limits with backend {policy.get('backend')}",
+                "".join(output),
+            )
         slash_command = quota_command_for(tool_key)
         if not slash_command:
             raise QuotaProbeError("unsupported", f"quota command is not configured for {tool_key}")

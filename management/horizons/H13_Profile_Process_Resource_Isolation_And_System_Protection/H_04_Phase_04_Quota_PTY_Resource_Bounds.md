@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -26,3 +26,12 @@ sessions.
 - Quota PTY process startup uses the resource policy wrapper.
 - Resource-limit failures produce safe `quota` states and warnings.
 - Existing stale quota preservation and retry behavior remain intact.
+
+## Evidence
+
+- `tests/test_profile_manager.py::test_quota_pty_uses_quota_process_policy`
+  verifies one-shot PTY quota subprocesses receive the quota policy.
+- Persistent quota sessions share the same `PersistentQuotaSession.start()`
+  policy hook.
+- `resource_limited` failures invalidate persistent sessions and preserve stale
+  quota values in interactive status refresh.

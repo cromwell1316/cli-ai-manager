@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H12_Long_Lived_Runtime_Service_And_Zero_Sta
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

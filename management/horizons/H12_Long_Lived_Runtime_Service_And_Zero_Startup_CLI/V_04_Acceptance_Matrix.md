@@ -5,16 +5,16 @@ Source of Truth: management/horizons/H12_Long_Lived_Runtime_Service_And_Zero_Sta
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Evidence-based daemon decision | Planned |
-| Local-only IPC | Planned |
-| User-only socket permissions | Planned |
-| Runtime cache invalidation | Planned |
-| Optional CLI client mode | Planned |
-| One-shot fallback | Planned |
-| Service lifecycle commands | Planned |
-| Diagnostics integration | Planned |
-| No raw token persistence | Planned |
+| Evidence-based daemon decision | Implemented |
+| Local-only IPC | Implemented |
+| User-only socket permissions | Implemented |
+| Runtime cache invalidation | Implemented |
+| Optional CLI client mode | Implemented |
+| One-shot fallback | Implemented |
+| Service lifecycle commands | Implemented |
+| Diagnostics integration | Implemented |
+| No raw token persistence | Implemented |

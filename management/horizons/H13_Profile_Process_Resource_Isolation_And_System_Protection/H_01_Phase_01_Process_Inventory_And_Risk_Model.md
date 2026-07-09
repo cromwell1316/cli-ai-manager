@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H13_Profile_Process_Resource_Isolation_And_
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -32,3 +32,13 @@ Map every path that creates a native process and classify its resource risk.
 
 - Every subprocess creation path has an assigned policy tier.
 - Risks and fallback behavior are documented before implementation.
+
+## Evidence
+
+- Foreground interactive launches use the `launch` policy tier through
+  `run_cli_tool()`.
+- One-shot and persistent quota PTY subprocesses use the stricter `quota` policy
+  tier in `cli_profile_manager/quota.py`.
+- Validation and benchmark subprocesses remain external test harness activity;
+  a `validation` policy tier is exposed for future first-party validation
+  launchers.

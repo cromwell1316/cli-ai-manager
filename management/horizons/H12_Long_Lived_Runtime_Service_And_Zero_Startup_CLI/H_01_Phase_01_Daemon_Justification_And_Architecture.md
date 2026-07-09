@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H12_Long_Lived_Runtime_Service_And_Zero_Sta
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -23,3 +23,18 @@ Decide whether a long-lived runtime is justified and define its architecture.
 
 - The horizon records a go/no-go decision based on measured startup overhead.
 - Architecture avoids network exposure and privileged installation.
+
+## Decision
+
+Go: H10 showed in-process command handlers are low-millisecond while one-shot
+commands still pay host Python startup. H12 therefore implements an optional
+local runtime, disabled by default, for read-only hot commands.
+
+## Architecture
+
+- Runtime files live under the existing metadata directory in `runtime/`.
+- IPC uses a Unix domain socket only; no TCP listener is created.
+- Eligible service commands are read-only `config`, `diagnostics`, `list`, and
+  `status` without quota probing.
+- Mutation-heavy commands remain one-shot and send best-effort invalidation to
+  a running service.
