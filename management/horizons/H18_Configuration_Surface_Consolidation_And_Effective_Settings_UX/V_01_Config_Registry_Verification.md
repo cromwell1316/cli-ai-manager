@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Verification
 
@@ -14,3 +14,9 @@ Status: planned.
 - Environment aliases resolve correctly.
 - Invalid values produce warnings or errors.
 - Sensitive values are redacted.
+
+## Verification Evidence
+
+`tests/test_profile_manager.py` verifies that known environment knobs are
+registered, invalid values fall back with warnings, and secret-like values are
+not printed in config or diagnostics output.

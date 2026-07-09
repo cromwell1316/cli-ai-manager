@@ -746,7 +746,10 @@ def print_status_table(tool_key, statuses):
 def cmd_config_show(args):
     from cli_profile_manager.config import effective_config_payload
 
-    payload = effective_config_payload()
+    payload = effective_config_payload(
+        include_sources=getattr(args, "sources", False) or getattr(args, "json", False),
+        filter_text=getattr(args, "filter", None),
+    )
     if args.json:
         print_json_payload(payload)
         return EXIT_OK
@@ -771,6 +774,13 @@ def cmd_config_show(args):
         print("Warnings:")
         for warning in payload["warnings"]:
             print(f"  {warning}")
+    if getattr(args, "sources", False):
+        print("Settings:")
+        for setting in payload["settings"]:
+            print(
+                f"  {setting['key']}: {setting['value']} "
+                f"({setting['source']}:{setting['source_name']})"
+            )
     return EXIT_OK
 
 def cmd_list(args):
@@ -1753,6 +1763,8 @@ def build_parser():
     config_sub = config_p.add_subparsers(dest="config_command")
     config_show_p = config_sub.add_parser("show", help="show effective paths, quota settings, and env overrides")
     config_show_p.add_argument("--json", action="store_true")
+    config_show_p.add_argument("--sources", action="store_true", help="include setting source information in text output")
+    config_show_p.add_argument("--filter", help="show settings matching a key, environment name, category, or description")
     config_show_p.set_defaults(func=cmd_config_show)
 
     audit_p = sub.add_parser("audit", help="inspect and manage local audit events")

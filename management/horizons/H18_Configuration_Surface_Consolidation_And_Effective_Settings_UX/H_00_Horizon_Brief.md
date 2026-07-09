@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -21,3 +21,8 @@ it came from, whether it is valid, and whether it is safe to display.
 
 Build a config registry with typed setting definitions, source tracking,
 validation, redaction, and command/diagnostics integration.
+
+## Implementation Evidence
+
+Implemented a source-aware config registry and connected it to `config show`
+and diagnostics while keeping existing env names working.

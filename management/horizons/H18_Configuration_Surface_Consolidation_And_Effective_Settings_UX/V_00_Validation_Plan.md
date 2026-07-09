@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Automated Validation
 
@@ -21,3 +21,8 @@ python3 profile_manager.py diagnostics --json
 - Source precedence tests.
 - Redaction tests.
 - Diagnostics config health evidence.
+
+## Validation Evidence
+
+Implemented targeted tests for registry coverage, source reporting, filtering,
+redaction, invalid value warnings, and diagnostics config health.

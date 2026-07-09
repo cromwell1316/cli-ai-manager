@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -23,3 +23,10 @@ Keep existing users working while making configuration easier to discover.
 - Existing documented env vars keep working.
 - New docs reflect registry defaults.
 - Deprecated settings have clear replacement guidance.
+
+## Implementation Evidence
+
+- Existing `AI_MAN_*` environment variable names remain the primary aliases.
+- `CONFIG_ENV_VARS` is generated from the central registry for documentation
+  and display compatibility.
+- No global system config file is required.

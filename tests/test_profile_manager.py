@@ -1866,6 +1866,128 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
     assert any("AI_MAN_QUOTA_PROCESS_CPU_PERCENT" in warning for warning in payload["warnings"])
 
 
+def test_config_registry_covers_known_environment_knobs():
+    from cli_profile_manager.config import registry
+
+    names = {definition.name for definition in registry() if definition.env}
+    expected = {
+        "AI_MAN_AGY_HOME",
+        "AI_MAN_CODEX_HOME",
+        "AI_MAN_CLAUDE_HOME",
+        "AI_MAN_METADATA_DIR",
+        "AI_MAN_WSL_HOME",
+        "AI_MAN_WINDOWS_HOME",
+        "AI_MAN_INTERACTIVE_QUOTA",
+        "AI_MAN_INTERACTIVE_QUOTA_TIMEOUT",
+        "AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT",
+        "AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY",
+        "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        "AI_MAN_SERVICE",
+        "AI_MAN_AUDIT",
+        "AI_MAN_AUDIT_BACKEND",
+        "AI_MAN_AUDIT_STRICT",
+        "AI_MAN_AUDIT_RETENTION_DAYS",
+        "AI_MAN_AUDIT_MAX_BYTES",
+        "AI_MAN_AUDIT_SHOW_ACCOUNTS",
+        "AI_MAN_AUDIT_SHOW_PATHS",
+        "AI_MAN_QUOTA_STARTUP_SECONDS",
+        "AI_MAN_QUOTA_POST_COMMAND_SECONDS",
+        "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
+        "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
+        "AI_MAN_QUOTA_SESSION_MAX",
+        "AI_MAN_AGY_QUOTA_COMMAND",
+        "AI_MAN_CODEX_QUOTA_COMMAND",
+        "AI_MAN_CLAUDE_QUOTA_COMMAND",
+        "AI_MAN_PROCESS_LIMITS",
+        "AI_MAN_PROCESS_MEMORY_MB",
+        "AI_MAN_PROCESS_CPU_PERCENT",
+        "AI_MAN_PROCESS_MAX_PROCESSES",
+        "AI_MAN_PROCESS_NICE",
+        "AI_MAN_PROCESS_IONICE_CLASS",
+        "AI_MAN_PROCESS_IONICE_LEVEL",
+        "AI_MAN_PROCESS_SYSTEMD",
+        "AI_MAN_QUOTA_PROCESS_LIMITS",
+        "AI_MAN_QUOTA_PROCESS_MEMORY_MB",
+        "AI_MAN_QUOTA_PROCESS_CPU_PERCENT",
+        "AI_MAN_QUOTA_PROCESS_MAX_PROCESSES",
+        "AI_MAN_QUOTA_PROCESS_NICE",
+        "AI_MAN_QUOTA_PROCESS_IONICE_CLASS",
+        "AI_MAN_QUOTA_PROCESS_IONICE_LEVEL",
+        "AI_MAN_VALIDATION_PROCESS_LIMITS",
+        "AI_MAN_VALIDATION_PROCESS_MEMORY_MB",
+        "AI_MAN_VALIDATION_PROCESS_CPU_PERCENT",
+        "AI_MAN_VALIDATION_PROCESS_MAX_PROCESSES",
+        "AI_MAN_VALIDATION_PROCESS_NICE",
+        "AI_MAN_VALIDATION_PROCESS_IONICE_CLASS",
+        "AI_MAN_VALIDATION_PROCESS_IONICE_LEVEL",
+    }
+    assert expected <= names
+
+
+def test_config_show_sources_and_filter_report_effective_source(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+        "AI_MAN_QUOTA_SESSION_MAX": "5",
+    })
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "profile_manager.py"),
+            "config",
+            "show",
+            "--json",
+            "--sources",
+            "--filter",
+            "session_max",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert list(payload["settings_by_key"]) == ["quota.session_max"]
+    setting = payload["settings_by_key"]["quota.session_max"]
+    assert setting["value"] == 5
+    assert setting["source"] == "environment"
+    assert setting["source_name"] == "AI_MAN_QUOTA_SESSION_MAX"
+
+
+def test_config_diagnostics_include_health_and_redacted_effective_settings(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+        "AI_MAN_QUOTA_SESSION_MAX": "0",
+        "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "diagnostics", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["config_health"]["ok"] is False
+    assert "AI_MAN_QUOTA_SESSION_MAX" in payload["config_health"]["invalid_settings"]
+    assert payload["effective_config"]["quota.session_max"]["value"] == 24
+    assert "sk-test-secret" not in completed.stdout
+    assert payload["effective_config"]["quota.agy_command"]["value"] == "[redacted]"
+
+
 def test_process_policy_builds_systemd_scope_command(monkeypatch):
     from cli_profile_manager import process_policy
 

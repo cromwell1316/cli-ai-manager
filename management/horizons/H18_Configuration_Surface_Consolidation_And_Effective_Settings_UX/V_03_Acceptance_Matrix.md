@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Config inventory | Planned |
-| Central registry | Planned |
-| Typed parsing | Planned |
-| Source tracking | Planned |
-| Redacted display | Planned |
-| `config show --sources` | Planned |
-| Diagnostics integration | Planned |
-| Legacy env compatibility | Planned |
+| Config inventory | Implemented |
+| Central registry | Implemented |
+| Typed parsing | Implemented |
+| Source tracking | Implemented |
+| Redacted display | Implemented |
+| `config show --sources` | Implemented |
+| Diagnostics integration | Implemented |
+| Legacy env compatibility | Implemented |

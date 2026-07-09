@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Verification
 
@@ -14,3 +14,9 @@ Status: planned.
 - JSON output is stable.
 - Diagnostics include config health.
 - Legacy environment variables continue working.
+
+## Verification Evidence
+
+`config show --json --sources --filter session_max` is covered by tests and
+reports the effective value, source type, and source environment name.
+Diagnostics expose `config_health` and redacted `effective_config`.

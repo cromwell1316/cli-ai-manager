@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -23,3 +23,12 @@ Expose effective configuration to users and scripts.
 - Users can see effective values and sources.
 - JSON output is stable enough for tests.
 - Redacted settings remain redacted in every output mode.
+
+## Implementation Evidence
+
+- `profile_manager.py config show --json` now exposes `settings`,
+  `settings_by_key`, and `config_health`.
+- `profile_manager.py config show --sources` prints effective setting sources
+  in text mode.
+- `profile_manager.py config show --filter <text>` filters by key, env name,
+  category, or description.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,12 @@ Inventory all settings and define their central registry entries.
 - Every existing config knob has a registry entry or a documented exclusion.
 - Type conversion and fallback behavior are consistent.
 - Secret-like settings have display redaction.
+
+## Implementation Evidence
+
+- `CONFIG_REGISTRY` covers path, sync, interactive quota, runtime service,
+  audit, quota, launch process, quota process, and validation process settings.
+- Each registered setting defines type, default, env aliases, category,
+  validation bounds, redaction behavior, and description.
+- Secret-like quota command overrides are redacted in effective settings and
+  diagnostics.

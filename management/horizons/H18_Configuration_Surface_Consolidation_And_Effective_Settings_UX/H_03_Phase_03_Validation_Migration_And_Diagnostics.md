@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,11 @@ configuration problems through diagnostics.
 - Invalid config is reported clearly.
 - One-shot and service-backed paths agree on effective settings.
 - Diagnostics include redacted config health.
+
+## Implementation Evidence
+
+- Registry parsing reports invalid bool, integer, float, enum, and bounded
+  values through warnings.
+- Diagnostics include `config_health` and `effective_config` from the registry.
+- Legacy `profile_roots`, `quota`, `process_limits`, and `warnings` fields stay
+  available for one-shot and service-backed read-only command paths.

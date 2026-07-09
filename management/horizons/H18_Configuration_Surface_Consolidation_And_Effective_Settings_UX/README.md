@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H18_Configuration_Surface_Consolidation_And
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -25,6 +25,14 @@ Make configuration discoverable, validated, source-aware, and safe to display.
 - Do not require a global system config file.
 - Do not expose secrets through config display.
 - Do not break existing environment variables without migration aliases.
+
+## Implementation Evidence
+
+- Added a central typed registry in `cli_profile_manager/config.py`.
+- Extended `config show` with JSON settings, source information, and filtering.
+- Added diagnostics `config_health` and redacted effective settings.
+- Preserved legacy environment variable names and existing JSON compatibility
+  fields.
 
 ## Files
 

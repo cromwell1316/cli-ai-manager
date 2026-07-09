@@ -140,8 +140,10 @@ def diagnostics_payload(
     from .process_policy import diagnostics_payload as process_policy_diagnostics
     from .runtime_service import service_status
     from .safety import command_inventory
+    from .config import config_health_payload
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
+    config_health = config_health_payload()
     payload = {
         "ok": True,
         "generated_at": int(time.time()),
@@ -160,6 +162,8 @@ def diagnostics_payload(
         "safety_policy": {
             "commands": command_inventory(),
         },
+        "config_health": config_health["health"],
+        "effective_config": config_health["settings"],
         "service_runtime": service_status(),
         "quota_runtime": quota_runtime_snapshot(tool_key),
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
