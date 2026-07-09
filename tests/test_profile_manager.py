@@ -216,12 +216,12 @@ def test_agy_status_uses_recent_auth_log_when_google_account_is_placeholder(monk
 
 def test_command_snapshot_reuses_profile_discovery_and_status(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
-    import cli_profile_manager.cli as cli
+    import cli_profile_manager.operations as operations
 
     calls = []
 
-    monkeypatch.setattr(cli, "core_get_occupied_profiles", lambda tool: calls.append(tool) or [1])
-    monkeypatch.setattr(cli, "get_profile_status", lambda tool, n, metadata, account_email_provider=None: {
+    monkeypatch.setattr(operations, "get_occupied_profiles", lambda tool: calls.append(tool) or [1])
+    monkeypatch.setattr(operations, "get_profile_status", lambda tool, n, metadata, account_email_provider=None: {
         "num": n,
         "profile": f"p{n}",
         "email": "(no login)",
@@ -244,14 +244,14 @@ def test_command_snapshot_reuses_profile_discovery_and_status(monkeypatch, tmp_p
 
 def test_command_snapshot_reuses_agy_account_lookup(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
-    import cli_profile_manager.cli as cli
+    import cli_profile_manager.operations as operations
 
     token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"
     write_json(token, {"refresh_token": "r"})
     calls = []
 
     monkeypatch.setattr(
-        cli,
+        operations,
         "account_email_from_google_accounts",
         lambda home: calls.append(home) or "agy@example.com",
     )
@@ -479,9 +479,9 @@ def test_status_payload_can_include_quota_without_real_cli(monkeypatch, tmp_path
             },
         }
 
-    import cli_profile_manager.cli as cli
+    import cli_profile_manager.operations as operations
 
-    monkeypatch.setattr(cli, "core_quota_payload", fake_quota)
+    monkeypatch.setattr(operations, "core_quota_payload", fake_quota)
 
     status = pm.status_payload_with_quota("codex", 1, {})
 
@@ -2461,6 +2461,7 @@ def test_service_backed_output_matches_one_shot(monkeypatch, tmp_path):
         payload = json.loads(json.dumps(payload))
         if "audit" in payload:
             payload["audit"].pop("record_count", None)
+        payload.pop("generated_at", None)
         return payload
 
     start = subprocess.run(

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -23,3 +23,11 @@ Verify behavior after migration and remove dead coupling.
 - Full test suite passes.
 - Compatibility imports keep working.
 - Dead code and duplicate helpers are removed safely.
+
+## Evidence
+
+- `python3 -m pytest` passes with 116 tests.
+- `python3 -m py_compile` passes for `operations.py`, `cli.py`,
+  `interactive.py`, and `terminal_rendering.py`.
+- Import hot-path tests verify `config show --json` does not import quota or
+  interactive modules.

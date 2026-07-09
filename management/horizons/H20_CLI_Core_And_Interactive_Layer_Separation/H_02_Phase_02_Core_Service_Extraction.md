@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,12 @@ Extract reusable operation APIs from CLI-oriented code.
 - Core operations can be called from CLI and interactive code.
 - Operation modules avoid direct terminal rendering.
 - Tests cover operation results independently of argparse.
+
+## Evidence
+
+- `cli_profile_manager.operations` contains operation APIs for profile status,
+  list, quota, import, export, label, clear, sync, config, audit, runtime
+  service, and launch preparation.
+- The operation module does not import terminal rendering or interactive UI.
+- Quota dependencies are lazy-loaded so config/help hot paths do not import the
+  quota module.

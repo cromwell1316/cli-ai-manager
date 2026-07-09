@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -22,3 +22,11 @@ invalidation need a cleaner operation boundary.
 
 Introduce core operation modules and result envelopes, then migrate CLI and
 interactive layers to call the same operation APIs.
+
+## Outcome
+
+The shared operation boundary now lives in `cli_profile_manager.operations`.
+CLI handlers delegate command behavior to operations and retain output
+formatting, safety prompts, and audit wiring. Interactive workflows use the
+same operation helpers for profile, credential, sync, quota, and metadata
+behavior.

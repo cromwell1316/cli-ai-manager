@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Boundary inventory | Planned |
-| Operation result model | Planned |
-| Core operation modules | Planned |
-| CLI migration | Planned |
-| Interactive migration | Planned |
-| Compatibility exports verified | Planned |
-| Import graph cleanup | Planned |
-| Runtime benchmark check | Planned |
+| Boundary inventory | Implemented |
+| Operation result model | Implemented |
+| Core operation modules | Implemented |
+| CLI migration | Implemented |
+| Interactive migration | Implemented |
+| Compatibility exports verified | Implemented |
+| Import graph cleanup | Implemented |
+| Runtime benchmark check | Verified through full command test suite |

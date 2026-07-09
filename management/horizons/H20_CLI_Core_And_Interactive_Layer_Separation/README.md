@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -26,6 +26,19 @@ behavior can be reused, tested, audited, and rendered consistently.
 - Do not rewrite the application architecture from scratch.
 - Do not change public command names as part of this horizon.
 - Do not remove compatibility exports without a migration plan.
+
+## Implementation Summary
+
+- Added `cli_profile_manager.operations` as the core operation layer.
+- Moved profile status, list/status/quota payloads, credential import/export,
+  label, clear, sync, config, audit, runtime service, and launch preparation
+  behavior behind operation APIs.
+- Kept CLI command handlers as parsing/formatting/policy wrappers.
+- Migrated interactive imports away from broad CLI business helpers toward
+  operation APIs while preserving color constants and CLI launch handoff.
+- Added operation result envelopes for success, validation error, not found, no
+  token, runtime failure, and cancellation.
+- Preserved lazy quota imports for `--help` and `config show` hot paths.
 
 ## Files
 

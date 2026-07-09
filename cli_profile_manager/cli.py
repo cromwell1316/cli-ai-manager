@@ -66,6 +66,7 @@ core_subprocess = None
 core_runtime_service = None
 core_audit = None
 core_safety = None
+core_operations = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -207,6 +208,14 @@ def _safety():
 
         core_safety = module
     return core_safety
+
+def _operations():
+    global core_operations
+    if core_operations is None:
+        from cli_profile_manager import operations as module
+
+        core_operations = module
+    return core_operations
 
 def safety_decision(operation, command=None, tool=None, profile=None, target=None, facts=None, yes=False, dry_run=False):
     descriptor = _safety().operation_descriptor(
@@ -384,107 +393,16 @@ class CommandSnapshot:
 
 
 def command_snapshot():
-    return CommandSnapshot()
+    return _operations().command_snapshot()
 
 
 def get_profile_status(tool_key, n, metadata, account_email_provider=None):
-    tool = TOOLS[tool_key]
-    profile_home = os.path.join(tool["base_dir"], f"p{n}")
-    cred_path = os.path.join(profile_home, tool["cred_file"])
-    account_lookup = account_email_provider or account_email_from_google_accounts
-
-    email = "(no login)"
-    has_token = False
-    token_state = "missing"
-    credential_source = None
-    account = None
-    warnings = []
-
-    if tool_key == "agy":
-        if os.name == "nt":
-            win_cred_path = agy_windows_credential_path(n, tool["base_dir"])
-            if os.path.exists(win_cred_path):
-                try:
-                    _, account = decode_windows_agy_credential(win_cred_path)
-                    has_token = True
-                    token_state = "valid"
-                    credential_source = "windows-backup"
-                    email = account or account_lookup(profile_home) or "logged in"
-                except Exception as e:
-                    token_state = "invalid"
-                    credential_source = "windows-backup"
-                    warnings.append(str(e))
-                    email = f"invalid token: {e}"
-        elif os.path.exists(cred_path):
-            try:
-                read_wsl_agy_oauth(cred_path)
-                has_token = True
-                token_state = "valid"
-                credential_source = "wsl-oauth"
-                account = account_lookup(profile_home)
-                email = account or "logged in"
-            except Exception as e:
-                token_state = "invalid"
-                credential_source = "wsl-oauth"
-                warnings.append(str(e))
-                email = f"invalid token: {e}"
-        else:
-            read_agy_cli_token = getattr(_agy_credentials(), "read_agy_cli_token", None)
-            if read_agy_cli_token is not None:
-                try:
-                    read_agy_cli_token(profile_home)
-                    has_token = True
-                    token_state = "valid"
-                    credential_source = "agy-cli-token"
-                    account = account_lookup(profile_home)
-                    email = account or "logged in"
-                except FileNotFoundError:
-                    pass
-                except Exception as e:
-                    token_state = "invalid"
-                    credential_source = "agy-cli-token"
-                    warnings.append(str(e))
-                    email = f"invalid token: {e}"
-    elif os.path.exists(cred_path):
-        has_token = True
-        token_state = "present"
-        credential_source = "codex-auth" if tool_key == "codex" else "claude-credentials"
-
-    if tool_key == "codex":
-        if has_token:
-            try:
-                email = _codex_credentials().account_from_auth(cred_path)
-                token_state = "valid"
-                account = email
-            except Exception as e:
-                token_state = "invalid"
-                warnings.append(str(e))
-                email = "logged in"
-
-    elif tool_key == "claude":
-        if has_token:
-            try:
-                email = _claude_credentials().account_summary(cred_path)
-                token_state = "valid"
-                account = email
-            except Exception as e:
-                token_state = "invalid"
-                warnings.append(str(e))
-                email = "Logged in"
-
-    label = metadata.get(tool_key, {}).get(f"p{n}", {}).get("label", "")
-    return {
-        "num": n,
-        "profile": f"p{n}",
-        "email": email,
-        "has_token": has_token,
-        "token_state": token_state,
-        "credential_source": credential_source,
-        "account": account or (email if has_token and not email.startswith("invalid token:") else None),
-        "warnings": warnings,
-        "label": label,
-        "home": profile_home
-    }
+    return _operations().get_profile_status(
+        tool_key,
+        n,
+        metadata,
+        account_email_provider=account_email_provider,
+    )
 
 def _status_payload(tool_key, n, metadata, occupied_profiles=None, account_email_provider=None):
     occupied_profiles = get_occupied_profiles(tool_key) if occupied_profiles is None else occupied_profiles
@@ -494,56 +412,19 @@ def _status_payload(tool_key, n, metadata, occupied_profiles=None, account_email
 
 
 def status_payload(tool_key, n, metadata=None, snapshot=None):
-    if snapshot is not None:
-        return snapshot.status(tool_key, n)
-    metadata = metadata if metadata is not None else load_metadata()
-    return _status_payload(tool_key, n, metadata)
+    return _operations().status_payload(tool_key, n, metadata, snapshot)
 
 def quota_payload(tool_key, n, timeout_seconds=None, runner=None):
-    tool = TOOLS[tool_key]
-    home = profile_home(tool_key, n)
-    command = [tool["cmd"]]
-    timeout = timeout_seconds if timeout_seconds is not None else 20
-    kwargs = {"timeout_seconds": timeout}
-    if runner is None:
-        runner = _persistent_quota_runner()
-    if runner is not None:
-        kwargs["runner"] = runner
-    try:
-        return _quota_payload_func()(
-            tool_key,
-            f"p{n}",
-            command,
-            make_tool_env(tool_key, n),
-            home,
-            **kwargs,
-        )
-    except TypeError as e:
-        if "unexpected keyword argument 'runner'" not in str(e):
-            raise
-        kwargs.pop("runner", None)
-        return _quota_payload_func()(
-            tool_key,
-            f"p{n}",
-            command,
-            make_tool_env(tool_key, n),
-            home,
-            **kwargs,
-        )
+    return _operations().quota_payload(tool_key, n, timeout_seconds, runner)
 
 def status_payload_with_quota(tool_key, n, metadata=None, timeout_seconds=None, snapshot=None):
-    if snapshot is not None:
-        return snapshot.status_with_quota(tool_key, n, timeout_seconds)
-    status = status_payload(tool_key, n, metadata)
-    if status["has_token"]:
-        status["quota"] = quota_payload(tool_key, n, timeout_seconds)["quota"]
-    else:
-        status["quota"] = {
-            "state": "no_token",
-            "limits": {},
-            "warnings": ["profile has no token"],
-        }
-    return status
+    return _operations().status_payload_with_quota(
+        tool_key,
+        n,
+        metadata=metadata,
+        timeout_seconds=timeout_seconds,
+        snapshot=snapshot,
+    )
 
 def print_error(message):
     print(f"Error: {message}", file=sys.stderr)
@@ -744,12 +625,11 @@ def print_status_table(tool_key, statuses):
         print(line)
 
 def cmd_config_show(args):
-    from cli_profile_manager.config import effective_config_payload
-
-    payload = effective_config_payload(
+    result = _operations().config_show_operation(
         include_sources=getattr(args, "sources", False) or getattr(args, "json", False),
         filter_text=getattr(args, "filter", None),
     )
+    payload = result.payload
     if args.json:
         print_json_payload(payload)
         return EXIT_OK
@@ -784,17 +664,9 @@ def cmd_config_show(args):
     return EXIT_OK
 
 def cmd_list(args):
-    snapshot = command_snapshot()
-    profiles = snapshot.display_profiles(args.tool)
-    if args.quota:
-        statuses = [snapshot.status_with_quota(args.tool, n, args.timeout) for n in profiles]
-    else:
-        statuses = [snapshot.status(args.tool, n) for n in profiles]
-    payload = {
-        "tool": args.tool,
-        "next_profile": f"p{snapshot.first_free_profile(args.tool)}",
-        "profiles": statuses,
-    }
+    result = _operations().list_profiles_operation(args.tool, args.quota, args.timeout)
+    payload = result.payload
+    statuses = payload["profiles"]
     if args.json:
         print_json_payload(payload)
     else:
@@ -804,19 +676,14 @@ def cmd_list(args):
     return EXIT_OK
 
 def cmd_status(args):
-    try:
-        n = parse_profile(args.profile)
-    except ValueError as e:
+    result = _operations().profile_status_operation(args.tool, args.profile, args.quota, args.timeout)
+    if not result.ok:
         if args.json:
-            print_json_error(str(e), EXIT_USAGE, "usage_error")
+            print_json_payload(result.json_error_payload())
         else:
-            print_error(str(e))
-        return EXIT_USAGE
-    snapshot = command_snapshot()
-    if args.quota:
-        status = snapshot.status_with_quota(args.tool, n, args.timeout)
-    else:
-        status = snapshot.status(args.tool, n)
+            print_error(result.message)
+        return result.exit_code
+    status = result.payload
     if args.json:
         print_json_payload(status)
     else:
@@ -824,27 +691,18 @@ def cmd_status(args):
     return EXIT_OK
 
 def cmd_quota(args):
-    try:
-        n = parse_profile(args.profile)
-    except ValueError as e:
+    result = _operations().profile_quota_operation(args.tool, args.profile, args.timeout)
+    if not result.ok:
         if args.json:
-            print_json_error(str(e), EXIT_USAGE, "usage_error")
+            print_json_payload(result.json_error_payload())
         else:
-            print_error(str(e))
-        return EXIT_USAGE
-    snapshot = command_snapshot()
-    status = snapshot.status(args.tool, n)
-    if not status["has_token"]:
-        message = f"profile p{n} has no token; use login or import first"
-        if args.json:
-            print_json_error(message, EXIT_NO_TOKEN, "no_token")
-        else:
-            print_error(message)
-        return EXIT_NO_TOKEN
-    payload = quota_payload(args.tool, n, args.timeout)
+            print_error(result.message)
+        return result.exit_code
+    payload = result.payload
     if args.json:
         print_json_payload(payload)
     else:
+        n = parse_profile(args.profile)
         state = payload["quota"].get("state", "unknown")
         print(f"{args.tool} p{n} quota: {quota_summary({'quota': payload['quota']}) or state}")
         for warning in payload["quota"].get("warnings", []):
@@ -1019,23 +877,7 @@ def cmd_login(args):
     return run_cli_tool(args.tool, n, [])
 
 def import_credential_file(tool_key, cred_file, profile_num=None):
-    tool = TOOLS[tool_key]
-    source = normalize_credential_path(tool_key, cred_file)
-    if not os.path.exists(source):
-        raise FileNotFoundError(f"file '{source}' not found")
-    n = profile_num if profile_num is not None else first_free_profile(tool_key)
-    if n <= 0:
-        raise ValueError("profile number must be positive")
-    dest_dir = profile_home(tool_key, n)
-    dest_file = credential_path(tool_key, n)
-    if tool_key == "agy":
-        dest_file = import_windows_agy_credential(source, n)
-    else:
-        ensure_parent(dest_file)
-        tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        _shutil().copy2(source, tmp_path)
-        os.replace(tmp_path, dest_file)
-    return n, dest_file
+    return _operations().import_credential_file(tool_key, cred_file, profile_num)
 
 def cmd_import(args):
     _audit().record("credential", "attempted", command="import", tool=args.tool, details={"dry_run": args.dry_run, "path": args.path})
@@ -1048,43 +890,17 @@ def cmd_import(args):
             print_error(str(e))
         return EXIT_USAGE
     if args.dry_run:
-        try:
-            source = normalize_credential_path(args.tool, args.path)
-            if not os.path.exists(source):
-                raise FileNotFoundError(f"file '{source}' not found")
-            import_num = n if n is not None else first_free_profile(args.tool)
-            if import_num <= 0:
-                raise ValueError("profile number must be positive")
-            if args.tool == "agy":
-                decode_windows_agy_credential(source)
-            dest_file = credential_path(args.tool, import_num)
-        except FileNotFoundError as e:
+        result = _operations().import_credential_operation(args.tool, args.path, args.profile, dry_run=True)
+        if not result.ok:
             if args.json:
-                print_json_error(str(e), EXIT_NOT_FOUND, "not_found")
+                print_json_payload(result.json_error_payload())
             else:
-                print_error(str(e))
-            return EXIT_NOT_FOUND
-        except ValueError as e:
-            if args.json:
-                print_json_error(str(e), EXIT_USAGE, "usage_error")
-            else:
-                print_error(str(e))
-            return EXIT_USAGE
-        except Exception as e:
-            if args.json:
-                print_json_error(f"import dry-run failed: {e}", EXIT_RUNTIME, "runtime_error")
-            else:
-                print_error(f"import dry-run failed: {e}")
-            return EXIT_RUNTIME
-        payload = {
-            "ok": True,
-            "dry_run": True,
-            "tool": args.tool,
-            "profile": f"p{import_num}",
-            "source": source,
-            "destination": dest_file,
-            "would_import": True,
-        }
+                print_error(result.message)
+            return result.exit_code
+        payload = result.payload
+        import_num = parse_profile(payload["profile"])
+        source = payload["source"]
+        dest_file = payload["destination"]
         decision = safety_decision(
             "import",
             command="import",
@@ -1110,20 +926,15 @@ def cmd_import(args):
         target=credential_path(args.tool, import_num),
         facts={"source": source, "destination": credential_path(args.tool, import_num)},
     )
-    try:
-        imported_num, dest_file = import_credential_file(args.tool, args.path, n)
-    except FileNotFoundError as e:
+    result = _operations().import_credential_operation(args.tool, args.path, args.profile, dry_run=False)
+    if not result.ok:
         if args.json:
-            print_json_error(str(e), EXIT_NOT_FOUND, "not_found")
+            print_json_payload(result.json_error_payload())
         else:
-            print_error(str(e))
-        return EXIT_NOT_FOUND
-    except Exception as e:
-        if args.json:
-            print_json_error(f"import failed: {e}", EXIT_RUNTIME, "runtime_error")
-        else:
-            print_error(f"import failed: {e}")
-        return EXIT_RUNTIME
+            print_error(result.message)
+        return result.exit_code
+    imported_num = parse_profile(result.payload["profile"])
+    dest_file = result.payload["destination"]
     if args.json:
         print_json_payload({
             "ok": True,
@@ -1142,69 +953,28 @@ def find_windows_user():
 
 
 def default_export_dir():
-    win_user = find_windows_user()
-    for candidate in (
-        f"/mnt/c/Users/{win_user}/Downloads",
-        f"/mnt/c/Users/{win_user}/Desktop",
-        "/mnt/c",
-    ):
-        if os.path.exists(candidate):
-            return candidate
-    return os.getcwd()
+    return _operations().default_export_dir()
 
 def resolve_export_destination(tool_key, profile_num, to_path=None):
-    if to_path:
-        to_path = os.path.expanduser(to_path)
-        if os.path.isdir(to_path):
-            export_dir = to_path
-            dest_file = None
-        else:
-            export_dir = os.path.dirname(to_path) or "."
-            dest_file = to_path
-    else:
-        export_dir = default_export_dir()
-        dest_file = None
-    if dest_file is None:
-        if tool_key == "agy":
-            dest_file = os.path.join(export_dir, f"cred-p{profile_num}-exported.json")
-        else:
-            dest_file = os.path.join(export_dir, f"{tool_key}-p{profile_num}-exported.json")
-    return export_dir, dest_file
+    return _operations().resolve_export_destination(tool_key, profile_num, to_path)
 
 def export_credential_file(tool_key, profile_num, to_path=None):
-    status = status_payload(tool_key, profile_num)
-    if not status["has_token"]:
-        raise PermissionError(f"profile p{profile_num} has no token to export")
-    src_file = credential_path(tool_key, profile_num)
-    export_dir, dest_file = resolve_export_destination(tool_key, profile_num, to_path)
-    os.makedirs(export_dir, exist_ok=True)
-    if tool_key == "agy":
-        export_wsl_agy_credential(profile_num, dest_file)
-    else:
-        ensure_parent(dest_file)
-        tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        _shutil().copy2(src_file, tmp_path)
-        os.replace(tmp_path, dest_file)
-    return dest_file
+    return _operations().export_credential_file(tool_key, profile_num, to_path)
 
 def cmd_export(args):
     _audit().record("credential", "attempted", command="export", tool=args.tool, profile=args.profile, details={"dry_run": args.dry_run, "to": args.to})
     try:
         n = parse_profile(args.profile)
         if args.dry_run:
-            status = status_payload(args.tool, n)
-            if not status["has_token"]:
-                raise PermissionError(f"profile p{n} has no token to export")
-            _, dest_file = resolve_export_destination(args.tool, n, args.to)
-            payload = {
-                "ok": True,
-                "dry_run": True,
-                "tool": args.tool,
-                "profile": f"p{n}",
-                "source": credential_path(args.tool, n),
-                "destination": dest_file,
-                "would_export": True,
-            }
+            result = _operations().export_credential_operation(args.tool, args.profile, args.to, dry_run=True)
+            if not result.ok:
+                if args.json:
+                    print_json_payload(result.json_error_payload())
+                else:
+                    print_error(result.message)
+                return result.exit_code
+            payload = result.payload
+            dest_file = payload["destination"]
             decision = safety_decision(
                 "export",
                 command="export",
@@ -1229,7 +999,14 @@ def cmd_export(args):
             target=planned_dest,
             facts={"source": credential_path(args.tool, n), "destination": planned_dest},
         )
-        dest_file = export_credential_file(args.tool, n, args.to)
+        result = _operations().export_credential_operation(args.tool, args.profile, args.to, dry_run=False)
+        if not result.ok:
+            if result.status == _operations().RESULT_NO_TOKEN:
+                raise PermissionError(result.message)
+            if result.status == _operations().RESULT_VALIDATION_ERROR:
+                raise ValueError(result.message)
+            raise RuntimeError(result.message)
+        dest_file = result.payload["destination"]
     except ValueError as e:
         if args.json:
             print_json_error(str(e), EXIT_USAGE, "usage_error")
@@ -1278,7 +1055,13 @@ def cmd_label(args):
         target=profile_home(args.tool, n),
         facts={"label": args.label},
     )
-    label_profile(args.tool, n, args.label)
+    result = _operations().label_profile_operation(args.tool, args.profile, args.label)
+    if not result.ok:
+        if result.status == _operations().RESULT_VALIDATION_ERROR:
+            print_error(result.message)
+            return EXIT_USAGE
+        print_error(result.message)
+        return EXIT_RUNTIME
     _audit().record("profile", "completed", command="label", tool=args.tool, profile=f"p{n}", result="succeeded", details={"label": args.label})
     print(f"Label set for {args.tool} p{n}: {args.label}")
     return EXIT_OK
@@ -1317,13 +1100,24 @@ def cmd_clear(args):
             print_error(decision["message"])
         return EXIT_USAGE
     try:
-        cleared_home = clear_profile_data(args.tool, n)
+        result = _operations().clear_profile_operation(args.tool, args.profile)
+        if not result.ok:
+            if result.status == _operations().RESULT_VALIDATION_ERROR:
+                raise ValueError(result.message)
+            raise RuntimeError(result.message)
+        cleared_home = result.payload["cleared"]
     except ValueError as e:
         if getattr(args, "json", False):
             print_json_error(str(e), EXIT_USAGE, "usage_error")
         else:
             print_error(str(e))
         return EXIT_USAGE
+    except Exception as e:
+        if getattr(args, "json", False):
+            print_json_error(str(e), EXIT_RUNTIME, "runtime_error")
+        else:
+            print_error(str(e))
+        return EXIT_RUNTIME
     _audit().record("profile", "completed", command="clear", tool=args.tool, profile=f"p{n}", result="succeeded", details={"home": cleared_home})
     if getattr(args, "json", False):
         print_json_payload({
@@ -1338,14 +1132,7 @@ def cmd_clear(args):
     return EXIT_OK
 
 def clear_profile_data(tool_key, n):
-    home = profile_home(tool_key, n)
-    base = os.path.abspath(TOOLS[tool_key]["base_dir"])
-    target = os.path.abspath(home)
-    if not target.startswith(base + os.sep):
-        raise ValueError(f"refusing to clear unsafe path: {target}")
-    if os.path.exists(home):
-        _shutil().rmtree(home)
-    return home
+    return _operations().clear_profile_data(tool_key, n)
 
 def resolve_sync_bases(direction):
     return core_resolve_sync_bases(direction)
@@ -1374,8 +1161,7 @@ def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=Fa
     return _sync_module().sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
 
 def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
-    src_base, dst_base = resolve_sync_bases(direction)
-    return _sync_module().sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
+    return _operations().sync_profiles_noninteractive(direction, mode, dry_run, yes)
 
 def cmd_sync(args):
     operation = "sync-hard" if args.mode == "hard" else "sync-soft"
@@ -1411,26 +1197,14 @@ def cmd_sync(args):
         else:
             print_error(decision["message"])
         return EXIT_USAGE
-    try:
-        result = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
-    except PermissionError as e:
+    operation_result = _operations().sync_profiles_operation(args.source, args.mode, args.dry_run, args.yes)
+    if not operation_result.ok:
         if args.json:
-            print_json_error(str(e), EXIT_USAGE, "usage_error")
+            print_json_payload(operation_result.json_error_payload())
         else:
-            print_error(str(e))
-        return EXIT_USAGE
-    except FileNotFoundError as e:
-        if args.json:
-            print_json_error(str(e), EXIT_NOT_FOUND, "not_found")
-        else:
-            print_error(str(e))
-        return EXIT_NOT_FOUND
-    except Exception as e:
-        if args.json:
-            print_json_error(f"sync failed: {e}", EXIT_RUNTIME, "runtime_error")
-        else:
-            print_error(f"sync failed: {e}")
-        return EXIT_RUNTIME
+            print_error(operation_result.message)
+        return operation_result.exit_code
+    result = operation_result.payload
     if args.json:
         result["safety"] = _safety().payload(decision)
         print_json_payload(result)
@@ -1452,7 +1226,7 @@ def cmd_audit(args):
     audit = _audit()
     action = args.audit_action
     if action == "status":
-        payload = audit.status_payload()
+        payload = _operations().audit_operation("status").payload
         if args.json:
             print_json_payload(payload)
         else:
@@ -1460,7 +1234,8 @@ def cmd_audit(args):
             print(f"Path: {payload['path']}")
         return EXIT_OK
     if action == "list":
-        events = audit.query_events(
+        result = _operations().audit_operation(
+            "list",
             limit=args.limit,
             category=args.category,
             command=args.command_name,
@@ -1471,22 +1246,24 @@ def cmd_audit(args):
             since=args.since,
             until=args.until,
         )
+        events = result.payload["events"]
         if args.json:
-            print_json_payload({"ok": True, "events": events})
+            print_json_payload(result.payload)
         else:
             for event in events:
                 print(f"{event['timestamp']} {event['category']}.{event['action']} {event.get('command') or '-'} {event.get('result') or '-'} {event['event_id']}")
         return EXIT_OK
     if action == "show":
-        events = audit.show_events(args.identifier)
+        result = _operations().audit_operation("show", identifier=args.identifier)
+        events = result.payload["events"]
         if args.json:
-            print_json_payload({"ok": True, "events": events})
+            print_json_payload(result.payload)
         else:
             for event in events:
                 print(json.dumps(event, indent=2))
         return EXIT_OK if events else EXIT_NOT_FOUND
     if action == "export":
-        events = audit.query_events(limit=None)
+        events = _operations().audit_operation("export").payload["events"]
         if args.format == "json":
             print_json_payload({"ok": True, "events": events})
         else:
@@ -1515,7 +1292,7 @@ def cmd_audit(args):
             else:
                 print_error(decision["message"])
             return EXIT_USAGE
-        removed = audit.purge_all()
+        removed = _operations().audit_operation("purge").payload["removed"]
         payload = {"ok": True, "removed": removed, "safety": _safety().payload(decision)}
         print_json_payload(payload) if args.json else print(f"Purged {removed} audit events")
         return EXIT_OK
@@ -1526,7 +1303,7 @@ def cmd_audit(args):
             target=str(audit.audit_dir()),
             facts={"days": args.days, "max_bytes": args.max_bytes, "backend": audit.backend_name()},
         )
-        result = audit.compact_retention(args.days, args.max_bytes)
+        result = _operations().audit_operation("compact", days=args.days, max_bytes=args.max_bytes).payload
         payload = {"ok": True, **result, "safety": _safety().payload(decision)}
         print_json_payload(payload) if args.json else print(f"Removed {result['removed']} audit events; kept {result['kept']}")
         return EXIT_OK
@@ -1547,13 +1324,7 @@ def cmd_service(args):
             print_error(f"service failed: {e}")
             return EXIT_RUNTIME
     if action == "status":
-        payload = {"ok": True, "service": runtime.service_status()}
-        try:
-            health = runtime.service_health() if payload["service"]["running"] else None
-        except Exception:
-            health = None
-        if health:
-            payload["service"]["health"] = health
+        payload = _operations().runtime_service_operation("status").payload
         if args.json:
             print_json_payload(payload)
         else:
@@ -1571,7 +1342,11 @@ def cmd_service(args):
             target=str(runtime.socket_path()),
             facts={"action": "start", "status": runtime.service_status()},
         )
-        payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        result = _operations().runtime_service_operation(
+            "start",
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"),
+        )
+        payload = result.payload["service"]
         _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "start", "running": payload.get("running")})
         if args.json:
             print_json_payload({"ok": bool(payload.get("ok")), "service": payload, "safety": _safety().payload(decision)})
@@ -1585,7 +1360,7 @@ def cmd_service(args):
             target=str(runtime.socket_path()),
             facts={"action": "stop", "status": runtime.service_status()},
         )
-        payload = runtime.stop_service()
+        payload = _operations().runtime_service_operation("stop").payload["service"]
         _audit().record("runtime_service", "completed", command="service", result="succeeded", details={"action": "stop", "stopped": payload.get("stopped")})
         if args.json:
             print_json_payload({"ok": True, "service": payload, "safety": _safety().payload(decision)})
@@ -1599,8 +1374,11 @@ def cmd_service(args):
             target=str(runtime.socket_path()),
             facts={"action": "restart", "status": runtime.service_status()},
         )
-        runtime.stop_service()
-        payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        result = _operations().runtime_service_operation(
+            "restart",
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"),
+        )
+        payload = result.payload["service"]
         _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "restart", "running": payload.get("running")})
         if args.json:
             print_json_payload({"ok": bool(payload.get("ok")), "service": payload, "safety": _safety().payload(decision)})

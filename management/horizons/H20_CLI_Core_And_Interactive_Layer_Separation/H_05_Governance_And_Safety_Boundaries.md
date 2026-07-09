@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

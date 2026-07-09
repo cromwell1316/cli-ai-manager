@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H20_CLI_Core_And_Interactive_Layer_Separati
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -25,3 +25,12 @@ interactive workflow orchestration.
 - Boundary map is documented.
 - Operation result model is stable enough for migration.
 - Compatibility risks are known.
+
+## Evidence
+
+- `OperationResult` and result constructors are defined in
+  `cli_profile_manager.operations`.
+- Compatibility exports remain available through `profile_manager.py` and
+  `cli_profile_manager.cli`.
+- CLI wrappers still own argparse, output formatting, safety decisions, and
+  audit event placement.
