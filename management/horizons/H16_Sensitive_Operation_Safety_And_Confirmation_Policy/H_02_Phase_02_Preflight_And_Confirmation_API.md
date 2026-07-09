@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -26,3 +26,10 @@ results.
 - Mutating commands can use the same confirmation path.
 - Dry-run output is consistent across CLI and JSON modes.
 - Cancellation is not treated as an internal error.
+
+## Evidence
+
+- `safety.operation_descriptor()` and `safety.evaluate()` provide shared
+  preflight and confirmation decisions.
+- Refusals return structured `confirmation_required` JSON with exit code `2`.
+- `safety.audit_decision()` emits H14 safety events for decisions.

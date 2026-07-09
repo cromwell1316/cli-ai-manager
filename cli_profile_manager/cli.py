@@ -65,6 +65,7 @@ core_shlex = None
 core_subprocess = None
 core_runtime_service = None
 core_audit = None
+core_safety = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -198,6 +199,27 @@ def _audit():
 
         core_audit = module
     return core_audit
+
+def _safety():
+    global core_safety
+    if core_safety is None:
+        from cli_profile_manager import safety as module
+
+        core_safety = module
+    return core_safety
+
+def safety_decision(operation, command=None, tool=None, profile=None, target=None, facts=None, yes=False, dry_run=False):
+    descriptor = _safety().operation_descriptor(
+        operation,
+        command=command,
+        tool=tool,
+        profile=profile,
+        target=target,
+        facts=facts,
+    )
+    decision = _safety().evaluate(descriptor, yes=yes, dry_run=dry_run)
+    _safety().audit_decision(_audit(), decision)
+    return decision
 
 def load_metadata():
     return core_load_metadata()
@@ -937,6 +959,15 @@ def cmd_launch(args):
     }
     if args.tool == "agy":
         dry_payload["environment"]["HOME"] = profile_home(args.tool, n)
+    decision = safety_decision(
+        "launch",
+        command="launch",
+        tool=args.tool,
+        profile=f"p{n}",
+        target=profile_home(args.tool, n),
+        facts={"command": dry_payload["command"], "platform": args.platform},
+        dry_run=args.dry_run,
+    )
     snapshot = command_snapshot()
     if n not in snapshot.display_profiles(args.tool):
         message = f"profile p{n} does not exist and is outside visible slots"
@@ -948,6 +979,7 @@ def cmd_launch(args):
     status = snapshot.status(args.tool, n)
     dry_payload["status"] = status
     dry_payload["would_launch"] = status["has_token"]
+    dry_payload["safety"] = _safety().payload(decision)
     if args.dry_run:
         print_json_payload(dry_payload) if args.json else print(" ".join(_shlex().quote(part) for part in dry_payload["command"]))
         return EXIT_OK
@@ -966,6 +998,14 @@ def cmd_login(args):
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
+    safety_decision(
+        "login",
+        command="login",
+        tool=args.tool,
+        profile=f"p{n}",
+        target=profile_home(args.tool, n),
+        facts={"external_command": TOOLS[args.tool]["cmd"]},
+    )
     return run_cli_tool(args.tool, n, [])
 
 def import_credential_file(tool_key, cred_file, profile_num=None):
@@ -1035,11 +1075,31 @@ def cmd_import(args):
             "destination": dest_file,
             "would_import": True,
         }
+        decision = safety_decision(
+            "import",
+            command="import",
+            tool=args.tool,
+            profile=f"p{import_num}",
+            target=dest_file,
+            facts={"source": source, "destination": dest_file},
+            dry_run=True,
+        )
+        payload["safety"] = _safety().payload(decision)
         if args.json:
             print_json_payload(payload)
         else:
             print(f"Would import {args.tool} credential into p{import_num}: {dest_file}")
         return EXIT_OK
+    source = normalize_credential_path(args.tool, args.path)
+    import_num = n if n is not None else first_free_profile(args.tool)
+    decision = safety_decision(
+        "import",
+        command="import",
+        tool=args.tool,
+        profile=f"p{import_num}",
+        target=credential_path(args.tool, import_num),
+        facts={"source": source, "destination": credential_path(args.tool, import_num)},
+    )
     try:
         imported_num, dest_file = import_credential_file(args.tool, args.path, n)
     except FileNotFoundError as e:
@@ -1059,8 +1119,9 @@ def cmd_import(args):
             "ok": True,
             "tool": args.tool,
             "profile": f"p{imported_num}",
-        "destination": dest_file,
-    })
+            "destination": dest_file,
+            "safety": _safety().payload(decision),
+        })
     else:
         print(f"Imported {args.tool} credential into p{imported_num}: {dest_file}")
     _audit().record("credential", "completed", command="import", tool=args.tool, profile=f"p{imported_num}", result="succeeded", details={"destination": dest_file})
@@ -1134,11 +1195,30 @@ def cmd_export(args):
                 "destination": dest_file,
                 "would_export": True,
             }
+            decision = safety_decision(
+                "export",
+                command="export",
+                tool=args.tool,
+                profile=f"p{n}",
+                target=dest_file,
+                facts={"source": credential_path(args.tool, n), "destination": dest_file},
+                dry_run=True,
+            )
+            payload["safety"] = _safety().payload(decision)
             if args.json:
                 print_json_payload(payload)
             else:
                 print(f"Would export {args.tool} p{n}: {dest_file}")
             return EXIT_OK
+        _, planned_dest = resolve_export_destination(args.tool, n, args.to)
+        decision = safety_decision(
+            "export",
+            command="export",
+            tool=args.tool,
+            profile=f"p{n}",
+            target=planned_dest,
+            facts={"source": credential_path(args.tool, n), "destination": planned_dest},
+        )
         dest_file = export_credential_file(args.tool, n, args.to)
     except ValueError as e:
         if args.json:
@@ -1164,6 +1244,7 @@ def cmd_export(args):
             "tool": args.tool,
             "profile": f"p{n}",
             "destination": dest_file,
+            "safety": _safety().payload(decision),
         })
     else:
         print(f"Exported {args.tool} p{n}: {dest_file}")
@@ -1179,6 +1260,14 @@ def cmd_label(args):
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
+    safety_decision(
+        "label",
+        command="label",
+        tool=args.tool,
+        profile=f"p{n}",
+        target=profile_home(args.tool, n),
+        facts={"label": args.label},
+    )
     label_profile(args.tool, n, args.label)
     _audit().record("profile", "completed", command="label", tool=args.tool, profile=f"p{n}", result="succeeded", details={"label": args.label})
     print(f"Label set for {args.tool} p{n}: {args.label}")
@@ -1188,19 +1277,54 @@ def cmd_clear(args):
     try:
         n = parse_profile(args.profile)
     except ValueError as e:
-        print_error(str(e))
+        if getattr(args, "json", False):
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     home = profile_home(args.tool, n)
-    if not args.yes:
-        print_error(f"refusing to clear {home} without --yes")
+    decision = safety_decision(
+        "clear",
+        command="clear",
+        tool=args.tool,
+        profile=f"p{n}",
+        target=home,
+        facts={"exists": os.path.exists(home), "delete_paths": [home] if os.path.exists(home) else []},
+        yes=args.yes,
+    )
+    if not decision["ok"]:
+        if getattr(args, "json", False):
+            print_json_payload({
+                "ok": False,
+                "error": {
+                    "type": "confirmation_required",
+                    "message": decision["message"],
+                    "code": EXIT_USAGE,
+                },
+                "safety": _safety().payload(decision),
+            })
+        else:
+            print_error(decision["message"])
         return EXIT_USAGE
     try:
         cleared_home = clear_profile_data(args.tool, n)
     except ValueError as e:
-        print_error(str(e))
+        if getattr(args, "json", False):
+            print_json_error(str(e), EXIT_USAGE, "usage_error")
+        else:
+            print_error(str(e))
         return EXIT_USAGE
     _audit().record("profile", "completed", command="clear", tool=args.tool, profile=f"p{n}", result="succeeded", details={"home": cleared_home})
-    print(f"Cleared {args.tool} p{n}: {cleared_home}")
+    if getattr(args, "json", False):
+        print_json_payload({
+            "ok": True,
+            "tool": args.tool,
+            "profile": f"p{n}",
+            "cleared": cleared_home,
+            "safety": _safety().payload(decision),
+        })
+    else:
+        print(f"Cleared {args.tool} p{n}: {cleared_home}")
     return EXIT_OK
 
 def clear_profile_data(tool_key, n):
@@ -1244,7 +1368,39 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     return _sync_module().sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
 
 def cmd_sync(args):
-    _audit().record("sync", "decision", command="sync", details={"source": args.source, "mode": args.mode, "dry_run": args.dry_run})
+    operation = "sync-hard" if args.mode == "hard" else "sync-soft"
+    try:
+        src_base, dst_base = resolve_sync_bases(args.source)
+    except Exception:
+        src_base, dst_base = None, None
+    decision = safety_decision(
+        operation,
+        command="sync",
+        target=str(dst_base) if dst_base is not None else None,
+        facts={
+            "source": args.source,
+            "mode": args.mode,
+            "source_base": str(src_base) if src_base is not None else None,
+            "destination_base": str(dst_base) if dst_base is not None else None,
+        },
+        yes=args.yes,
+        dry_run=args.dry_run,
+    )
+    _audit().record("sync", "decision", command="sync", details={"source": args.source, "mode": args.mode, "dry_run": args.dry_run, "safety": _safety().payload(decision)})
+    if not decision["ok"]:
+        if args.json:
+            print_json_payload({
+                "ok": False,
+                "error": {
+                    "type": "confirmation_required",
+                    "message": decision["message"],
+                    "code": EXIT_USAGE,
+                },
+                "safety": _safety().payload(decision),
+            })
+        else:
+            print_error(decision["message"])
+        return EXIT_USAGE
     try:
         result = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
     except PermissionError as e:
@@ -1266,6 +1422,7 @@ def cmd_sync(args):
             print_error(f"sync failed: {e}")
         return EXIT_RUNTIME
     if args.json:
+        result["safety"] = _safety().payload(decision)
         print_json_payload(result)
         return EXIT_OK
     action = "Would update" if args.dry_run else "Updated"
@@ -1327,15 +1484,40 @@ def cmd_audit(args):
                 print(json.dumps(event, sort_keys=True))
         return EXIT_OK
     if action == "purge":
-        if not args.yes:
-            print_error("refusing to purge audit data without --yes")
+        decision = safety_decision(
+            "audit-purge",
+            command="audit",
+            target=str(audit.audit_dir()),
+            facts={"backend": audit.backend_name()},
+            yes=args.yes,
+        )
+        if not decision["ok"]:
+            if args.json:
+                print_json_payload({
+                    "ok": False,
+                    "error": {
+                        "type": "confirmation_required",
+                        "message": decision["message"],
+                        "code": EXIT_USAGE,
+                    },
+                    "safety": _safety().payload(decision),
+                })
+            else:
+                print_error(decision["message"])
             return EXIT_USAGE
         removed = audit.purge_all()
-        print_json_payload({"ok": True, "removed": removed}) if args.json else print(f"Purged {removed} audit events")
+        payload = {"ok": True, "removed": removed, "safety": _safety().payload(decision)}
+        print_json_payload(payload) if args.json else print(f"Purged {removed} audit events")
         return EXIT_OK
     if action == "compact":
+        decision = safety_decision(
+            "audit-compact",
+            command="audit",
+            target=str(audit.audit_dir()),
+            facts={"days": args.days, "max_bytes": args.max_bytes, "backend": audit.backend_name()},
+        )
         result = audit.compact_retention(args.days, args.max_bytes)
-        payload = {"ok": True, **result}
+        payload = {"ok": True, **result, "safety": _safety().payload(decision)}
         print_json_payload(payload) if args.json else print(f"Removed {result['removed']} audit events; kept {result['kept']}")
         return EXIT_OK
     print_error(f"unknown audit action: {action}")
@@ -1373,27 +1555,45 @@ def cmd_service(args):
             print(f"PID: {payload['service']['pid'] or '-'}")
         return EXIT_OK
     if action == "start":
+        decision = safety_decision(
+            "service-start",
+            command="service",
+            target=str(runtime.socket_path()),
+            facts={"action": "start", "status": runtime.service_status()},
+        )
         payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
         _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "start", "running": payload.get("running")})
         if args.json:
-            print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
+            print_json_payload({"ok": bool(payload.get("ok")), "service": payload, "safety": _safety().payload(decision)})
         else:
             print("Service running" if payload.get("ok") else f"Service failed: {payload.get('error', 'unknown error')}")
         return EXIT_OK if payload.get("ok") else EXIT_RUNTIME
     if action == "stop":
+        decision = safety_decision(
+            "service-stop",
+            command="service",
+            target=str(runtime.socket_path()),
+            facts={"action": "stop", "status": runtime.service_status()},
+        )
         payload = runtime.stop_service()
         _audit().record("runtime_service", "completed", command="service", result="succeeded", details={"action": "stop", "stopped": payload.get("stopped")})
         if args.json:
-            print_json_payload({"ok": True, "service": payload})
+            print_json_payload({"ok": True, "service": payload, "safety": _safety().payload(decision)})
         else:
             print("Service stopped" if payload.get("stopped") else "Service was not running")
         return EXIT_OK
     if action == "restart":
+        decision = safety_decision(
+            "service-restart",
+            command="service",
+            target=str(runtime.socket_path()),
+            facts={"action": "restart", "status": runtime.service_status()},
+        )
         runtime.stop_service()
         payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
         _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "restart", "running": payload.get("running")})
         if args.json:
-            print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
+            print_json_payload({"ok": bool(payload.get("ok")), "service": payload, "safety": _safety().payload(decision)})
         else:
             print("Service restarted" if payload.get("ok") else f"Service failed: {payload.get('error', 'unknown error')}")
         return EXIT_OK if payload.get("ok") else EXIT_RUNTIME
@@ -1527,6 +1727,7 @@ def build_parser():
     clear_p.add_argument("tool", choices=TOOLS.keys())
     clear_p.add_argument("profile")
     clear_p.add_argument("--yes", action="store_true", help="confirm profile deletion")
+    clear_p.add_argument("--json", action="store_true")
     clear_p.set_defaults(func=cmd_clear)
 
     sync_p = sub.add_parser("sync", help="sync profile directories between WSL and Windows")

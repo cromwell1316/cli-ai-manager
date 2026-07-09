@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -25,3 +25,11 @@ from.
 - Diagnostics show enough to debug without leaking secrets.
 - Audit records distinguish cancellation, preflight failure, partial failure,
   and completed mutation.
+
+## Evidence
+
+- Diagnostics include `safety_policy.commands` with risk, confirmation, and
+  recovery metadata.
+- Safety audit events are redacted by the H14 audit backend.
+- Refused destructive commands produce `safety.result=refused`; dry-runs produce
+  `safety.result=dry_run`.

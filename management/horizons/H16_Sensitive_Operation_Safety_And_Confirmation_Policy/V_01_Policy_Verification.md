@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Verification
 
@@ -14,3 +14,9 @@ Status: planned.
 - `--yes` is accepted only where policy allows it.
 - Refusal and cancellation return expected exit codes.
 - Audit receives redacted policy events.
+
+## Evidence
+
+- `tests/test_profile_manager.py::test_safety_policy_inventory_covers_sensitive_commands`
+- `tests/test_profile_manager.py::test_clear_json_refuses_without_confirmation_and_audits_safety`
+- `tests/test_profile_manager.py::test_audit_purge_json_refuses_without_confirmation`

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -26,3 +26,12 @@ policy.
 - Every mutating action has an explicit risk class.
 - Confirmation behavior is documented before implementation.
 - Risk classes are testable.
+
+## Evidence
+
+- Added `cli_profile_manager/safety.py` with risk classes for destructive,
+  credential movement, low-risk mutation, and external-process operations.
+- Inventory covers `clear`, `sync`, `import`, `export`, `label`, `login`,
+  `launch`, service lifecycle, and audit purge/compact.
+- `tests/test_profile_manager.py::test_safety_policy_inventory_covers_sensitive_commands`
+  verifies inventory coverage and risk assignments.

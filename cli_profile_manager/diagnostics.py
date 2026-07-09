@@ -139,6 +139,7 @@ def diagnostics_payload(
     from .audit import diagnostics_payload as audit_diagnostics
     from .process_policy import diagnostics_payload as process_policy_diagnostics
     from .runtime_service import service_status
+    from .safety import command_inventory
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
     payload = {
@@ -156,6 +157,9 @@ def diagnostics_payload(
         "environment": relevant_env_snapshot(),
         "audit": audit_diagnostics(),
         "process_limits": process_policy_diagnostics(),
+        "safety_policy": {
+            "commands": command_inventory(),
+        },
         "service_runtime": service_status(),
         "quota_runtime": quota_runtime_snapshot(tool_key),
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),

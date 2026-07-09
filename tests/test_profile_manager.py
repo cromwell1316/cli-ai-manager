@@ -1583,6 +1583,106 @@ def test_sync_dry_run_json_shape_and_hard_delete_preflight(monkeypatch, tmp_path
         pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=False)
 
 
+def test_safety_policy_inventory_covers_sensitive_commands():
+    from cli_profile_manager import safety
+
+    inventory = safety.command_inventory()
+
+    for command in (
+        "clear",
+        "sync-hard",
+        "sync-soft",
+        "import",
+        "export",
+        "label",
+        "login",
+        "launch",
+        "audit-purge",
+        "service-start",
+        "service-stop",
+        "service-restart",
+    ):
+        assert command in inventory
+        assert inventory[command]["risk"]
+    assert inventory["clear"]["requires_confirmation"] is True
+    assert inventory["sync-hard"]["dry_run_supported"] is True
+    assert inventory["launch"]["risk"] == safety.RISK_EXTERNAL
+
+
+def test_clear_json_refuses_without_confirmation_and_audits_safety(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+    (tmp_path / "agy-homes" / "p1").mkdir(parents=True)
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "clear", "agy", "p1", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    audit_list = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "audit", "list", "--json", "--category", "safety"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is False
+    assert payload["safety"]["result"] == "refused"
+    assert payload["safety"]["preflight"]["risk"] == "destructive"
+    assert (tmp_path / "agy-homes" / "p1").exists()
+    events = json.loads(audit_list.stdout)["events"]
+    assert any(event["category"] == "safety" and event["result"] == "refused" for event in events)
+
+
+def test_sync_hard_json_refusal_and_dry_run_include_safety(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+        "AI_MAN_WSL_HOME": str(tmp_path / "wsl"),
+        "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
+    })
+    (tmp_path / "wsl").mkdir()
+    (tmp_path / "windows").mkdir()
+    write_json(tmp_path / "wsl" / "codex-homes" / "p1" / "auth.json", {"OPENAI_API_KEY": "sk-test"})
+    write_json(tmp_path / "windows" / "codex-homes" / "p9" / "auth.json", {"OPENAI_API_KEY": "old"})
+
+    refused = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "sync", "--mode", "hard", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    dry_run = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "sync", "--mode", "hard", "--dry-run", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert refused.returncode == 2
+    refused_payload = json.loads(refused.stdout)
+    assert refused_payload["safety"]["result"] == "refused"
+    assert dry_run.returncode == 0
+    dry_payload = json.loads(dry_run.stdout)
+    assert dry_payload["safety"]["result"] == "dry_run"
+    assert dry_payload["would_delete"] >= 1
+
+
 def test_direct_command_exit_codes_and_json_errors(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({
@@ -1622,6 +1722,8 @@ def test_diagnostics_json_redacts_accounts_and_reports_runtime(monkeypatch, tmp_
     assert "persistent_sessions" in payload
     assert "user@example.com" not in rendered
     assert "redacted:" in rendered
+    assert "safety_policy" in payload
+    assert payload["safety_policy"]["commands"]["clear"]["requires_confirmation"] is True
 
 
 def test_diagnostics_reuses_supplied_profile_indexes(monkeypatch, tmp_path):
@@ -2273,6 +2375,37 @@ def test_audit_cli_records_command_and_supports_query_export_purge(monkeypatch, 
     assert json.loads(exported.stdout)["events"]
     assert purged.returncode == 0, purged.stderr
     assert json.loads(purged.stdout)["removed"] >= 1
+
+
+def test_audit_purge_json_refuses_without_confirmation(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    refused = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "audit", "purge", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert refused.returncode == 2
+    payload = json.loads(refused.stdout)
+    assert payload["ok"] is False
+    assert payload["safety"]["preflight"]["operation"] == "audit-purge"
+    assert payload["safety"]["result"] == "refused"
 
 
 def test_audit_diagnostics_report_health(monkeypatch, tmp_path):

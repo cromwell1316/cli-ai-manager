@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Verification
 
@@ -14,3 +14,11 @@ Status: planned.
 - Interactive and CLI paths share policy decisions.
 - Mutating commands invalidate relevant caches after successful completion.
 - Partial failures produce recovery guidance.
+
+## Evidence
+
+- `python3 profile_manager.py clear agy p1 --json` returns
+  `confirmation_required` with `safety.result=refused`.
+- Isolated `python3 profile_manager.py sync --json --dry-run` returns
+  `safety.result=dry_run` and does not write destination files.
+- Existing import/export dry-run tests continue to pass with safety payloads.

@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Command risk inventory | Planned |
-| Shared preflight model | Planned |
-| Shared confirmation API | Planned |
-| Dry-run consistency | Planned |
-| Interactive/CLI policy parity | Planned |
-| Audit policy events | Planned |
-| Recovery diagnostics | Planned |
-| Mutating command tests | Planned |
+| Command risk inventory | Implemented |
+| Shared preflight model | Implemented |
+| Shared confirmation API | Implemented |
+| Dry-run consistency | Implemented |
+| Interactive/CLI policy parity | Implemented |
+| Audit policy events | Implemented |
+| Recovery diagnostics | Implemented |
+| Mutating command tests | Implemented |

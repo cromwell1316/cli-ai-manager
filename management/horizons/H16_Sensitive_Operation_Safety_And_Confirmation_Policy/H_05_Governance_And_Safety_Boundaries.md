@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H16_Sensitive_Operation_Safety_And_Confirma
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

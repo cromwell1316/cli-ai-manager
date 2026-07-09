@@ -70,6 +70,25 @@ def _audit():
 
     return audit
 
+def _safety():
+    from . import safety
+
+    return safety
+
+
+def safety_decision(operation, command=None, tool=None, profile=None, target=None, facts=None, yes=False, dry_run=False):
+    descriptor = _safety().operation_descriptor(
+        operation,
+        command=command,
+        tool=tool,
+        profile=profile,
+        target=target,
+        facts=facts,
+    )
+    decision = _safety().evaluate(descriptor, yes=yes, dry_run=dry_run)
+    _safety().audit_decision(_audit(), decision)
+    return decision
+
 AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
@@ -1111,6 +1130,14 @@ def set_label(tool_key):
         print(f"Current label: {CLR_YELLOW}{current_lbl or '(none)'}{CLR_RESET}\n")
         new_lbl = input("Enter new label (or empty to clear): ").strip()
 
+        safety_decision(
+            "label",
+            command="label",
+            tool=tool_key,
+            profile=f"p{profile_num}",
+            target=profile_home(tool_key, profile_num),
+            facts={"label": new_lbl},
+        )
         label_profile(tool_key, profile_num, new_lbl)
         metadata = load_metadata()
 
@@ -1169,6 +1196,14 @@ def magic_import(tool_key):
     print(f"\nImporting into profile p{next_p}...")
 
     try:
+        safety_decision(
+            "import",
+            command="import",
+            tool=tool_key,
+            profile=f"p{next_p}",
+            target=credential_path(tool_key, next_p),
+            facts={"source": cred_file, "destination": credential_path(tool_key, next_p)},
+        )
         _, dest_file = import_credential_file(tool_key, cred_file, next_p)
         invalidate_quota_cache(tool_key, next_p)
         print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
@@ -1205,6 +1240,19 @@ def export_credential(tool_key):
 
         profile_num = valid_profiles[sel]
         try:
+            export_dir = default_export_dir()
+            if tool_key == "agy":
+                planned_dest = os.path.join(export_dir, f"cred-p{profile_num}-exported.json")
+            else:
+                planned_dest = os.path.join(export_dir, f"{tool_key}-p{profile_num}-exported.json")
+            safety_decision(
+                "export",
+                command="export",
+                tool=tool_key,
+                profile=f"p{profile_num}",
+                target=planned_dest,
+                facts={"source": credential_path(tool_key, profile_num), "destination": planned_dest},
+            )
             dest_file = export_credential_file(tool_key, profile_num)
             print(f"\n{CLR_GREEN}Successfully exported to Windows: {dest_file}{CLR_RESET}")
         except Exception as e:
@@ -1237,6 +1285,15 @@ def clear_profile(tool_key):
         print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
         print(f"Path: {home}")
         confirm = input("\nType 'yes' to confirm deletion: ").strip().lower()
+        decision = safety_decision(
+            "clear",
+            command="clear",
+            tool=tool_key,
+            profile=f"p{profile_num}",
+            target=home,
+            facts={"exists": os.path.exists(home), "delete_paths": [home] if os.path.exists(home) else []},
+            yes=(confirm == "yes"),
+        )
         if confirm == 'yes':
             logging.info(f"Clearing profile p{profile_num} for {tool_key} at {home}")
             try:
@@ -1248,7 +1305,7 @@ def clear_profile(tool_key):
                 logging.error(f"Error clearing profile p{profile_num}: {e}")
                 print(f"\n{CLR_RED}Error clearing profile: {e}{CLR_RESET}")
         else:
-            print("\nOperation cancelled.")
+            print(f"\nOperation cancelled. {decision['message'] or ''}".rstrip())
 
         input("\nPress Enter to return...")
 
@@ -1283,6 +1340,14 @@ def import_credential(tool_key):
     print(f"\nImporting into profile p{next_p}...")
 
     try:
+        safety_decision(
+            "import",
+            command="import",
+            tool=tool_key,
+            profile=f"p{next_p}",
+            target=credential_path(tool_key, next_p),
+            facts={"source": cred_file, "destination": credential_path(tool_key, next_p)},
+        )
         _, dest_file = import_credential_file(tool_key, cred_file, next_p)
         invalidate_quota_cache(tool_key, next_p)
         print(f"\n{CLR_GREEN}Successfully imported credential to {dest_file}!{CLR_RESET}")
@@ -1376,6 +1441,19 @@ def sync_profiles():
     if is_hard:
         try:
             preflight = sync_profiles_noninteractive(direction, mode, dry_run=True, yes=True)
+            safety_decision(
+                "sync-hard",
+                command="sync",
+                target=str(dst_base),
+                facts={
+                    "source": direction,
+                    "mode": mode,
+                    "source_base": str(src_base),
+                    "destination_base": str(dst_base),
+                    "would_delete": preflight["would_delete"],
+                },
+                dry_run=True,
+            )
             print(f"Hard-delete preflight: {preflight['would_delete']} destination paths would be removed.")
             for path in preflight["delete_paths"]:
                 print(f"  {path}")
@@ -1385,10 +1463,35 @@ def sync_profiles():
             return
         print(f"{CLR_RED}WARNING: Hard sync will DELETE extra files in Dest that are not in Source.{CLR_RESET}")
         confirm = input("Type 'yes' to proceed: ").strip().lower()
+        decision = safety_decision(
+            "sync-hard",
+            command="sync",
+            target=str(dst_base),
+            facts={
+                "source": direction,
+                "mode": mode,
+                "source_base": str(src_base),
+                "destination_base": str(dst_base),
+                "would_delete": preflight["would_delete"],
+            },
+            yes=(confirm == "yes"),
+        )
         if confirm != 'yes':
-            print("Operation cancelled.")
+            print(f"Operation cancelled. {decision['message'] or ''}".rstrip())
             input("\nPress Enter to return...")
             return
+    else:
+        safety_decision(
+            "sync-soft",
+            command="sync",
+            target=str(dst_base),
+            facts={
+                "source": direction,
+                "mode": mode,
+                "source_base": str(src_base),
+                "destination_base": str(dst_base),
+            },
+        )
 
     try:
         result = sync_profiles_noninteractive(direction, mode, dry_run=False, yes=True)
