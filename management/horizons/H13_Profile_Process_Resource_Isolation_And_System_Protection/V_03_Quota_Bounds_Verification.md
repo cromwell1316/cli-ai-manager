@@ -21,3 +21,6 @@ Status: implemented.
 - Existing scheduler/session tests continue to pass with policy wrapping.
 - `tests/test_profile_manager.py::test_interactive_stale_quota_survives_failed_refresh`
   covers stale quota preservation for `resource_limited` failures.
+- `python3 profile_manager.py quota agy p1 --json --timeout 5` was exercised
+  manually on the local host; when a native CLI exceeds the configured quota
+  memory budget, the result remains a structured quota state with warnings.

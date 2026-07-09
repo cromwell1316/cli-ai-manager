@@ -70,6 +70,10 @@ def relevant_env_snapshot():
         "AI_MAN_QUOTA_PROCESS_LIMITS",
         "AI_MAN_QUOTA_PROCESS_MEMORY_MB",
         "AI_MAN_QUOTA_PROCESS_CPU_PERCENT",
+        "AI_MAN_QUOTA_PROCESS_MAX_PROCESSES",
+        "AI_MAN_QUOTA_PROCESS_NICE",
+        "AI_MAN_QUOTA_PROCESS_IONICE_CLASS",
+        "AI_MAN_QUOTA_PROCESS_IONICE_LEVEL",
     ]
     return {key: os.environ.get(key) for key in keys if key in os.environ}
 

@@ -205,13 +205,37 @@ CONFIG_ENV_VARS = [
     {
         "name": "AI_MAN_QUOTA_PROCESS_MEMORY_MB",
         "description": "quota probe memory cap in MB",
-        "default": "1536",
+        "default": "2048",
         "type": "int",
     },
     {
         "name": "AI_MAN_QUOTA_PROCESS_CPU_PERCENT",
         "description": "quota probe CPU quota percent",
         "default": "150",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_MAX_PROCESSES",
+        "description": "quota probe process count cap",
+        "default": "512",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_NICE",
+        "description": "quota probe nice adjustment",
+        "default": "10",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_IONICE_CLASS",
+        "description": "quota probe ionice class",
+        "default": "2",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_QUOTA_PROCESS_IONICE_LEVEL",
+        "description": "quota probe ionice level",
+        "default": "7",
         "type": "int",
     },
 ]

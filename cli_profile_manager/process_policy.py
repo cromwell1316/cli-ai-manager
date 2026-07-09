@@ -16,9 +16,9 @@ DEFAULTS = {
     },
     "quota": {
         "enabled": True,
-        "memory_mb": 1536,
+        "memory_mb": 2048,
         "cpu_percent": 150,
-        "max_processes": 96,
+        "max_processes": 512,
         "nice": 10,
         "ionice_class": 2,
         "ionice_level": 7,
