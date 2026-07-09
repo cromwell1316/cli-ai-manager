@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H10_Command_Startup_And_Hot_Path_Performanc
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Automated Validation
 

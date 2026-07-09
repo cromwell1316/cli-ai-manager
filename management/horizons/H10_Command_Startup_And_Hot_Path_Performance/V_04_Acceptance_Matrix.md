@@ -5,14 +5,14 @@ Source of Truth: management/horizons/H10_Command_Startup_And_Hot_Path_Performanc
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Startup benchmark decomposition | Planned |
-| Import-time profile captured | Planned |
-| Lazy entrypoint imports | Planned |
-| In-process command perf harness | Planned |
-| Help/config avoid quota imports | Planned |
-| Command hot path budgets | Planned |
-| Backward-compatible commands and JSON | Planned |
+| Startup benchmark decomposition | Implemented |
+| Import-time profile captured | Implemented |
+| Lazy entrypoint imports | Implemented |
+| In-process command perf harness | Implemented |
+| Help/config avoid quota imports | Implemented |
+| Command hot path budgets | Implemented |
+| Backward-compatible commands and JSON | Implemented |

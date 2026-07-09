@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H10_Command_Startup_And_Hot_Path_Performanc
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Checks
 
@@ -17,4 +17,16 @@ Status: planned.
 
 ## Evidence
 
-Pending implementation.
+- `test_in_process_command_perf_budgets` covers `config show --json`,
+  `list agy --json`, `status agy p1 --json`, and
+  `diagnostics agy --json` with fake roots and no native CLI calls.
+- `python3 scripts/benchmark_runtime.py --scenario command-execute --json`
+  passed with medians:
+  - `command-config-json`: `8.775ms`
+  - `command-list-agy-json`: `4.919ms`
+  - `command-status-agy-json`: `5.424ms`
+  - `command-diagnostics-agy-json`: `5.454ms`
+- `CommandSnapshot` reuses metadata, profile discovery, status, and AGY account
+  lookup results within one command execution.
+- Diagnostics accepts supplied profile indexes so command diagnostics does not
+  repeat profile discovery already performed by the command snapshot.
