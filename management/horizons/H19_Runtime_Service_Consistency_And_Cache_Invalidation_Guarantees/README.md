@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H19_Runtime_Service_Consistency_And_Cache_I
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -19,6 +19,19 @@ equivalent results and that cached runtime state is invalidated after mutations.
 - Ensure mutating commands notify or bypass the service consistently.
 - Audit runtime service requests, fallback, and invalidation through H14.
 - Strengthen service lifecycle diagnostics and stale socket cleanup.
+
+## Completion Notes
+
+- Added a runtime service contract covering state ownership, never-cache state,
+  eligible commands, ineligible commands, and mutation-to-domain invalidation.
+- Added structured invalidation reason/domain payloads, persisted last
+  invalidation diagnostics, idempotent generation updates, and audit events.
+- Extended service diagnostics with availability, unavailable reason, recovery
+  hints, stale cleanup auditing, and the runtime contract.
+- Verified service-backed equivalence for `config show --json`,
+  `list agy --json`, `status agy p1 --json`, and `diagnostics agy --json`.
+- Verified with `pytest -q`: 116 passed.
+- Verified validation commands: service status JSON and diagnostics JSON.
 
 ## Non-Goals
 

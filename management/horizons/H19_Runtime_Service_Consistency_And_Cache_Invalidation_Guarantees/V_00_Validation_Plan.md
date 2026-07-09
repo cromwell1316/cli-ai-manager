@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H19_Runtime_Service_Consistency_And_Cache_I
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Automated Validation
 
@@ -21,3 +21,9 @@ python3 profile_manager.py diagnostics --json
 - Mutation invalidation tests.
 - One-shot/service equivalence tests.
 - Fallback and diagnostics evidence.
+
+## Result
+
+- `pytest -q`: 116 passed.
+- `python3 profile_manager.py service status --json`: ok.
+- `python3 profile_manager.py diagnostics --json`: ok.

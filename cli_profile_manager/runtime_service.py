@@ -20,8 +20,34 @@ RUNTIME_DIR_NAME = "runtime"
 SOCKET_NAME = "service.sock"
 PID_NAME = "service.pid"
 LOG_NAME = "service.log"
+LAST_INVALIDATION_NAME = "last_invalidation.json"
 READ_ONLY_COMMANDS = {"config", "diagnostics", "list", "status"}
-MUTATING_COMMANDS = {"clear", "export", "import", "label", "login", "sync"}
+MUTATING_COMMANDS = {"audit", "clear", "export", "import", "label", "login", "sync"}
+INELIGIBLE_COMMANDS = sorted(MUTATING_COMMANDS | {"launch", "quota", "service"})
+RUNTIME_STATE_OWNERSHIP = {
+    "metadata": "profiles_metadata.json labels and profile annotations",
+    "paths": "environment-resolved profile roots and metadata directory",
+    "profiles": "filesystem profile discovery and credential presence",
+    "diagnostics": "safe runtime diagnostics assembled per request",
+    "command_snapshot": "per-command read model for list/status/config/diagnostics",
+    "audit": "local audit event backends and retention state",
+}
+NEVER_CACHE_STATE = (
+    "raw credential contents",
+    "raw PTY buffers",
+    "unredacted accounts",
+    "safety decisions for future commands",
+)
+MUTATION_INVALIDATION_CONTRACT = {
+    "import": ("credentials", "profiles", "command_snapshot", "diagnostics"),
+    "export": ("audit", "diagnostics"),
+    "label": ("metadata", "command_snapshot", "diagnostics"),
+    "clear": ("credentials", "profiles", "metadata", "command_snapshot", "quota", "diagnostics"),
+    "login": ("credentials", "profiles", "command_snapshot", "quota", "diagnostics"),
+    "sync": ("credentials", "profiles", "metadata", "command_snapshot", "quota", "diagnostics"),
+    "audit:purge": ("audit", "diagnostics"),
+    "audit:compact": ("audit", "diagnostics"),
+}
 
 
 class ServiceError(RuntimeError):
@@ -42,6 +68,10 @@ def pid_path():
 
 def log_path():
     return runtime_dir() / LOG_NAME
+
+
+def last_invalidation_path():
+    return runtime_dir() / LAST_INVALIDATION_NAME
 
 
 def ensure_runtime_dir():
@@ -94,7 +124,71 @@ def cleanup_stale_files():
             pass
         except OSError:
             pass
+    if removed:
+        audit.record("runtime_service", "completed", command="service", result="stale_cleaned", details={"action": "cleanup_stale"})
     return removed
+
+
+def _read_last_invalidation():
+    try:
+        payload = json.loads(last_invalidation_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_last_invalidation(payload):
+    ensure_runtime_dir()
+    path = last_invalidation_path()
+    tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def invalidation_payload(reason, domains, command=None, generation=None):
+    payload = {
+        "reason": reason or "mutation",
+        "domains": sorted(set(domains or ())),
+        "command": command,
+        "generation": generation,
+        "time": time.time(),
+    }
+    return payload
+
+
+def mutation_invalidation(argv):
+    if not argv:
+        return None
+    command = argv[0]
+    if "--dry-run" in argv:
+        return None
+    if command == "audit":
+        action = argv[1] if len(argv) > 1 else "status"
+        key = f"audit:{action}"
+    else:
+        key = command
+    domains = MUTATION_INVALIDATION_CONTRACT.get(key)
+    if not domains:
+        return None
+    return {
+        "reason": key,
+        "domains": list(domains),
+        "command": command,
+    }
+
+
+def runtime_contract_payload():
+    return {
+        "state_ownership": dict(RUNTIME_STATE_OWNERSHIP),
+        "never_cache": list(NEVER_CACHE_STATE),
+        "eligible_commands": sorted(READ_ONLY_COMMANDS),
+        "ineligible_commands": list(INELIGIBLE_COMMANDS),
+        "mutation_invalidation": {key: list(value) for key, value in MUTATION_INVALIDATION_CONTRACT.items()},
+    }
 
 
 def service_status():
@@ -103,11 +197,15 @@ def service_status():
     socket_exists = socket_path().exists()
     alive = _process_alive(pid)
     stale = bool((pid or socket_exists) and not alive)
+    last_invalidation = _read_last_invalidation()
     return {
         "enabled_env": service_mode_enabled(),
         "running": bool(alive and socket_exists),
         "pid": pid,
         "stale": stale,
+        "available": bool(alive and socket_exists and not stale),
+        "unavailable_reason": None if alive and socket_exists and not stale else ("stale_runtime_files" if stale else "not_running"),
+        "recovery_hint": "run service restart or service stop to clean stale runtime files" if stale else None,
         "socket_path": str(socket_path()),
         "pid_path": str(pid_path()),
         "log_path": str(log_path()),
@@ -115,6 +213,8 @@ def service_status():
         "runtime_dir_mode": _user_only_mode(runtime_dir()),
         "socket_mode": _user_only_mode(socket_path()) if socket_exists else None,
         "protocol_version": PROTOCOL_VERSION,
+        "last_invalidation": last_invalidation,
+        "contract": runtime_contract_payload(),
     }
 
 
@@ -137,7 +237,7 @@ def eligible_argv(argv):
 
 
 def mutates_runtime_state(argv):
-    return bool(argv and argv[0] in MUTATING_COMMANDS)
+    return mutation_invalidation(argv) is not None
 
 
 def encode_message(payload):
@@ -208,9 +308,25 @@ class RuntimeState:
         self.started_at = time.time()
         self.generation = 0
         self.requests = 0
+        self.last_invalidation = _read_last_invalidation()
 
-    def invalidate(self):
+    def invalidate(self, reason=None, domains=None, command=None):
         self.generation += 1
+        self.last_invalidation = invalidation_payload(reason, domains, command, self.generation)
+        _write_last_invalidation(self.last_invalidation)
+        audit.record(
+            "runtime_service",
+            "completed",
+            command="service",
+            result="invalidated",
+            details={
+                "action": "invalidate",
+                "generation": self.generation,
+                "reason": self.last_invalidation["reason"],
+                "domains": self.last_invalidation["domains"],
+                "source_command": command,
+            },
+        )
 
     def health(self):
         return {
@@ -220,6 +336,8 @@ class RuntimeState:
             "uptime_seconds": round(time.time() - self.started_at, 3),
             "generation": self.generation,
             "requests": self.requests,
+            "last_invalidation": self.last_invalidation,
+            "contract": runtime_contract_payload(),
         }
 
 
@@ -244,9 +362,17 @@ def handle_payload(payload, state):
     if action == "health":
         return state.health()
     if action == "invalidate":
-        state.invalidate()
-        audit.record("runtime_service", "completed", command="service", result="succeeded", details={"action": "invalidate", "generation": state.generation})
-        return {"ok": True, "generation": state.generation}
+        domains = payload.get("domains") or []
+        if not isinstance(domains, list) or not all(isinstance(item, str) for item in domains):
+            return {"ok": False, "error": {"type": "usage_error", "message": "domains must be a string list"}}
+        reason = payload.get("reason")
+        command = payload.get("command")
+        state.invalidate(
+            reason=reason if isinstance(reason, str) else None,
+            domains=domains,
+            command=command if isinstance(command, str) else None,
+        )
+        return {"ok": True, "generation": state.generation, "last_invalidation": state.last_invalidation}
     if action == "shutdown":
         return {"ok": True, "shutdown": True}
     if action == "run":
@@ -373,10 +499,50 @@ def service_health():
 
 
 def invalidate_service():
+    return invalidate_service_for(reason="mutation", domains=(), command=None)
+
+
+def invalidate_service_for(reason=None, domains=(), command=None):
+    payload = invalidation_payload(reason, domains, command, generation=None)
     try:
-        return request({"version": PROTOCOL_VERSION, "action": "invalidate"}, timeout_seconds=0.25)
-    except Exception:
+        _write_last_invalidation(payload)
+    except OSError as exc:
+        audit.record(
+            "runtime_service",
+            "skipped",
+            command=command or "service",
+            result="diagnostic_write_failed",
+            error_class=type(exc).__name__,
+            details={"action": "invalidate", "reason": payload["reason"], "domains": payload["domains"]},
+        )
+    audit.record(
+        "runtime_service",
+        "attempted",
+        command=command or "service",
+        details={"action": "invalidate", "reason": payload["reason"], "domains": payload["domains"]},
+    )
+    try:
+        response = request(
+            {
+                "version": PROTOCOL_VERSION,
+                "action": "invalidate",
+                "reason": payload["reason"],
+                "domains": payload["domains"],
+                "command": command,
+            },
+            timeout_seconds=0.25,
+        )
+    except Exception as exc:
+        audit.record(
+            "runtime_service",
+            "skipped",
+            command=command or "service",
+            result="unavailable",
+            error_class=type(exc).__name__,
+            details={"action": "invalidate", "reason": payload["reason"], "domains": payload["domains"]},
+        )
         return None
+    return response
 
 
 def run_via_service(argv, timeout_seconds=DEFAULT_CLIENT_TIMEOUT_SECONDS):

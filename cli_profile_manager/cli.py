@@ -51,7 +51,7 @@ AGY_WINDOWS_USERNAME = "antigravity"
 # Tool configurations
 TOOLS = CORE_TOOLS
 SERVICE_ENV_TRUE = ("1", "true", "yes", "on")
-SERVICE_MUTATING_COMMANDS = {"clear", "export", "import", "label", "login", "sync"}
+SERVICE_MUTATING_COMMANDS = {"audit", "clear", "export", "import", "label", "login", "sync"}
 agy_credentials = None
 claude_credentials = None
 codex_credentials = None
@@ -1932,7 +1932,18 @@ def notify_service_after_command(argv, result):
     if not argv or argv[0] not in SERVICE_MUTATING_COMMANDS:
         return
     runtime = _runtime_service()
-    runtime.invalidate_service()
+    if hasattr(runtime, "mutation_invalidation"):
+        invalidation = runtime.mutation_invalidation(argv)
+    elif runtime.mutates_runtime_state(argv):
+        invalidation = {"reason": argv[0], "domains": [], "command": argv[0]}
+    else:
+        invalidation = None
+    if invalidation is None:
+        return
+    if hasattr(runtime, "invalidate_service_for"):
+        runtime.invalidate_service_for(**invalidation)
+    else:
+        runtime.invalidate_service()
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv

@@ -2300,6 +2300,97 @@ def test_runtime_service_paths_are_user_only(monkeypatch, tmp_path):
     assert status["running"] is False
 
 
+def test_runtime_service_contract_lists_state_and_invalidation(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    status = runtime_service.service_status()
+    contract = status["contract"]
+
+    assert "metadata" in contract["state_ownership"]
+    assert "raw credential contents" in contract["never_cache"]
+    assert "list" in contract["eligible_commands"]
+    assert "import" in contract["ineligible_commands"]
+    assert contract["mutation_invalidation"]["label"] == ["metadata", "command_snapshot", "diagnostics"]
+
+
+@pytest.mark.parametrize(
+    ("argv", "reason", "domains"),
+    [
+        (["label", "agy", "p1", "bench"], "label", {"metadata", "command_snapshot"}),
+        (["import", "agy", "cred.json"], "import", {"credentials", "profiles"}),
+        (["clear", "agy", "p1", "--yes"], "clear", {"credentials", "profiles", "quota"}),
+        (["sync", "--source", "wsl"], "sync", {"credentials", "profiles", "metadata"}),
+        (["audit", "purge", "--yes"], "audit:purge", {"audit", "diagnostics"}),
+        (["audit", "compact"], "audit:compact", {"audit", "diagnostics"}),
+    ],
+)
+def test_runtime_service_mutation_invalidation_contract(argv, reason, domains):
+    from cli_profile_manager import runtime_service
+
+    invalidation = runtime_service.mutation_invalidation(argv)
+
+    assert invalidation["reason"] == reason
+    assert domains.issubset(set(invalidation["domains"]))
+
+
+def test_runtime_service_does_not_invalidate_dry_run_mutations():
+    from cli_profile_manager import runtime_service
+
+    assert runtime_service.mutation_invalidation(["import", "agy", "cred.json", "--dry-run"]) is None
+    assert runtime_service.mutates_runtime_state(["import", "agy", "cred.json", "--dry-run"]) is False
+
+
+def test_runtime_service_invalidation_is_idempotent_and_diagnostic(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    state = runtime_service.RuntimeState()
+    first = runtime_service.handle_payload(
+        {
+            "version": runtime_service.PROTOCOL_VERSION,
+            "action": "invalidate",
+            "reason": "label",
+            "domains": ["metadata", "diagnostics", "metadata"],
+            "command": "label",
+        },
+        state,
+    )
+    second = runtime_service.handle_payload(
+        {
+            "version": runtime_service.PROTOCOL_VERSION,
+            "action": "invalidate",
+            "reason": "label",
+            "domains": ["metadata"],
+            "command": "label",
+        },
+        state,
+    )
+    status = runtime_service.service_status()
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["generation"] == first["generation"] + 1
+    assert second["last_invalidation"]["domains"] == ["metadata"]
+    assert status["last_invalidation"]["reason"] == "label"
+
+
+def test_runtime_service_stale_cleanup_reports_recovery(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    runtime_service.ensure_runtime_dir()
+    runtime_service.pid_path().write_text("99999999", encoding="utf-8")
+    runtime_service.socket_path().write_text("", encoding="utf-8")
+
+    status = runtime_service.service_status()
+    assert status["stale"] is True
+    assert status["unavailable_reason"] == "stale_runtime_files"
+    assert status["recovery_hint"]
+    assert runtime_service.cleanup_stale_files() is True
+    assert runtime_service.service_status()["stale"] is False
+
+
 def test_service_status_json_and_diagnostics_include_runtime(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({
@@ -2330,6 +2421,7 @@ def test_service_status_json_and_diagnostics_include_runtime(monkeypatch, tmp_pa
     diagnostics_payload = json.loads(diagnostics.stdout)
     assert service_payload["service"]["running"] is False
     assert diagnostics_payload["service_runtime"]["socket_path"] == service_payload["service"]["socket_path"]
+    assert "contract" in diagnostics_payload["service_runtime"]
 
 
 def test_service_mode_falls_back_when_service_absent(monkeypatch, tmp_path):
@@ -2365,6 +2457,12 @@ def test_service_backed_output_matches_one_shot(monkeypatch, tmp_path):
     write_json(tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json", {"refresh_token": "r"})
     write_json(tmp_path / "agy-homes" / "p1" / ".gemini" / "google_accounts.json", {"active": "agy@example.com"})
 
+    def comparable_payload(payload):
+        payload = json.loads(json.dumps(payload))
+        if "audit" in payload:
+            payload["audit"].pop("record_count", None)
+        return payload
+
     start = subprocess.run(
         [sys.executable, str(ROOT / "profile_manager.py"), "service", "start", "--json"],
         env=env,
@@ -2378,24 +2476,31 @@ def test_service_backed_output_matches_one_shot(monkeypatch, tmp_path):
         assert start_payload["service"]["running"] is True
         assert start_payload["service"]["socket_mode"] == "0o600"
 
-        one_shot = subprocess.run(
-            [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
-            env={**env, "AI_MAN_SERVICE": "0"},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        service_backed = subprocess.run(
-            [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
-            env={**env, "AI_MAN_SERVICE": "1"},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        commands = [
+            ["config", "show", "--json"],
+            ["list", "agy", "--json"],
+            ["status", "agy", "p1", "--json"],
+            ["diagnostics", "agy", "--json"],
+        ]
+        for command in commands:
+            one_shot = subprocess.run(
+                [sys.executable, str(ROOT / "profile_manager.py"), *command],
+                env={**env, "AI_MAN_SERVICE": "0"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            service_backed = subprocess.run(
+                [sys.executable, str(ROOT / "profile_manager.py"), *command],
+                env={**env, "AI_MAN_SERVICE": "1"},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
 
-        assert one_shot.returncode == 0, one_shot.stderr
-        assert service_backed.returncode == 0, service_backed.stderr
-        assert json.loads(service_backed.stdout) == json.loads(one_shot.stdout)
+            assert one_shot.returncode == 0, one_shot.stderr
+            assert service_backed.returncode == 0, service_backed.stderr
+            assert comparable_payload(json.loads(service_backed.stdout)) == comparable_payload(json.loads(one_shot.stdout))
     finally:
         subprocess.run(
             [sys.executable, str(ROOT / "profile_manager.py"), "service", "stop", "--json"],
@@ -2422,15 +2527,18 @@ def test_mutating_command_notifies_runtime_invalidation(monkeypatch, tmp_path):
         def mutates_runtime_state(self, argv):
             return bool(argv and argv[0] == "label")
 
-        def invalidate_service(self):
-            calls.append("invalidate")
+        def mutation_invalidation(self, argv):
+            return {"reason": "label", "domains": ["metadata"], "command": "label"}
+
+        def invalidate_service_for(self, reason=None, domains=(), command=None):
+            calls.append((reason, tuple(domains), command))
 
     monkeypatch.setattr(cli, "_runtime_service", lambda: FakeRuntime())
 
     rc, _, stderr = run_in_process_command(pm, ["label", "agy", "p1", "bench"])
 
     assert rc == 0, stderr
-    assert calls == ["invalidate"]
+    assert calls == [("label", ("metadata",), "label")]
 
 
 def test_audit_event_redacts_tokens_accounts_and_paths(monkeypatch, tmp_path):

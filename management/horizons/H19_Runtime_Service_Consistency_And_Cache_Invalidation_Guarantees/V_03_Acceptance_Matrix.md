@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H19_Runtime_Service_Consistency_And_Cache_I
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Requirement | Status |
 | --- | --- |
-| Runtime state inventory | Planned |
-| Explicit invalidation contract | Planned |
-| Mutation invalidation tests | Planned |
-| One-shot/service equivalence | Planned |
-| Fallback verification | Planned |
-| Local-only IPC retained | Planned |
-| Diagnostics integration | Planned |
-| Audit service events | Planned |
+| Runtime state inventory | Completed |
+| Explicit invalidation contract | Completed |
+| Mutation invalidation tests | Completed |
+| One-shot/service equivalence | Completed |
+| Fallback verification | Completed |
+| Local-only IPC retained | Completed |
+| Diagnostics integration | Completed |
+| Audit service events | Completed |
