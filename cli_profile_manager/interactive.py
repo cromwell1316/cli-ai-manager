@@ -10,6 +10,7 @@ import threading
 import time
 import tty
 from concurrent.futures import Future
+from itertools import count
 
 from .cli import (
     CLR_BG_CYAN,
@@ -125,9 +126,19 @@ def interactive_quota_fresh_seconds():
 class InteractiveQuotaScheduler:
     def __init__(self, agy_concurrency=None):
         self.agy_concurrency = agy_concurrency or interactive_agy_quota_concurrency()
-        self.queue = queue.Queue()
+        self.queue = queue.PriorityQueue()
         self.closed = False
         self.workers = []
+        self.sequence = count()
+        self.metrics_lock = threading.Lock()
+        self.metrics = {
+            "submitted": 0,
+            "coalesced": 0,
+            "started": 0,
+            "completed": 0,
+            "failed": 0,
+            "cancelled": 0,
+        }
         for idx in range(self.agy_concurrency):
             worker = threading.Thread(
                 target=self._worker,
@@ -137,22 +148,35 @@ class InteractiveQuotaScheduler:
             worker.start()
             self.workers.append(worker)
 
-    def submit(self, tool_key, profile_num):
+    def increment_metric(self, name, amount=1):
+        with self.metrics_lock:
+            self.metrics[name] = self.metrics.get(name, 0) + amount
+
+    def metrics_snapshot(self):
+        with self.metrics_lock:
+            return dict(self.metrics)
+
+    def submit(self, tool_key, profile_num, priority=10):
         future = Future()
-        self.queue.put((tool_key, profile_num, future))
+        self.increment_metric("submitted")
+        self.queue.put((priority, next(self.sequence), tool_key, profile_num, future, time.time()))
         return future
 
     def _worker(self):
         while True:
             item = self.queue.get()
-            if item is None:
+            _priority, _seq, tool_key, profile_num, future, _submitted_at = item
+            if future is None:
                 self.queue.task_done()
                 return
-            tool_key, profile_num, future = item
             try:
                 if future.set_running_or_notify_cancel():
+                    self.increment_metric("started")
                     load_quota_background(tool_key, profile_num)
                     future.set_result(True)
+                    self.increment_metric("completed")
+                else:
+                    self.increment_metric("cancelled")
             except Exception as e:
                 finish_quota_refresh(
                     tool_key,
@@ -164,6 +188,7 @@ class InteractiveQuotaScheduler:
                     },
                     time.time(),
                 )
+                self.increment_metric("failed")
                 future.set_exception(e)
             finally:
                 self.queue.task_done()
@@ -173,7 +198,7 @@ class InteractiveQuotaScheduler:
             return
         self.closed = True
         for _ in self.workers:
-            self.queue.put(None)
+            self.queue.put((9999, next(self.sequence), None, None, None, time.time()))
 
 
 def quota_scheduler():
@@ -188,6 +213,12 @@ def quota_scheduler():
                 INTERACTIVE_QUOTA_SCHEDULER.shutdown()
             INTERACTIVE_QUOTA_SCHEDULER = InteractiveQuotaScheduler(concurrency)
         return INTERACTIVE_QUOTA_SCHEDULER
+
+
+def record_quota_job_coalesced():
+    scheduler = INTERACTIVE_QUOTA_SCHEDULER
+    if scheduler is not None:
+        scheduler.increment_metric("coalesced")
 
 
 def quota_cache_key(tool_key, profile_num):
@@ -353,6 +384,7 @@ def ensure_quota_loading(tool_key, profile_num):
             INTERACTIVE_QUOTA_CACHE[key] = entry
             should_submit = True
         elif entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+            record_quota_job_coalesced()
             return entry
         elif quota_entry_fresh(entry, now):
             entry["state"] = "ready"
@@ -374,7 +406,7 @@ def ensure_quota_loading(tool_key, profile_num):
             return entry
     if should_submit:
         logging.debug("quota job enqueue tool=%s profile=p%s", tool_key, profile_num)
-        future = quota_scheduler().submit(tool_key, profile_num)
+        future = quota_scheduler().submit(tool_key, profile_num, priority=10)
         with INTERACTIVE_QUOTA_LOCK:
             current = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
             if current is not None:
@@ -562,6 +594,7 @@ def force_quota_refresh(tool_key=None):
             if tool_key is not None and entry_tool != tool_key:
                 continue
             if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+                record_quota_job_coalesced()
                 continue
             entry["state"] = "queued"
             entry["job_state"] = "queued"
@@ -575,7 +608,7 @@ def force_quota_refresh(tool_key=None):
                 entry["quota"] = loading_quota("queued")
             submissions.append((entry_tool, profile_num))
     for entry_tool, profile_num in submissions:
-        future = quota_scheduler().submit(entry_tool, profile_num)
+        future = quota_scheduler().submit(entry_tool, profile_num, priority=0)
         with INTERACTIVE_QUOTA_LOCK:
             entry = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(entry_tool, profile_num))
             if entry is not None:
@@ -687,6 +720,7 @@ def quota_runtime_snapshot(tool_key=None):
                 "worker_count": len(scheduler.workers),
                 "queue_size": scheduler.queue.qsize(),
                 "closed": scheduler.closed,
+                "metrics": scheduler.metrics_snapshot(),
             }
     return {
         "enabled": interactive_quota_enabled(),

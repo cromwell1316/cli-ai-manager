@@ -23,6 +23,8 @@ DEFAULT_KEY_DELAY_SECONDS = 0.04
 DEFAULT_AGY_STARTUP_SECONDS = 8.0
 DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
+DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
+DEFAULT_PERSISTENT_SESSION_MAX = 24
 
 
 QUOTA_COMMANDS = {
@@ -465,6 +467,8 @@ class PersistentQuotaSession:
         self.proc = None
         self.master_fd = None
         self.lock = threading.Lock()
+        self.created_at = time.time()
+        self.last_used_at = self.created_at
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         if os.name == "nt":
@@ -514,6 +518,7 @@ class PersistentQuotaSession:
 
     def snapshot(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         with self.lock:
+            self.last_used_at = time.time()
             if not self.is_alive():
                 self.close()
                 self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
@@ -558,6 +563,22 @@ PERSISTENT_QUOTA_LOCK = threading.Lock()
 INVALIDATING_QUOTA_STATES = {"timeout", "process_exit"}
 
 
+def persistent_session_ttl_seconds():
+    raw = os.environ.get("AI_MAN_QUOTA_SESSION_TTL_SECONDS", str(DEFAULT_PERSISTENT_SESSION_TTL_SECONDS))
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return DEFAULT_PERSISTENT_SESSION_TTL_SECONDS
+
+
+def persistent_session_max_count():
+    raw = os.environ.get("AI_MAN_QUOTA_SESSION_MAX", str(DEFAULT_PERSISTENT_SESSION_MAX))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_PERSISTENT_SESSION_MAX
+
+
 def persistent_quota_session_key(tool_key, command, env, cwd):
     home = env.get("HOME")
     return (
@@ -591,6 +612,37 @@ def close_persistent_quota_sessions(tool_key=None, home=None):
         session.close()
 
 
+def evict_persistent_quota_sessions(now=None):
+    now = time.time() if now is None else now
+    ttl = persistent_session_ttl_seconds()
+    max_count = persistent_session_max_count()
+    with PERSISTENT_QUOTA_LOCK:
+        evicted = []
+        for key, session in list(PERSISTENT_QUOTA_SESSIONS.items()):
+            if not session.is_alive() or now - getattr(session, "last_used_at", now) > ttl:
+                evicted.append(session)
+                del PERSISTENT_QUOTA_SESSIONS[key]
+                PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+        if len(PERSISTENT_QUOTA_SESSIONS) > max_count:
+            by_idle = sorted(
+                PERSISTENT_QUOTA_SESSIONS.items(),
+                key=lambda item: getattr(item[1], "last_used_at", 0),
+            )
+            for key, session in by_idle[:len(PERSISTENT_QUOTA_SESSIONS) - max_count]:
+                evicted.append(session)
+                del PERSISTENT_QUOTA_SESSIONS[key]
+                PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
+    for session in evicted:
+        logging.debug(
+            "quota session evict tool=%s cwd=%s home=%s",
+            getattr(session, "tool_key", None),
+            getattr(session, "cwd", None),
+            getattr(session, "env", {}).get("HOME"),
+        )
+        session.close()
+    return len(evicted)
+
+
 def persistent_quota_sessions_snapshot(tool_key=None):
     with PERSISTENT_QUOTA_LOCK:
         sessions = []
@@ -606,6 +658,8 @@ def persistent_quota_sessions_snapshot(tool_key=None):
                 "claude_config_dir": key[5],
                 "alive": session.is_alive(),
                 "parser_misses": PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0),
+                "created_age_seconds": round(time.time() - getattr(session, "created_at", time.time()), 3),
+                "idle_age_seconds": round(time.time() - getattr(session, "last_used_at", time.time()), 3),
             })
     return {
         "count": len(sessions),
@@ -618,6 +672,7 @@ atexit.register(close_persistent_quota_sessions)
 
 def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
     key = persistent_quota_session_key(tool_key, command, env, cwd)
+    evict_persistent_quota_sessions()
     with PERSISTENT_QUOTA_LOCK:
         session = PERSISTENT_QUOTA_SESSIONS.get(key)
         if session is None:

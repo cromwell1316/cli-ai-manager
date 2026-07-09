@@ -541,6 +541,38 @@ def test_interactive_duplicate_quota_schedule_reuses_one_job(monkeypatch):
     assert calls == [1]
 
 
+def test_interactive_quota_scheduler_reports_coalesced_jobs(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    release = threading.Event()
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        release.wait(1)
+        return {
+            "quota": {
+                "state": "available",
+                "limits": {"daily": {"percent": 90}},
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    interactive.invalidate_quota_cache()
+
+    scheduler = interactive.quota_scheduler()
+    before = scheduler.metrics_snapshot()
+    first = interactive.ensure_quota_loading("agy", 1)
+    second = interactive.ensure_quota_loading("agy", 1)
+
+    assert first is second
+    release.set()
+    first["future"].result(timeout=1)
+    metrics = scheduler.metrics_snapshot()
+    assert metrics["submitted"] == before["submitted"] + 1
+    assert metrics["coalesced"] == before["coalesced"] + 1
+    assert metrics["started"] >= before["started"] + 1
+    assert metrics["completed"] >= before["completed"] + 1
+
+
 def test_interactive_status_collection_does_not_wait_for_quota_worker(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     agy_token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"
@@ -700,8 +732,8 @@ def test_interactive_force_refresh_preserves_stale_quota(monkeypatch):
     submitted = []
 
     class FakeScheduler:
-        def submit(self, tool_key, profile_num):
-            submitted.append((tool_key, profile_num))
+        def submit(self, tool_key, profile_num, priority=10):
+            submitted.append((tool_key, profile_num, priority))
             return object()
 
     monkeypatch.setattr(interactive, "quota_scheduler", lambda: FakeScheduler())
@@ -724,7 +756,7 @@ def test_interactive_force_refresh_preserves_stale_quota(monkeypatch):
     assert interactive.force_quota_refresh("agy") == 1
     entry = interactive.quota_cache_entry("agy", 1)
 
-    assert submitted == [("agy", 1)]
+    assert submitted == [("agy", 1, 0)]
     assert entry["job_state"] == "queued"
     assert entry["quota"]["limits"]["daily"]["percent"] == 77
     assert entry["quota"]["job_state"] == "queued"
@@ -908,6 +940,87 @@ def test_persistent_quota_parser_miss_threshold_invalidates_session(monkeypatch,
     assert created[0].closed is True
     quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": home}, home)
     assert len(created) == 2
+    quota.close_persistent_quota_sessions()
+
+
+def test_persistent_quota_sessions_evict_idle_and_dead_sessions(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    class FakeSession:
+        def __init__(self, home, last_used_at, alive=True):
+            self.tool_key = "agy"
+            self.command = ["agy"]
+            self.env = {"HOME": home}
+            self.cwd = home
+            self.created_at = last_used_at
+            self.last_used_at = last_used_at
+            self.alive = alive
+            self.closed = False
+
+        def is_alive(self):
+            return self.alive and not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setenv("AI_MAN_QUOTA_SESSION_TTL_SECONDS", "10")
+    stale_home = str(tmp_path / "stale")
+    dead_home = str(tmp_path / "dead")
+    fresh_home = str(tmp_path / "fresh")
+    stale = FakeSession(stale_home, 80.0)
+    dead = FakeSession(dead_home, 99.0, alive=False)
+    fresh = FakeSession(fresh_home, 95.0)
+
+    with quota.PERSISTENT_QUOTA_LOCK:
+        quota.PERSISTENT_QUOTA_SESSIONS[quota.persistent_quota_session_key("agy", ["agy"], stale.env, stale.cwd)] = stale
+        quota.PERSISTENT_QUOTA_SESSIONS[quota.persistent_quota_session_key("agy", ["agy"], dead.env, dead.cwd)] = dead
+        quota.PERSISTENT_QUOTA_SESSIONS[quota.persistent_quota_session_key("agy", ["agy"], fresh.env, fresh.cwd)] = fresh
+
+    assert quota.evict_persistent_quota_sessions(now=100.0) == 2
+    assert stale.closed is True
+    assert dead.closed is True
+    assert fresh.closed is False
+
+    snapshot = quota.persistent_quota_sessions_snapshot("agy")
+    assert snapshot["count"] == 1
+    assert snapshot["sessions"][0]["home"] == fresh_home
+    assert snapshot["sessions"][0]["idle_age_seconds"] >= 0
+    quota.close_persistent_quota_sessions()
+
+
+def test_persistent_quota_sessions_respect_max_count(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    class FakeSession:
+        def __init__(self, home, last_used_at):
+            self.tool_key = "agy"
+            self.command = ["agy"]
+            self.env = {"HOME": home}
+            self.cwd = home
+            self.created_at = last_used_at
+            self.last_used_at = last_used_at
+            self.closed = False
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setenv("AI_MAN_QUOTA_SESSION_MAX", "1")
+    older = FakeSession(str(tmp_path / "older"), 10.0)
+    newer = FakeSession(str(tmp_path / "newer"), 20.0)
+
+    with quota.PERSISTENT_QUOTA_LOCK:
+        quota.PERSISTENT_QUOTA_SESSIONS[quota.persistent_quota_session_key("agy", ["agy"], older.env, older.cwd)] = older
+        quota.PERSISTENT_QUOTA_SESSIONS[quota.persistent_quota_session_key("agy", ["agy"], newer.env, newer.cwd)] = newer
+
+    assert quota.evict_persistent_quota_sessions(now=30.0) == 1
+    assert older.closed is True
+    assert newer.closed is False
+    assert quota.persistent_quota_sessions_snapshot("agy")["count"] == 1
     quota.close_persistent_quota_sessions()
 
 
@@ -1260,6 +1373,8 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
         "AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY": "not-a-number",
         "AI_MAN_INTERACTIVE_QUOTA_TIMEOUT": "0",
         "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS": "900",
+        "AI_MAN_QUOTA_SESSION_TTL_SECONDS": "120",
+        "AI_MAN_QUOTA_SESSION_MAX": "3",
         "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
     })
 
@@ -1278,10 +1393,36 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
     assert payload["quota"]["interactive_agy_concurrency"] == 2
     assert payload["quota"]["interactive_timeout"] == 12.0
     assert payload["quota"]["interactive_fresh_seconds"] == 900.0
+    assert payload["quota"]["session_ttl_seconds"] == 120.0
+    assert payload["quota"]["session_max"] == 3
     assert any("AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY" in warning for warning in payload["warnings"])
     assert any("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT" in warning for warning in payload["warnings"])
     assert "sk-test-secret" not in completed.stdout
     assert payload["quota"]["commands"]["agy"] == "[redacted-token]"
+
+
+def test_runtime_benchmark_quota_parser_outputs_json():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "benchmark_runtime.py"),
+            "--scenario",
+            "quota-parser",
+            "--iterations",
+            "2",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is True
+    assert payload["scenario"] == "quota-parser"
+    assert payload["results"][0]["name"] == "quota-parser"
+    assert payload["results"][0]["runs"] == 2
 
 
 def test_status_table_lines_fit_narrow_width_and_preserve_quota():

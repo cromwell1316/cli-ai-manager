@@ -550,7 +550,9 @@ def cmd_config_show(args):
         f"timeout={quota['interactive_timeout']} "
         f"agy_timeout={quota['interactive_agy_timeout']} "
         f"agy_workers={quota['interactive_agy_concurrency']} "
-        f"fresh_seconds={quota['interactive_fresh_seconds']}"
+        f"fresh_seconds={quota['interactive_fresh_seconds']} "
+        f"session_ttl_seconds={quota['session_ttl_seconds']} "
+        f"session_max={quota['session_max']}"
     )
     if payload["warnings"]:
         print("Warnings:")

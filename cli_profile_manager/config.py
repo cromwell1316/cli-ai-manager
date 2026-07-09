@@ -99,6 +99,20 @@ CONFIG_ENV_VARS = [
         "minimum": 0.0,
     },
     {
+        "name": "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
+        "description": "persistent quota session idle TTL in seconds",
+        "default": "1800",
+        "type": "float",
+        "minimum": 1.0,
+    },
+    {
+        "name": "AI_MAN_QUOTA_SESSION_MAX",
+        "description": "maximum persistent quota sessions",
+        "default": "24",
+        "type": "int",
+        "minimum": 1,
+    },
+    {
         "name": "AI_MAN_AGY_QUOTA_COMMAND",
         "description": "AGY quota slash command override",
         "default": "/usage",
@@ -208,6 +222,22 @@ def effective_config_payload():
             0.04,
             "float",
             0.0,
+            warnings,
+        ),
+        "session_ttl_seconds": _numeric_value(
+            "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
+            os.environ.get("AI_MAN_QUOTA_SESSION_TTL_SECONDS"),
+            1800.0,
+            "float",
+            1.0,
+            warnings,
+        ),
+        "session_max": _numeric_value(
+            "AI_MAN_QUOTA_SESSION_MAX",
+            os.environ.get("AI_MAN_QUOTA_SESSION_MAX"),
+            24,
+            "int",
+            1,
             warnings,
         ),
         "commands": {

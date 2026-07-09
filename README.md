@@ -126,6 +126,8 @@ AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS  quota color freshness threshold
 AI_MAN_QUOTA_STARTUP_SECONDS            native CLI startup wait
 AI_MAN_QUOTA_POST_COMMAND_SECONDS       post slash-command wait
 AI_MAN_QUOTA_KEY_DELAY_SECONDS          PTY slash-command key delay
+AI_MAN_QUOTA_SESSION_TTL_SECONDS        persistent quota session idle TTL
+AI_MAN_QUOTA_SESSION_MAX                maximum persistent quota sessions
 AI_MAN_AGY_QUOTA_COMMAND                AGY quota command override
 AI_MAN_CODEX_QUOTA_COMMAND              Codex quota command override
 AI_MAN_CLAUDE_QUOTA_COMMAND             Claude quota command override
@@ -140,14 +142,15 @@ profile is logged out, the quota payload reports `auth_required` or `no_token`
 instead of returning partial numbers.
 
 Interactive `ai-man` screens load quota automatically in the background for
-active profiles and cache it for the current session. Fresh quota data is shown
-in green; cached data older than five minutes is shown in red. Set
+active profiles and cache it for the current session. Set
 `AI_MAN_INTERACTIVE_QUOTA=0` to disable automatic probing, or
 `AI_MAN_INTERACTIVE_QUOTA_TIMEOUT=<seconds>` to change the generic per-profile
 timeout. AGY supports `AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` and
 `AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY=<workers>` for its slower interactive
 quota probes. Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
-more startup time before slash commands are accepted.
+more startup time before slash commands are accepted. Persistent quota sessions
+are bounded by `AI_MAN_QUOTA_SESSION_TTL_SECONDS` and
+`AI_MAN_QUOTA_SESSION_MAX`.
 
 AGY status uses separate quota columns. `FM`, `FH`, and `FL` are Gemini Flash
 medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude
@@ -287,6 +290,7 @@ python3 profile_manager.py --help
 python3 profile_manager.py list agy --json
 python3 profile_manager.py list codex --json
 python3 profile_manager.py list claude --json
+python3 scripts/benchmark_runtime.py --scenario quota-parser --iterations 100 --json
 ./scripts/verify_no_tui_surface.sh
 ```
 
@@ -297,6 +301,7 @@ cli-profile-manager/
 ├── profile_manager.py
 ├── install.sh
 ├── scripts/
+│   ├── benchmark_runtime.py
 │   ├── validate_agy_quota_live.py
 │   ├── verify_install.sh
 │   └── verify_no_tui_surface.sh

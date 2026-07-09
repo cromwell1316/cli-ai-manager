@@ -57,6 +57,8 @@ def relevant_env_snapshot():
         "AI_MAN_QUOTA_STARTUP_SECONDS",
         "AI_MAN_QUOTA_POST_COMMAND_SECONDS",
         "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
+        "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
+        "AI_MAN_QUOTA_SESSION_MAX",
     ]
     return {key: os.environ.get(key) for key in keys if key in os.environ}
 
