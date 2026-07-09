@@ -385,6 +385,11 @@ def ensure_quota_loading(tool_key, profile_num):
 
 def status_with_auto_quota(tool_key, profile_num, metadata):
     status = status_payload(tool_key, profile_num, metadata)
+    return status_with_auto_quota_snapshot(tool_key, status)
+
+
+def status_with_auto_quota_snapshot(tool_key, status):
+    status = dict(status)
     if not interactive_quota_enabled():
         return status
     if not status["has_token"]:
@@ -394,9 +399,15 @@ def status_with_auto_quota(tool_key, profile_num, metadata):
             "warnings": ["profile has no token"],
         }
         return status
-    entry = ensure_quota_loading(tool_key, profile_num)
+    entry = ensure_quota_loading(tool_key, status["num"])
     status["quota"] = entry["quota"]
     return status
+
+
+def collect_status_snapshot(tool_key):
+    metadata = load_metadata()
+    profiles = get_display_profiles(tool_key)
+    return [status_payload(tool_key, n, metadata) for n in profiles]
 
 
 def color_quota_text(text, status):
@@ -768,15 +779,15 @@ def get_key(timeout=None):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def render_status_screen(tool_key, status_message=None):
+def render_status_screen(tool_key, status_message=None, base_statuses=None):
     clear_screen()
     tool_name = TOOLS[tool_key]["name"]
     print_header(f"STATUS: {tool_name.upper()}")
     print()
 
-    metadata = load_metadata()
-    profiles = get_display_profiles(tool_key)
-    statuses = [status_with_auto_quota(tool_key, n, metadata) for n in profiles]
+    if base_statuses is None:
+        base_statuses = collect_status_snapshot(tool_key)
+    statuses = [status_with_auto_quota_snapshot(tool_key, status) for status in base_statuses]
 
     if tool_key == "agy":
         quota_columns = agy_status_quota_columns(statuses)
@@ -848,8 +859,9 @@ def render_status_screen(tool_key, status_message=None):
 
 def view_status(tool_key):
     status_message = None
+    base_statuses = collect_status_snapshot(tool_key)
     while True:
-        render_status_screen(tool_key, status_message)
+        render_status_screen(tool_key, status_message, base_statuses)
         status_message = None
         key = get_key(timeout=next_quota_wake_timeout(tool_key))
         if key is None:

@@ -1006,15 +1006,46 @@ def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch, ref
     refreshed = []
     keys = iter([refresh_key, "enter"])
 
-    monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key, status_message=None: rendered.append((tool_key, status_message)))
+    monkeypatch.setattr(interactive, "render_status_screen", lambda tool_key, status_message=None, base_statuses=None: rendered.append((tool_key, status_message, base_statuses)))
+    monkeypatch.setattr(interactive, "collect_status_snapshot", lambda tool_key: [])
     monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
     monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool_key: None)
     monkeypatch.setattr(interactive, "force_quota_refresh", lambda tool_key=None: refreshed.append(tool_key) or 2)
 
     interactive.view_status("agy")
 
-    assert rendered == [("agy", None), ("agy", "Refreshing quota now for 2 profiles...")]
+    assert rendered == [
+        ("agy", None, []),
+        ("agy", "Refreshing quota now for 2 profiles...", []),
+    ]
     assert refreshed == ["agy"]
+
+
+def test_interactive_status_view_reuses_base_status_snapshot(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+    keys = iter([None, "enter"])
+
+    monkeypatch.setattr(interactive, "load_metadata", lambda: {})
+    monkeypatch.setattr(interactive, "get_display_profiles", lambda tool_key: [1])
+    monkeypatch.setattr(interactive, "status_payload", lambda tool_key, n, metadata: calls.append((tool_key, n)) or {
+        "num": n,
+        "profile": f"p{n}",
+        "email": "missing@example.com",
+        "has_token": False,
+        "token_state": "missing",
+        "label": "",
+        "home": "/tmp/p1",
+    })
+    monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
+    monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool_key: 0)
+    monkeypatch.setattr(interactive, "clear_screen", lambda: None)
+    monkeypatch.setattr(interactive, "print_header", lambda title="": None)
+
+    interactive.view_status("agy")
+
+    assert calls == [("agy", 1)]
 
 
 def test_interactive_get_key_reads_ctrl_r(monkeypatch):
