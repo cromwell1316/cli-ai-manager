@@ -150,7 +150,10 @@ timeout. AGY supports `AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` and
 quota probes. Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
 more startup time before slash commands are accepted. Persistent quota sessions
 are bounded by `AI_MAN_QUOTA_SESSION_TTL_SECONDS` and
-`AI_MAN_QUOTA_SESSION_MAX`.
+`AI_MAN_QUOTA_SESSION_MAX`. AGY quota startup uses a real controlling terminal,
+a longer readiness window, and a `6144 MB` quota-process memory cap by default;
+override the cap with `AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy
+requires a different ceiling.
 
 AGY status uses separate quota columns. `FM`, `FH`, and `FL` are Gemini Flash
 medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude

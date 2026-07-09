@@ -16,7 +16,7 @@ DEFAULTS = {
     },
     "quota": {
         "enabled": True,
-        "memory_mb": 2048,
+        "memory_mb": 6144,
         "cpu_percent": 150,
         "max_processes": 512,
         "nice": 10,

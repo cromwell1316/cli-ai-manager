@@ -536,6 +536,19 @@ def test_quota_parser_classifies_empty_parser_miss_and_auth_output():
     assert auth["state"] == "auth_required"
 
 
+def test_agy_quota_parser_classifies_native_failure_output():
+    from cli_profile_manager.quota import parse_quota
+
+    tty = parse_quota("agy", "CLI error: bubbletea: error opening TTY: open /dev/tty: no such device")
+    ineligible = parse_quota("agy", "Account ineligible for Antigravity")
+    exhausted = parse_quota("agy", "RESOURCE_EXHAUSTED: quota exceeded")
+
+    assert tty["state"] == "tty_unavailable"
+    assert ineligible["state"] == "account_ineligible"
+    assert exhausted["state"] == "resource_exhausted"
+    assert "diagnostic_summary" in tty
+
+
 def test_quota_payload_preserves_missing_cli_diagnostic():
     from cli_profile_manager.quota import QuotaProbeError, quota_payload
 
@@ -546,6 +559,19 @@ def test_quota_payload_preserves_missing_cli_diagnostic():
 
     assert payload["quota"]["state"] == "missing_cli"
     assert payload["quota"]["warnings"] == ["agy CLI is not installed or not in PATH"]
+
+
+def test_quota_payload_refines_agy_process_exit_from_raw_output():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError("process_exit", "CLI process exited during startup", "Account ineligible")
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "account_ineligible"
+    assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
+    assert payload["quota"]["diagnostic_summary"] == "Account ineligible"
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
@@ -2084,7 +2110,7 @@ def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
     monkeypatch.setattr(quota.os, "close", lambda fd: None)
     monkeypatch.setattr(quota, "prepare_popen", fake_prepare)
     monkeypatch.setattr(quota.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(quota, "wait_for_startup", lambda *args: None)
+    monkeypatch.setattr(quota, "wait_for_cli_startup", lambda *args: None)
     monkeypatch.setattr(quota, "wait_for_idle", lambda *args: "quota screen")
     monkeypatch.setattr(quota, "send_interactive_command", lambda *args: None)
     monkeypatch.setattr(quota, "wait_after_command", lambda *args: None)
@@ -2094,7 +2120,98 @@ def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
     assert screen == "quota screen"
     assert captured["policy_args"] == (["agy"], "quota", True)
     assert captured["popen"][0] == ["wrapped", "agy"]
-    assert captured["popen"][1]["preexec_fn"] == "preexec"
+    assert callable(captured["popen"][1]["preexec_fn"])
+    assert "start_new_session" not in captured["popen"][1]
+
+
+def test_agy_quota_pty_assigns_controlling_tty_and_waits_for_readiness(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    fake_cli = tmp_path / "fake_agy_cli.py"
+    fake_cli.write_text(
+        "\n".join([
+            "import os",
+            "import select",
+            "import sys",
+            "import time",
+            "tty = open('/dev/tty', 'rb+', buffering=0)",
+            "print('booting agy', flush=True)",
+            "if select.select([sys.stdin], [], [], 0.15)[0]:",
+            "    print('EARLY_COMMAND', flush=True)",
+            "print('CLI ready for user input', flush=True)",
+            "for line in sys.stdin:",
+            "    command = line.strip()",
+            "    if command == '/exit':",
+            "        break",
+            "    if command == '/usage':",
+            "        print('Gemini 3.5 Flash (Medium)', flush=True)",
+            "        print('Usage 94% remaining', flush=True)",
+            "    else:",
+            "        print('unexpected command ' + command, flush=True)",
+            "    time.sleep(0.05)",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AI_MAN_PROCESS_LIMITS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_KEY_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0.1")
+
+    screen = quota.run_cli_quota_snapshot(
+        "agy",
+        [sys.executable, str(fake_cli)],
+        {"HOME": str(tmp_path)},
+        str(tmp_path),
+        timeout_seconds=2,
+        idle_seconds=0.1,
+    )
+    parsed = quota.parse_quota("agy", screen)
+
+    assert "EARLY_COMMAND" not in screen
+    assert parsed["state"] == "available"
+    assert parsed["limits"]["gemini_3_5_flash_medium"]["percent"] == 94
+
+
+def test_persistent_agy_quota_session_uses_readiness_gated_fake_cli(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    fake_cli = tmp_path / "fake_persistent_agy_cli.py"
+    fake_cli.write_text(
+        "\n".join([
+            "import sys",
+            "import time",
+            "open('/dev/tty', 'rb+', buffering=0)",
+            "print('CLI ready for user input', flush=True)",
+            "for line in sys.stdin:",
+            "    command = line.strip()",
+            "    if command == '/exit':",
+            "        break",
+            "    if command == '/usage':",
+            "        print('Daily quota 55% remaining', flush=True)",
+            "    time.sleep(0.05)",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AI_MAN_PROCESS_LIMITS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_KEY_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0.1")
+    quota.close_persistent_quota_sessions()
+
+    try:
+        screen = quota.run_persistent_cli_quota_snapshot(
+            "agy",
+            [sys.executable, str(fake_cli)],
+            {"HOME": str(tmp_path)},
+            str(tmp_path),
+            timeout_seconds=2,
+            idle_seconds=0.1,
+        )
+        parsed = quota.parse_quota("agy", screen)
+        assert parsed["state"] == "available"
+        assert parsed["limits"]["daily"]["percent"] == 55
+    finally:
+        quota.close_persistent_quota_sessions()
 
 
 def test_diagnostics_reports_process_limits(monkeypatch, tmp_path):

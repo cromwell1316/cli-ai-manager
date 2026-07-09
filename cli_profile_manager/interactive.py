@@ -112,6 +112,9 @@ QUOTA_FAILURE_STATES = (
     "pty_failure",
     "exception",
     "resource_limited",
+    "tty_unavailable",
+    "account_ineligible",
+    "resource_exhausted",
     "unsupported",
     "unknown",
 )
@@ -633,6 +636,11 @@ def agy_quota_cells(status, columns):
         "empty_output",
         "parser_miss",
         "process_exit",
+        "tty_unavailable",
+        "account_ineligible",
+        "resource_exhausted",
+        "pty_failure",
+        "resource_limited",
     ):
         marker = "!"
     return [marker if idx == 0 else "" for idx, _ in enumerate(columns)]

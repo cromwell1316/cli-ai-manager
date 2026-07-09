@@ -78,7 +78,7 @@ CONFIG_REGISTRY = [
     SettingDefinition("process.ionice_level", ("AI_MAN_PROCESS_IONICE_LEVEL",), "foreground launch ionice level", 6, "int", "process", minimum=0, maximum=7),
     SettingDefinition("process.prefer_systemd", ("AI_MAN_PROCESS_SYSTEMD",), "prefer systemd user scopes when available", True, "bool", "process"),
     SettingDefinition("quota_process.enabled", ("AI_MAN_QUOTA_PROCESS_LIMITS",), "enable quota probe process limits", True, "bool", "process"),
-    SettingDefinition("quota_process.memory_mb", ("AI_MAN_QUOTA_PROCESS_MEMORY_MB",), "quota probe memory cap in MB", 2048, "int", "process", minimum=128, maximum=262144),
+    SettingDefinition("quota_process.memory_mb", ("AI_MAN_QUOTA_PROCESS_MEMORY_MB",), "quota probe memory cap in MB", 6144, "int", "process", minimum=128, maximum=262144),
     SettingDefinition("quota_process.cpu_percent", ("AI_MAN_QUOTA_PROCESS_CPU_PERCENT",), "quota probe CPU quota percent", 150, "int", "process", minimum=10, maximum=10000),
     SettingDefinition("quota_process.max_processes", ("AI_MAN_QUOTA_PROCESS_MAX_PROCESSES",), "quota probe process count cap", 512, "int", "process", minimum=1, maximum=100000),
     SettingDefinition("quota_process.nice", ("AI_MAN_QUOTA_PROCESS_NICE",), "quota probe nice adjustment", 10, "int", "process", minimum=-20, maximum=19),

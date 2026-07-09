@@ -23,7 +23,8 @@ DEFAULT_IDLE_SECONDS = 0.8
 DEFAULT_STARTUP_SECONDS = 3.0
 DEFAULT_POST_COMMAND_SECONDS = 4.0
 DEFAULT_KEY_DELAY_SECONDS = 0.04
-DEFAULT_AGY_STARTUP_SECONDS = 8.0
+DEFAULT_AGY_KEY_DELAY_SECONDS = 0.0
+DEFAULT_AGY_STARTUP_SECONDS = 30.0
 DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
@@ -39,6 +40,60 @@ QUOTA_COMMANDS = {
 AUTH_PATTERNS = (
     re.compile(r"\b(sign in|login required|not authenticated|please log in|please sign in)\b", re.I),
     re.compile(r"\bauthentication required\b", re.I),
+    re.compile(r"\byou are not logged into antigravity\b", re.I),
+)
+
+AGY_READY_PATTERNS = (
+    re.compile(r"\bCLI ready for user input\b", re.I),
+    re.compile(r"\bready for user input\b", re.I),
+    re.compile(r"\btype\s+/help\b", re.I),
+)
+
+AGY_FAILURE_PATTERNS = (
+    (
+        "resource_limited",
+        "AGY CLI was stopped by local quota process memory limits",
+        (
+            re.compile(r"\bMmapAligned\(\) failed\b", re.I),
+            re.compile(r"\btcmalloc\b.*\bunable to allocate\b", re.I | re.S),
+            re.compile(r"\bfailed - unable to allocate\b", re.I),
+        ),
+    ),
+    (
+        "tty_unavailable",
+        "AGY CLI could not open a controlling terminal",
+        (
+            re.compile(r"\berror opening TTY\b", re.I),
+            re.compile(r"\bcould not open TTY\b", re.I),
+            re.compile(r"\bopen /dev/tty\b", re.I),
+            re.compile(r"\bbubbletea:.*TTY\b", re.I),
+        ),
+    ),
+    (
+        "auth_required",
+        "AGY CLI reported that authentication is required",
+        (
+            re.compile(r"\byou are not logged into antigravity\b", re.I),
+            re.compile(r"\bplease log in\b", re.I),
+            re.compile(r"\bplease sign in\b", re.I),
+        ),
+    ),
+    (
+        "account_ineligible",
+        "AGY CLI reported that the account is ineligible",
+        (
+            re.compile(r"\baccount ineligible\b", re.I),
+            re.compile(r"\bineligible\b.*\baccount\b", re.I),
+        ),
+    ),
+    (
+        "resource_exhausted",
+        "AGY CLI reported that quota or resources are exhausted",
+        (
+            re.compile(r"\bRESOURCE_EXHAUSTED\b", re.I),
+            re.compile(r"\bresource exhausted\b", re.I),
+        ),
+    ),
 )
 
 ANSI_RE = re.compile(
@@ -366,6 +421,19 @@ def detect_auth_required(text):
     return any(pattern.search(text) for pattern in AUTH_PATTERNS)
 
 
+def classify_agy_failure(text):
+    if not text:
+        return None
+    for state, message, patterns in AGY_FAILURE_PATTERNS:
+        if any(pattern.search(text) for pattern in patterns):
+            return state, message
+    return None
+
+
+def agy_cli_ready(text):
+    return any(pattern.search(text) for pattern in AGY_READY_PATTERNS)
+
+
 def has_spinner_frame(text):
     return any(char in text[-200:] for char in SPINNER_CHARS)
 
@@ -416,6 +484,41 @@ def wait_for_startup(fd, output, startup_seconds):
             output.append(read_available(fd))
 
 
+def wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds):
+    deadline = time.monotonic() + startup_seconds
+    stable_since = None
+    last_len = -1
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            output.append(read_available(fd))
+        current = "".join(output)
+        classified = classify_agy_failure(current)
+        if classified:
+            state, message = classified
+            raise QuotaProbeError(state, message, current)
+        if agy_cli_ready(current):
+            return current
+        current_len = len(current)
+        if current_len == last_len and current_len > 0 and not has_spinner_frame(current):
+            if stable_since is None:
+                stable_since = time.monotonic()
+            if time.monotonic() - stable_since >= idle_seconds:
+                return current
+        else:
+            last_len = current_len
+            stable_since = None
+    raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", "".join(output))
+
+
+def wait_for_cli_startup(tool_key, fd, output, startup_seconds, idle_seconds, timeout_seconds):
+    if tool_key == "agy":
+        wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds)
+        return
+    wait_for_startup(fd, output, startup_seconds)
+    wait_for_idle(fd, output, idle_seconds, timeout_seconds)
+
+
 def wait_after_command(fd, output, minimum_seconds):
     deadline = time.monotonic() + minimum_seconds
     while time.monotonic() < deadline:
@@ -426,10 +529,18 @@ def wait_after_command(fd, output, minimum_seconds):
 
 def send_interactive_command(fd, command, key_delay_seconds=DEFAULT_KEY_DELAY_SECONDS):
     text = f"\x15{command}\r"
+    if key_delay_seconds <= 0:
+        os.write(fd, text.encode("utf-8"))
+        return
     for ch in text:
         os.write(fd, ch.encode("utf-8"))
         if key_delay_seconds > 0:
             time.sleep(key_delay_seconds)
+
+
+def quota_key_delay_seconds(tool_key):
+    default = DEFAULT_AGY_KEY_DELAY_SECONDS if tool_key == "agy" else DEFAULT_KEY_DELAY_SECONDS
+    return max(0.0, float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", default)))
 
 
 def terminate_process(proc, master_fd, output):
@@ -461,6 +572,70 @@ def terminate_process(proc, master_fd, output):
             pass
 
 
+def quota_pty_preexec(slave_fd, policy_preexec):
+    def preexec():
+        try:
+            os.setsid()
+            fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        except Exception:
+            os._exit(126)
+        if policy_preexec is not None:
+            policy_preexec()
+
+    return preexec
+
+
+def start_quota_pty_process(tool_key, command, env, cwd, backend):
+    if os.name == "nt":
+        raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
+    try:
+        import pty
+    except ImportError as e:
+        raise QuotaProbeError("unsupported", "PTY support is not available") from e
+    if shutil.which(command[0]) is None:
+        raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
+
+    master_fd, slave_fd = pty.openpty()
+    try:
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
+        popen_env = env.copy()
+        popen_env.setdefault("TERM", "xterm-256color")
+        prepared_command, policy_preexec, policy = prepare_popen(command, tier="quota", needs_pty=True)
+        audit.record(
+            "subprocess",
+            "decision",
+            command="quota",
+            tool=tool_key,
+            backend=policy.get("backend"),
+            details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
+        )
+        proc = subprocess.Popen(
+            prepared_command,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=cwd,
+            env=popen_env,
+            close_fds=True,
+            preexec_fn=quota_pty_preexec(slave_fd, policy_preexec),
+        )
+    except Exception as e:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        try:
+            os.close(slave_fd)
+        except OSError:
+            pass
+        if isinstance(e, QuotaProbeError):
+            raise
+        raise QuotaProbeError("pty_failure", f"failed to start PTY quota probe: {e}") from e
+    os.close(slave_fd)
+    audit.record("quota", "started", tool=tool_key, backend=backend, details={"cwd": cwd, "command": command, "pid": proc.pid})
+    return proc, master_fd, policy
+
+
 class PersistentQuotaSession:
     def __init__(self, tool_key, command, env, cwd):
         self.tool_key = tool_key
@@ -474,52 +649,36 @@ class PersistentQuotaSession:
         self.last_used_at = self.created_at
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-        audit.record("quota", "started", tool=self.tool_key, backend="persistent_pty", details={"cwd": self.cwd, "command": self.command})
-        if os.name == "nt":
-            raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
-        try:
-            import pty
-        except ImportError as e:
-            raise QuotaProbeError("unsupported", "PTY support is not available") from e
-        if shutil.which(self.command[0]) is None:
-            raise QuotaProbeError("missing_cli", f"{self.command[0]} CLI is not installed or not in PATH")
-
-        master_fd, slave_fd = pty.openpty()
-        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
-        env = self.env.copy()
-        env.setdefault("TERM", "xterm-256color")
-        command, preexec_fn, policy = prepare_popen(self.command, tier="quota", needs_pty=True)
-        audit.record(
-            "subprocess",
-            "decision",
-            command="quota",
-            tool=self.tool_key,
-            backend=policy.get("backend"),
-            details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
+        proc, master_fd, policy = start_quota_pty_process(
+            self.tool_key,
+            self.command,
+            self.env,
+            self.cwd,
+            "persistent_pty",
         )
-        proc = subprocess.Popen(
-            command,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            cwd=self.cwd,
-            env=env,
-            start_new_session=True,
-            close_fds=True,
-            preexec_fn=preexec_fn,
-        )
-        os.close(slave_fd)
         output = []
         try:
             startup_default = DEFAULT_AGY_STARTUP_SECONDS if self.tool_key == "agy" else DEFAULT_STARTUP_SECONDS
             startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
-            wait_for_startup(master_fd, output, max(0.0, startup_seconds))
-            wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+            wait_for_cli_startup(
+                self.tool_key,
+                master_fd,
+                output,
+                max(0.0, startup_seconds),
+                idle_seconds,
+                timeout_seconds,
+            )
             if proc.poll() is not None:
-                if proc.returncode == 125:
+                if proc.returncode in (125, 126):
+                    state = "resource_limited" if proc.returncode == 125 else "pty_failure"
+                    message = (
+                        f"failed to apply quota process limits with backend {policy.get('backend')}"
+                        if proc.returncode == 125
+                        else "failed to assign controlling terminal for quota process"
+                    )
                     raise QuotaProbeError(
-                        "resource_limited",
-                        f"failed to apply quota process limits with backend {policy.get('backend')}",
+                        state,
+                        message,
                         "".join(output),
                     )
                 raise QuotaProbeError("process_exit", "CLI process exited during startup", "".join(output))
@@ -549,9 +708,8 @@ class PersistentQuotaSession:
             slash_command = quota_command_for(self.tool_key)
             if not slash_command:
                 raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
-            key_delay_seconds = float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", DEFAULT_KEY_DELAY_SECONDS))
             output = []
-            send_interactive_command(self.master_fd, slash_command, max(0.0, key_delay_seconds))
+            send_interactive_command(self.master_fd, slash_command, quota_key_delay_seconds(self.tool_key))
             post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
             post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
             wait_after_command(self.master_fd, output, max(0.0, post_command_seconds))
@@ -744,58 +902,35 @@ def record_persistent_parser_result(tool_key, command, env, cwd, quota):
 
 
 def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-    audit.record("quota", "started", tool=tool_key, backend="pty", details={"cwd": cwd, "command": command})
-    if os.name == "nt":
-        raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
-    try:
-        import pty
-    except ImportError as e:
-        raise QuotaProbeError("unsupported", "PTY support is not available") from e
-    if shutil.which(command[0]) is None:
-        raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
-
-    master_fd, slave_fd = pty.openpty()
-    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", DEFAULT_ROWS, DEFAULT_COLS, 0, 0))
-    env = env.copy()
-    env.setdefault("TERM", "xterm-256color")
-    command, preexec_fn, policy = prepare_popen(command, tier="quota", needs_pty=True)
-    audit.record(
-        "subprocess",
-        "decision",
-        command="quota",
-        tool=tool_key,
-        backend=policy.get("backend"),
-        details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
-    )
-    proc = subprocess.Popen(
-        command,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=cwd,
-        env=env,
-        start_new_session=True,
-        close_fds=True,
-        preexec_fn=preexec_fn,
-    )
-    os.close(slave_fd)
+    proc, master_fd, policy = start_quota_pty_process(tool_key, command, env, cwd, "pty")
     output = []
     try:
         startup_default = DEFAULT_AGY_STARTUP_SECONDS if tool_key == "agy" else DEFAULT_STARTUP_SECONDS
         startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
-        wait_for_startup(master_fd, output, max(0.0, startup_seconds))
-        wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
-        if proc.poll() == 125:
+        wait_for_cli_startup(
+            tool_key,
+            master_fd,
+            output,
+            max(0.0, startup_seconds),
+            idle_seconds,
+            timeout_seconds,
+        )
+        if proc.poll() in (125, 126):
+            state = "resource_limited" if proc.returncode == 125 else "pty_failure"
+            message = (
+                f"failed to apply quota process limits with backend {policy.get('backend')}"
+                if proc.returncode == 125
+                else "failed to assign controlling terminal for quota process"
+            )
             raise QuotaProbeError(
-                "resource_limited",
-                f"failed to apply quota process limits with backend {policy.get('backend')}",
+                state,
+                message,
                 "".join(output),
             )
         slash_command = quota_command_for(tool_key)
         if not slash_command:
             raise QuotaProbeError("unsupported", f"quota command is not configured for {tool_key}")
-        key_delay_seconds = float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", DEFAULT_KEY_DELAY_SECONDS))
-        send_interactive_command(master_fd, slash_command, max(0.0, key_delay_seconds))
+        send_interactive_command(master_fd, slash_command, quota_key_delay_seconds(tool_key))
         post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
         post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
         wait_after_command(master_fd, output, max(0.0, post_command_seconds))
@@ -825,6 +960,20 @@ def parse_quota(tool_key, screen_text):
             "limits": {},
             "warnings": ["quota command returned no readable output"],
         }
+    if tool_key == "agy":
+        classified = classify_agy_failure(normalized)
+        if classified:
+            state, message = classified
+            result = {
+                "state": state,
+                "source_command": quota_command_for(tool_key),
+                "limits": {},
+                "warnings": [message],
+            }
+            diagnostic = summary[:240]
+            if diagnostic:
+                result["diagnostic_summary"] = diagnostic
+            return result
     if detect_auth_required(normalized):
         return {
             "state": "auth_required",
@@ -857,13 +1006,23 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
         screen_text = runner(tool_key, command, env, cwd, timeout_seconds=timeout_seconds)
         quota = parse_quota(tool_key, screen_text)
     except QuotaProbeError as e:
-        audit.record("quota", "failed", tool=tool_key, profile=profile_name, result="failed", error_class=e.state, details={"message": str(e)})
+        state = e.state
+        message = str(e)
+        diagnostic = None
+        if tool_key == "agy":
+            classified = classify_agy_failure(e.raw_output)
+            if classified:
+                state, message = classified
+            diagnostic = "\n".join(compact_lines(e.raw_output))[:240]
+        audit.record("quota", "failed", tool=tool_key, profile=profile_name, result="failed", error_class=state, details={"message": message})
         quota = {
-            "state": e.state,
+            "state": state,
             "source_command": quota_command_for(tool_key),
             "limits": {},
-            "warnings": [str(e)],
+            "warnings": [message],
         }
+        if diagnostic:
+            quota["diagnostic_summary"] = diagnostic
     if runner is run_persistent_cli_quota_snapshot:
         record_persistent_parser_result(tool_key, command, env, cwd, quota)
     audit.record("quota", "completed", tool=tool_key, profile=profile_name, result=quota.get("state"), details={"limits": list(quota.get("limits", {}))})
