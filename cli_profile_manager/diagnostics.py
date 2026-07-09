@@ -59,6 +59,13 @@ def relevant_env_snapshot():
         "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
         "AI_MAN_QUOTA_SESSION_MAX",
+        "AI_MAN_AUDIT",
+        "AI_MAN_AUDIT_BACKEND",
+        "AI_MAN_AUDIT_STRICT",
+        "AI_MAN_AUDIT_RETENTION_DAYS",
+        "AI_MAN_AUDIT_MAX_BYTES",
+        "AI_MAN_AUDIT_SHOW_ACCOUNTS",
+        "AI_MAN_AUDIT_SHOW_PATHS",
         "AI_MAN_PROCESS_LIMITS",
         "AI_MAN_PROCESS_MEMORY_MB",
         "AI_MAN_PROCESS_CPU_PERCENT",
@@ -129,6 +136,7 @@ def diagnostics_payload(
     profile_index_provider=None,
 ):
     from .interactive import quota_runtime_snapshot
+    from .audit import diagnostics_payload as audit_diagnostics
     from .process_policy import diagnostics_payload as process_policy_diagnostics
     from .runtime_service import service_status
 
@@ -146,6 +154,7 @@ def diagnostics_payload(
             for key in selected_tools
         },
         "environment": relevant_env_snapshot(),
+        "audit": audit_diagnostics(),
         "process_limits": process_policy_diagnostics(),
         "service_runtime": service_status(),
         "quota_runtime": quota_runtime_snapshot(tool_key),

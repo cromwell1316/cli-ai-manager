@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from . import metadata, paths
+from . import audit
 
 
 PROTOCOL_VERSION = 1
@@ -162,12 +163,21 @@ def request(payload, timeout_seconds=DEFAULT_CLIENT_TIMEOUT_SECONDS):
     sock_path = socket_path()
     if not sock_path.exists():
         raise ServiceError("service socket is not present")
+    audit.record("runtime_service", "attempted", command="service", details={"action": payload.get("action")})
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(timeout_seconds)
         client.connect(str(sock_path))
         client.sendall(encode_message(payload))
         with client.makefile("rb") as stream:
-            return read_message(stream)
+            response = read_message(stream)
+    audit.record(
+        "runtime_service",
+        "completed" if response.get("ok") else "failed",
+        command="service",
+        result="succeeded" if response.get("ok") else "failed",
+        details={"action": payload.get("action"), "error": response.get("error")},
+    )
+    return response
 
 
 def execute_argv(argv):
@@ -227,6 +237,7 @@ def _validate_peer(sock):
 
 def handle_payload(payload, state):
     state.requests += 1
+    audit.record("runtime_service", "attempted", command="service", details={"action": payload.get("action"), "request_count": state.requests})
     if payload.get("version") != PROTOCOL_VERSION:
         return {"ok": False, "error": {"type": "protocol_error", "message": "unsupported protocol version"}}
     action = payload.get("action")
@@ -234,6 +245,7 @@ def handle_payload(payload, state):
         return state.health()
     if action == "invalidate":
         state.invalidate()
+        audit.record("runtime_service", "completed", command="service", result="succeeded", details={"action": "invalidate", "generation": state.generation})
         return {"ok": True, "generation": state.generation}
     if action == "shutdown":
         return {"ok": True, "shutdown": True}
@@ -303,6 +315,7 @@ def start_service(script_path):
     cleanup_stale_files()
     current = service_status()
     if current["running"]:
+        audit.record("runtime_service", "skipped", command="service", result="already_running", details={"action": "start"})
         return {**current, "ok": True, "started": False}
     log_file = open(log_path(), "ab", buffering=0)
     try:
@@ -320,10 +333,12 @@ def start_service(script_path):
     while time.time() < deadline:
         status = service_status()
         if status["running"]:
+            audit.record("runtime_service", "completed", command="service", result="succeeded", details={"action": "start", "pid": status.get("pid")})
             return {**status, "ok": True, "started": True}
         if proc.poll() is not None:
             break
         time.sleep(0.05)
+    audit.record("runtime_service", "failed", command="service", result="failed", error_class="startup_timeout", details={"action": "start"})
     return {**service_status(), "ok": False, "started": False, "error": "service did not become ready"}
 
 
@@ -331,6 +346,7 @@ def stop_service(timeout_seconds=3.0):
     status = service_status()
     if not status["pid"] and not socket_path().exists():
         cleanup_stale_files()
+        audit.record("runtime_service", "skipped", command="service", result="not_running", details={"action": "stop"})
         return {**service_status(), "ok": True, "stopped": False}
     if status["running"]:
         try:

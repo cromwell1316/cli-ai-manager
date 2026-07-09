@@ -57,6 +57,12 @@ from .cli import (
 )
 from .quota import close_persistent_quota_sessions
 
+
+def _audit():
+    from . import audit
+
+    return audit
+
 AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
@@ -66,6 +72,7 @@ QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
 QUOTA_ACTIVE_JOB_STATES = ("queued", "running")
 INTERACTIVE_QUOTA_SCHEDULER = None
 INTERACTIVE_QUOTA_SCHEDULER_LOCK = threading.Lock()
+STATUS_SCREEN_RENDER_CACHE = {}
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
 )
@@ -813,11 +820,61 @@ def get_key(timeout=None):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def render_status_screen(tool_key, status_message=None, base_statuses=None):
-    clear_screen()
+def header_lines(title=""):
+    width = 62
+    border = "═" * (width - 2)
+    lines = [f"{CLR_BOLD}{CLR_CYAN}╔{border}╗{CLR_RESET}"]
+    if title:
+        padding = (width - 2 - len(title)) // 2
+        pad_str = " " * padding
+        extra = " " if (width - 2 - len(title)) % 2 != 0 else ""
+        lines.append(
+            f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}{pad_str}"
+            f"{CLR_BOLD}{CLR_WHITE}{title}{CLR_RESET}{pad_str}{extra}"
+            f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}"
+        )
+    lines.append(f"{CLR_BOLD}{CLR_CYAN}╚{border}╝{CLR_RESET}")
+    return lines
+
+
+def reset_status_screen_render():
+    STATUS_SCREEN_RENDER_CACHE.clear()
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+
+
+def paint_terminal_frame(lines, cache_key="status"):
+    text_lines = [str(line) for line in lines]
+    if not sys.stdout.isatty():
+        sys.stdout.write("\n".join(text_lines) + "\n")
+        sys.stdout.flush()
+        return
+
+    previous = STATUS_SCREEN_RENDER_CACHE.get(cache_key)
+    output = ["\033[?25l"]
+    if previous is None:
+        output.append("\033[H")
+        output.append("\n".join(text_lines))
+        output.append("\033[J")
+    else:
+        max_lines = max(len(previous), len(text_lines))
+        for idx in range(max_lines):
+            new_line = text_lines[idx] if idx < len(text_lines) else ""
+            old_line = previous[idx] if idx < len(previous) else None
+            if new_line == old_line:
+                continue
+            output.append(f"\033[{idx + 1};1H{new_line}\033[K")
+        if len(text_lines) < len(previous):
+            output.append(f"\033[{len(text_lines) + 1};1H\033[J")
+    STATUS_SCREEN_RENDER_CACHE[cache_key] = text_lines
+    sys.stdout.write("".join(output))
+    sys.stdout.flush()
+
+
+def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):
     tool_name = TOOLS[tool_key]["name"]
-    print_header(f"STATUS: {tool_name.upper()}")
-    print()
+    lines = header_lines(f"STATUS: {tool_name.upper()}")
+    lines.append("")
 
     if base_statuses is None:
         base_statuses = collect_status_snapshot(tool_key)
@@ -846,7 +903,7 @@ def render_status_screen(tool_key, status_message=None, base_statuses=None):
         }
         quota_header = f"{'Quota':<{widths['quota']}}"
         total_width = sum(widths.values()) + len(widths) - 1
-    print(
+    lines.append(
         f"{CLR_BOLD}{CLR_WHITE}"
         f"{'Profile':<{widths['profile']}} "
         f"{'Active Account / Tier':<{widths['account']}} "
@@ -855,7 +912,7 @@ def render_status_screen(tool_key, status_message=None, base_statuses=None):
         f"{'Label':<{widths['label']}}"
         f"{CLR_RESET}"
     )
-    print("-" * total_width)
+    lines.append("-" * total_width)
 
     for status in statuses:
         stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
@@ -875,42 +932,55 @@ def render_status_screen(tool_key, status_message=None, base_statuses=None):
             )
         else:
             quota = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
-        print(
+        lines.append(
             f"{visible_fit(profile, widths['profile'])} "
             f"{visible_fit(email, widths['account'])} "
             f"{visible_fit(stat_str, widths['status'])} "
             f"{quota} "
             f"{visible_fit(label, widths['label'])}"
         )
-    print()
+    lines.append("")
     if status_message:
-        print(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
-    print(
+        lines.append(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
+    lines.append(
         f"Next auto refresh: {CLR_CYAN}{quota_refresh_countdown(tool_key)}{CLR_RESET}. "
         "Press Enter/q to return, r to refresh quota now..."
     )
+    return lines
+
+
+def render_status_screen(tool_key, status_message=None, base_statuses=None):
+    paint_terminal_frame(render_status_screen_lines(tool_key, status_message, base_statuses))
 
 
 def view_status(tool_key):
     status_message = None
     base_statuses = collect_status_snapshot(tool_key)
-    while True:
-        render_status_screen(tool_key, status_message, base_statuses)
-        status_message = None
-        key = get_key(timeout=next_quota_wake_timeout(tool_key))
-        if key is None:
-            continue
-        if key in ("enter", "esc", "q"):
-            return
-        elif key in ("r", "R", "ctrl+r", "к", "К"):
-            count = force_quota_refresh(tool_key)
-            if count:
-                status_message = f"Refreshing quota now for {count} profiles..."
-            else:
-                status_message = "Quota refresh is already running..."
-            continue
-        elif key == "ctrl+c":
-            sys.exit(0)
+    STATUS_SCREEN_RENDER_CACHE.pop("status", None)
+    _audit().record("interactive", "started", command="status", tool=tool_key, details={"workflow": "view_status"})
+    try:
+        while True:
+            render_status_screen(tool_key, status_message, base_statuses)
+            status_message = None
+            key = get_key(timeout=next_quota_wake_timeout(tool_key))
+            if key is None:
+                continue
+            if key in ("enter", "esc", "q"):
+                _audit().record("interactive", "completed", command="status", tool=tool_key, result="succeeded", details={"workflow": "view_status", "key": key})
+                return
+            elif key in ("r", "R", "ctrl+r", "к", "К"):
+                count = force_quota_refresh(tool_key)
+                _audit().record("interactive", "retried", command="status", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
+                if count:
+                    status_message = f"Refreshing quota now for {count} profiles..."
+                else:
+                    status_message = "Quota refresh is already running..."
+                continue
+            elif key == "ctrl+c":
+                _audit().record("interactive", "failed", command="status", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
+                sys.exit(0)
+    finally:
+        reset_status_screen_render()
 
 
 def clear_screen():
@@ -919,19 +989,13 @@ def clear_screen():
 
 
 def print_header(title=""):
-    width = 62
-    border = "═" * (width - 2)
-    print(f"{CLR_BOLD}{CLR_CYAN}╔{border}╗{CLR_RESET}")
-    if title:
-        padding = (width - 2 - len(title)) // 2
-        pad_str = " " * padding
-        extra = " " if (width - 2 - len(title)) % 2 != 0 else ""
-        print(f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}{pad_str}{CLR_BOLD}{CLR_WHITE}{title}{CLR_RESET}{pad_str}{extra}{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}")
-    print(f"{CLR_BOLD}{CLR_CYAN}╚{border}╝{CLR_RESET}")
+    for line in header_lines(title):
+        print(line)
 
 def run_menu(options, title="", shortcuts=None):
     shortcuts = shortcuts or {}
     selected_idx = 0
+    _audit().record("interactive", "started", details={"workflow": "menu", "title": title, "options": len(options)})
     while True:
         clear_screen()
         print_header(title)
@@ -951,16 +1015,21 @@ def run_menu(options, title="", shortcuts=None):
         elif key == 'down':
             selected_idx = (selected_idx + 1) % len(options)
         elif key == 'enter':
+            _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": selected_idx})
             return selected_idx
         elif key.isdigit() and key != "0":
             idx = int(key) - 1
             if 0 <= idx < len(options):
+                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": idx, "key": key})
                 return idx
         elif key in shortcuts:
+            _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "shortcut": key})
             return shortcuts[key]
         elif key in ('esc', 'q'):
+            _audit().record("interactive", "completed", result="cancelled", details={"workflow": "menu", "title": title, "key": key})
             return -1
         elif key == 'ctrl+c':
+            _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
             sys.exit(0)
 
 def launch_account(tool_key):

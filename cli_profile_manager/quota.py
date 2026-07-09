@@ -13,6 +13,7 @@ import threading
 import time
 
 from .process_policy import prepare_popen
+from . import audit
 
 
 DEFAULT_COLS = 120
@@ -473,6 +474,7 @@ class PersistentQuotaSession:
         self.last_used_at = self.created_at
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+        audit.record("quota", "started", tool=self.tool_key, backend="persistent_pty", details={"cwd": self.cwd, "command": self.command})
         if os.name == "nt":
             raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
         try:
@@ -487,6 +489,14 @@ class PersistentQuotaSession:
         env = self.env.copy()
         env.setdefault("TERM", "xterm-256color")
         command, preexec_fn, policy = prepare_popen(self.command, tier="quota", needs_pty=True)
+        audit.record(
+            "subprocess",
+            "decision",
+            command="quota",
+            tool=self.tool_key,
+            backend=policy.get("backend"),
+            details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
+        )
         proc = subprocess.Popen(
             command,
             stdin=slave_fd,
@@ -522,6 +532,7 @@ class PersistentQuotaSession:
             raise
         self.proc = proc
         self.master_fd = master_fd
+        audit.record("quota", "completed", tool=self.tool_key, backend="persistent_pty", result="succeeded", details={"pid": proc.pid})
 
     def is_alive(self):
         return self.proc is not None and self.proc.poll() is None and self.master_fd is not None
@@ -532,6 +543,8 @@ class PersistentQuotaSession:
             if not self.is_alive():
                 self.close()
                 self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
+            else:
+                audit.record("quota", "retried", tool=self.tool_key, backend="persistent_pty", details={"reuse": True})
             read_available(self.master_fd)
             slash_command = quota_command_for(self.tool_key)
             if not slash_command:
@@ -554,6 +567,7 @@ class PersistentQuotaSession:
         self.master_fd = None
         if proc is None or master_fd is None:
             return
+        audit.record("quota", "completed", tool=self.tool_key, backend="persistent_pty", result="closed")
         output = []
         terminate_process(proc, master_fd, output)
         try:
@@ -643,6 +657,7 @@ def evict_persistent_quota_sessions(now=None):
                 del PERSISTENT_QUOTA_SESSIONS[key]
                 PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
     for session in evicted:
+        audit.record("quota", "skipped", tool=getattr(session, "tool_key", None), backend="persistent_pty", result="evicted")
         logging.debug(
             "quota session evict tool=%s cwd=%s home=%s",
             getattr(session, "tool_key", None),
@@ -729,6 +744,7 @@ def record_persistent_parser_result(tool_key, command, env, cwd, quota):
 
 
 def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+    audit.record("quota", "started", tool=tool_key, backend="pty", details={"cwd": cwd, "command": command})
     if os.name == "nt":
         raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
     try:
@@ -743,6 +759,14 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
     env = env.copy()
     env.setdefault("TERM", "xterm-256color")
     command, preexec_fn, policy = prepare_popen(command, tier="quota", needs_pty=True)
+    audit.record(
+        "subprocess",
+        "decision",
+        command="quota",
+        tool=tool_key,
+        backend=policy.get("backend"),
+        details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
+    )
     proc = subprocess.Popen(
         command,
         stdin=slave_fd,
@@ -775,7 +799,9 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
         post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
         post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
         wait_after_command(master_fd, output, max(0.0, post_command_seconds))
-        return wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+        snapshot = wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
+        audit.record("quota", "completed", tool=tool_key, backend="pty", result="succeeded", details={"bytes": len(snapshot)})
+        return snapshot
     finally:
         terminate_process(proc, master_fd, output)
         try:
@@ -826,10 +852,12 @@ def parse_quota(tool_key, screen_text):
 
 
 def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, runner=run_cli_quota_snapshot):
+    audit.record("quota", "attempted", tool=tool_key, profile=profile_name, details={"runner": getattr(runner, "__name__", "runner")})
     try:
         screen_text = runner(tool_key, command, env, cwd, timeout_seconds=timeout_seconds)
         quota = parse_quota(tool_key, screen_text)
     except QuotaProbeError as e:
+        audit.record("quota", "failed", tool=tool_key, profile=profile_name, result="failed", error_class=e.state, details={"message": str(e)})
         quota = {
             "state": e.state,
             "source_command": quota_command_for(tool_key),
@@ -838,6 +866,7 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
         }
     if runner is run_persistent_cli_quota_snapshot:
         record_persistent_parser_result(tool_key, command, env, cwd, quota)
+    audit.record("quota", "completed", tool=tool_key, profile=profile_name, result=quota.get("state"), details={"limits": list(quota.get("limits", {}))})
     return {
         "tool": tool_key,
         "profile": profile_name,

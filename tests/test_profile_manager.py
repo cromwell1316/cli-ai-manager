@@ -1274,6 +1274,35 @@ def test_interactive_email_coloring_preserves_visible_width():
     assert interactive.visible_len(colored) == len("alex123@example.com")
 
 
+def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    class FakeStdout:
+        def __init__(self):
+            self.writes = []
+
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            pass
+
+    stdout = FakeStdout()
+    monkeypatch.setattr(interactive.sys, "stdout", stdout)
+    interactive.STATUS_SCREEN_RENDER_CACHE.clear()
+
+    interactive.paint_terminal_frame(["one", "two"])
+    interactive.paint_terminal_frame(["one", "three"])
+
+    assert "\033[Hone\ntwo\033[J" in stdout.writes[0]
+    assert "\033[2;1Hthree\033[K" in stdout.writes[1]
+    assert "\033[H" not in stdout.writes[1]
+    assert "\033[J" not in stdout.writes[1]
+
+
 @pytest.mark.parametrize("refresh_key", ["r", "R", "ctrl+r", "к", "К"])
 def test_interactive_status_refresh_key_invalidates_quota_cache(monkeypatch, refresh_key):
     import cli_profile_manager.interactive as interactive
@@ -2042,3 +2071,121 @@ def test_mutating_command_notifies_runtime_invalidation(monkeypatch, tmp_path):
 
     assert rc == 0, stderr
     assert calls == ["invalidate"]
+
+
+def test_audit_event_redacts_tokens_accounts_and_paths(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import audit
+
+    event = audit.make_event(
+        "credential",
+        "attempted",
+        command="import",
+        tool="codex",
+        details={
+            "token": "sk-test-secret",
+            "account": "user@example.com",
+            "path": str(tmp_path / "codex-homes" / "p1" / "auth.json"),
+        },
+    )
+
+    rendered = json.dumps(event)
+    assert event["schema_version"] == 1
+    assert event["event_id"]
+    assert event["correlation_id"]
+    assert "sk-test-secret" not in rendered
+    assert "user@example.com" not in rendered
+    assert str(tmp_path) not in rendered
+    assert "[redacted]" in rendered or "[redacted-token]" in rendered
+
+
+def test_audit_jsonl_backend_writes_and_skips_malformed_rows(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import audit
+
+    audit.record("command", "started", command="list", details={"argv": ["list", "agy", "--json"]})
+    with open(audit.jsonl_path(), "a", encoding="utf-8") as handle:
+        handle.write("{malformed\n")
+    events = audit.read_jsonl_events()
+    status = audit.status_payload()
+
+    assert len(events) == 1
+    assert events[0]["command"] == "list"
+    assert status["audit_dir_mode"] == "0o700"
+    assert status["path_mode"] == "0o600"
+
+
+def test_audit_sqlite_backend_writes_and_queries(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    monkeypatch.setenv("AI_MAN_AUDIT_BACKEND", "sqlite")
+    from cli_profile_manager import audit
+
+    audit.record("command", "completed", command="status", tool="agy", profile="p1", result="succeeded")
+    events = audit.query_events(command="status", tool="agy", profile="p1", result="succeeded")
+    status = audit.status_payload()
+
+    assert len(events) == 1
+    assert events[0]["category"] == "command"
+    assert status["backend"] == "sqlite"
+    assert status["record_count"] == 1
+
+
+def test_audit_cli_records_command_and_supports_query_export_purge(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    listed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "list", "agy", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    audit_list = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "audit", "list", "--json", "--command", "list", "--limit", "20"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    exported = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "audit", "export", "--format", "json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    purged = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "audit", "purge", "--yes", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert listed.returncode == 0, listed.stderr
+    assert audit_list.returncode == 0, audit_list.stderr
+    events = json.loads(audit_list.stdout)["events"]
+    assert any(event["category"] == "command" and event["action"] == "started" for event in events)
+    assert any(event["category"] == "command" and event["action"] == "completed" for event in events)
+    assert exported.returncode == 0, exported.stderr
+    assert json.loads(exported.stdout)["events"]
+    assert purged.returncode == 0, purged.stderr
+    assert json.loads(purged.stdout)["removed"] >= 1
+
+
+def test_audit_diagnostics_report_health(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import audit
+
+    audit.record("diagnostic", "completed", command="diagnostics")
+    payload = pm.diagnostics_payload("codex", status_provider=lambda tool, num: None)
+
+    assert payload["audit"]["enabled"] is True
+    assert payload["audit"]["backend"] == "jsonl"
+    assert payload["audit"]["record_count"] >= 1

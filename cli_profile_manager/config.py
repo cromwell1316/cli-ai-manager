@@ -68,6 +68,36 @@ CONFIG_ENV_VARS = [
         "type": "bool",
     },
     {
+        "name": "AI_MAN_AUDIT",
+        "description": "enable local best-effort audit logging",
+        "default": "1",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_AUDIT_BACKEND",
+        "description": "audit storage backend",
+        "default": "jsonl",
+        "type": "string",
+    },
+    {
+        "name": "AI_MAN_AUDIT_STRICT",
+        "description": "fail commands when audit writes fail",
+        "default": "0",
+        "type": "bool",
+    },
+    {
+        "name": "AI_MAN_AUDIT_RETENTION_DAYS",
+        "description": "audit retention age in days",
+        "default": "90",
+        "type": "int",
+    },
+    {
+        "name": "AI_MAN_AUDIT_MAX_BYTES",
+        "description": "audit retention maximum storage bytes",
+        "default": "10485760",
+        "type": "int",
+    },
+    {
         "name": "AI_MAN_INTERACTIVE_QUOTA_TIMEOUT",
         "description": "generic interactive quota timeout in seconds",
         "default": "12",

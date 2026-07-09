@@ -64,6 +64,7 @@ core_shutil = None
 core_shlex = None
 core_subprocess = None
 core_runtime_service = None
+core_audit = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -189,6 +190,14 @@ def _process_policy():
     from cli_profile_manager import process_policy as module
 
     return module
+
+def _audit():
+    global core_audit
+    if core_audit is None:
+        from cli_profile_manager import audit as module
+
+        core_audit = module
+    return core_audit
 
 def load_metadata():
     return core_load_metadata()
@@ -530,6 +539,21 @@ def print_json_error(message, code, error_type="runtime_error"):
         },
     })
 
+def audit_context_from_argv(argv):
+    command = argv[0] if argv else None
+    tool = None
+    profile = None
+    if command in ("list", "status", "quota", "launch", "login", "import", "export", "label", "clear"):
+        if len(argv) > 1:
+            tool = argv[1]
+        if command in ("status", "quota", "launch", "export", "label", "clear") and len(argv) > 2:
+            profile = argv[2]
+        elif command == "login" and len(argv) > 2:
+            profile = argv[2]
+        elif command == "import" and len(argv) > 3:
+            profile = argv[3]
+    return {"command": command, "tool": tool, "profile": profile}
+
 def diagnostics_payload(*args, **kwargs):
     from cli_profile_manager.diagnostics import diagnostics_payload as func
 
@@ -798,6 +822,14 @@ def cmd_quota(args):
 def run_cli_tool(tool_key, n, extra_args=None):
     tool = TOOLS[tool_key]
     extra_args = extra_args or []
+    _audit().record(
+        "subprocess",
+        "attempted",
+        command="launch",
+        tool=tool_key,
+        profile=f"p{n}",
+        details={"argv": [tool["cmd"]] + list(extra_args), "platform": os.name},
+    )
     if os.name == "nt" and tool_key == "agy":
         switcher = os.path.join(tool["base_dir"], "agy-multiaccount.ps1")
         if not os.path.exists(switcher):
@@ -818,9 +850,29 @@ def run_cli_tool(tool_key, n, extra_args=None):
         if quoted_args:
             command = f"{command} {quoted_args}"
         completed = _subprocess().run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        _audit().record(
+            "subprocess",
+            "completed",
+            command="launch",
+            tool=tool_key,
+            profile=f"p{n}",
+            backend="powershell",
+            result="succeeded" if completed.returncode == 0 else "failed",
+            exit_code=completed.returncode,
+        )
         return completed.returncode
 
     if _shutil().which(tool["cmd"]) is None:
+        _audit().record(
+            "subprocess",
+            "failed",
+            command="launch",
+            tool=tool_key,
+            profile=f"p{n}",
+            result="failed",
+            error_class="missing_cli",
+            details={"cli": tool["cmd"]},
+        )
         print_error(f"{tool['cmd']} CLI is not installed or not in PATH; install it or adjust PATH")
         return EXIT_NOT_FOUND
     os.makedirs(profile_home(tool_key, n), exist_ok=True)
@@ -830,6 +882,15 @@ def run_cli_tool(tool_key, n, extra_args=None):
         tier="launch",
         needs_pty=False,
         unit_name=f"ai-man-{tool_key}-p{n}",
+    )
+    _audit().record(
+        "subprocess",
+        "decision",
+        command="launch",
+        tool=tool_key,
+        profile=f"p{n}",
+        backend=policy.get("backend"),
+        details={"process_policy": {key: policy.get(key) for key in ("enabled", "backend", "tier", "memory_mb", "cpu_percent", "max_processes")}},
     )
     _logging().info(
         "Launching %s profile p%s backend=%s policy_enabled=%s: %s",
@@ -841,8 +902,19 @@ def run_cli_tool(tool_key, n, extra_args=None):
     )
     try:
         completed = _subprocess().run(cmd, env=make_tool_env(tool_key, n), preexec_fn=preexec_fn)
+        _audit().record(
+            "subprocess",
+            "completed",
+            command="launch",
+            tool=tool_key,
+            profile=f"p{n}",
+            backend=policy.get("backend"),
+            result="succeeded" if completed.returncode == 0 else "failed",
+            exit_code=completed.returncode,
+        )
         return completed.returncode
     except KeyboardInterrupt:
+        _audit().record("subprocess", "failed", command="launch", tool=tool_key, profile=f"p{n}", result="failed", error_class="KeyboardInterrupt")
         return 130
 
 def cmd_launch(args):
@@ -916,6 +988,7 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
     return n, dest_file
 
 def cmd_import(args):
+    _audit().record("credential", "attempted", command="import", tool=args.tool, details={"dry_run": args.dry_run, "path": args.path})
     try:
         n = parse_profile(args.profile) if args.profile else None
     except ValueError as e:
@@ -990,6 +1063,7 @@ def cmd_import(args):
     })
     else:
         print(f"Imported {args.tool} credential into p{imported_num}: {dest_file}")
+    _audit().record("credential", "completed", command="import", tool=args.tool, profile=f"p{imported_num}", result="succeeded", details={"destination": dest_file})
     return EXIT_OK
 
 def find_windows_user():
@@ -1043,6 +1117,7 @@ def export_credential_file(tool_key, profile_num, to_path=None):
     return dest_file
 
 def cmd_export(args):
+    _audit().record("credential", "attempted", command="export", tool=args.tool, profile=args.profile, details={"dry_run": args.dry_run, "to": args.to})
     try:
         n = parse_profile(args.profile)
         if args.dry_run:
@@ -1092,6 +1167,7 @@ def cmd_export(args):
         })
     else:
         print(f"Exported {args.tool} p{n}: {dest_file}")
+    _audit().record("credential", "completed", command="export", tool=args.tool, profile=f"p{n}", result="succeeded", details={"destination": dest_file})
     return EXIT_OK
 
 def label_profile(tool_key, profile_num, label):
@@ -1104,6 +1180,7 @@ def cmd_label(args):
         print_error(str(e))
         return EXIT_USAGE
     label_profile(args.tool, n, args.label)
+    _audit().record("profile", "completed", command="label", tool=args.tool, profile=f"p{n}", result="succeeded", details={"label": args.label})
     print(f"Label set for {args.tool} p{n}: {args.label}")
     return EXIT_OK
 
@@ -1122,6 +1199,7 @@ def cmd_clear(args):
     except ValueError as e:
         print_error(str(e))
         return EXIT_USAGE
+    _audit().record("profile", "completed", command="clear", tool=args.tool, profile=f"p{n}", result="succeeded", details={"home": cleared_home})
     print(f"Cleared {args.tool} p{n}: {cleared_home}")
     return EXIT_OK
 
@@ -1166,6 +1244,7 @@ def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     return _sync_module().sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
 
 def cmd_sync(args):
+    _audit().record("sync", "decision", command="sync", details={"source": args.source, "mode": args.mode, "dry_run": args.dry_run})
     try:
         result = sync_profiles_noninteractive(args.source, args.mode, args.dry_run, args.yes)
     except PermissionError as e:
@@ -1202,14 +1281,77 @@ def cmd_sync(args):
             print(f"  {path}")
     return EXIT_OK
 
+def cmd_audit(args):
+    audit = _audit()
+    action = args.audit_action
+    if action == "status":
+        payload = audit.status_payload()
+        if args.json:
+            print_json_payload(payload)
+        else:
+            print(f"Audit: {'enabled' if payload['enabled'] else 'disabled'} backend={payload['backend']} records={payload['record_count']}")
+            print(f"Path: {payload['path']}")
+        return EXIT_OK
+    if action == "list":
+        events = audit.query_events(
+            limit=args.limit,
+            category=args.category,
+            command=args.command_name,
+            tool=args.tool,
+            profile=args.profile,
+            result=args.result,
+            correlation_id=args.correlation_id,
+            since=args.since,
+            until=args.until,
+        )
+        if args.json:
+            print_json_payload({"ok": True, "events": events})
+        else:
+            for event in events:
+                print(f"{event['timestamp']} {event['category']}.{event['action']} {event.get('command') or '-'} {event.get('result') or '-'} {event['event_id']}")
+        return EXIT_OK
+    if action == "show":
+        events = audit.show_events(args.identifier)
+        if args.json:
+            print_json_payload({"ok": True, "events": events})
+        else:
+            for event in events:
+                print(json.dumps(event, indent=2))
+        return EXIT_OK if events else EXIT_NOT_FOUND
+    if action == "export":
+        events = audit.query_events(limit=None)
+        if args.format == "json":
+            print_json_payload({"ok": True, "events": events})
+        else:
+            for event in reversed(events):
+                print(json.dumps(event, sort_keys=True))
+        return EXIT_OK
+    if action == "purge":
+        if not args.yes:
+            print_error("refusing to purge audit data without --yes")
+            return EXIT_USAGE
+        removed = audit.purge_all()
+        print_json_payload({"ok": True, "removed": removed}) if args.json else print(f"Purged {removed} audit events")
+        return EXIT_OK
+    if action == "compact":
+        result = audit.compact_retention(args.days, args.max_bytes)
+        payload = {"ok": True, **result}
+        print_json_payload(payload) if args.json else print(f"Removed {result['removed']} audit events; kept {result['kept']}")
+        return EXIT_OK
+    print_error(f"unknown audit action: {action}")
+    return EXIT_USAGE
+
 def cmd_service(args):
     runtime = _runtime_service()
     action = args.service_action
     if action == "run":
+        _audit().record("runtime_service", "started", command="service", details={"action": "run"})
         try:
             runtime.serve_forever()
+            _audit().record("runtime_service", "completed", command="service", result="succeeded", details={"action": "run"})
             return EXIT_OK
         except Exception as e:
+            _audit().record("runtime_service", "failed", command="service", result="failed", error_class=type(e).__name__, details={"message": str(e)})
             print_error(f"service failed: {e}")
             return EXIT_RUNTIME
     if action == "status":
@@ -1232,6 +1374,7 @@ def cmd_service(args):
         return EXIT_OK
     if action == "start":
         payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "start", "running": payload.get("running")})
         if args.json:
             print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
         else:
@@ -1239,6 +1382,7 @@ def cmd_service(args):
         return EXIT_OK if payload.get("ok") else EXIT_RUNTIME
     if action == "stop":
         payload = runtime.stop_service()
+        _audit().record("runtime_service", "completed", command="service", result="succeeded", details={"action": "stop", "stopped": payload.get("stopped")})
         if args.json:
             print_json_payload({"ok": True, "service": payload})
         else:
@@ -1247,6 +1391,7 @@ def cmd_service(args):
     if action == "restart":
         runtime.stop_service()
         payload = runtime.start_service(os.path.join(os.path.dirname(os.path.dirname(__file__)), "profile_manager.py"))
+        _audit().record("runtime_service", "completed", command="service", result="succeeded" if payload.get("ok") else "failed", details={"action": "restart", "running": payload.get("running")})
         if args.json:
             print_json_payload({"ok": bool(payload.get("ok")), "service": payload})
         else:
@@ -1409,6 +1554,41 @@ def build_parser():
     config_show_p.add_argument("--json", action="store_true")
     config_show_p.set_defaults(func=cmd_config_show)
 
+    audit_p = sub.add_parser("audit", help="inspect and manage local audit events")
+    audit_p.set_defaults(func=cmd_audit, audit_action="status", json=False)
+    audit_sub = audit_p.add_subparsers(dest="audit_action")
+    audit_status_p = audit_sub.add_parser("status")
+    audit_status_p.add_argument("--json", action="store_true")
+    audit_status_p.set_defaults(func=cmd_audit)
+    audit_list_p = audit_sub.add_parser("list")
+    audit_list_p.add_argument("--json", action="store_true")
+    audit_list_p.add_argument("--limit", type=int, default=50)
+    audit_list_p.add_argument("--category")
+    audit_list_p.add_argument("--command", dest="command_name")
+    audit_list_p.add_argument("--tool")
+    audit_list_p.add_argument("--profile")
+    audit_list_p.add_argument("--result")
+    audit_list_p.add_argument("--correlation-id")
+    audit_list_p.add_argument("--since", help="inclusive ISO-8601 lower timestamp bound")
+    audit_list_p.add_argument("--until", help="inclusive ISO-8601 upper timestamp bound")
+    audit_list_p.set_defaults(func=cmd_audit)
+    audit_show_p = audit_sub.add_parser("show")
+    audit_show_p.add_argument("identifier")
+    audit_show_p.add_argument("--json", action="store_true")
+    audit_show_p.set_defaults(func=cmd_audit)
+    audit_export_p = audit_sub.add_parser("export")
+    audit_export_p.add_argument("--format", choices=("jsonl", "json"), default="jsonl")
+    audit_export_p.set_defaults(func=cmd_audit)
+    audit_purge_p = audit_sub.add_parser("purge")
+    audit_purge_p.add_argument("--yes", action="store_true")
+    audit_purge_p.add_argument("--json", action="store_true")
+    audit_purge_p.set_defaults(func=cmd_audit)
+    audit_compact_p = audit_sub.add_parser("compact")
+    audit_compact_p.add_argument("--days", type=int)
+    audit_compact_p.add_argument("--max-bytes", type=int)
+    audit_compact_p.add_argument("--json", action="store_true")
+    audit_compact_p.set_defaults(func=cmd_audit)
+
     service_p = sub.add_parser("service", help="manage optional long-lived local runtime")
     service_p.set_defaults(func=cmd_service, service_action="status", json=False)
     service_sub = service_p.add_subparsers(dest="service_action")
@@ -1464,13 +1644,37 @@ def run_cli(argv):
         result = try_run_service_command(argv)
         if result is not None:
             return result
+    audit_started = None
+    audit_parent_token = None
+    audit_corr_token = None
+    audit_context = audit_context_from_argv(argv)
+    if audit_context["command"]:
+        audit_started = _audit().make_event("command", "started", **audit_context, details={"argv": argv})
+        _audit().write_event(audit_started)
+        audit_corr_token = _audit().CURRENT_CORRELATION_ID.set(audit_started["correlation_id"])
+        audit_parent_token = _audit().CURRENT_PARENT_ID.set(audit_started["event_id"])
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         return None
     if getattr(args, "args", None) and args.args[:1] == ["--"]:
         args.args = args.args[1:]
-    result = args.func(args)
+    try:
+        result = args.func(args)
+    except SystemExit as e:
+        if audit_started:
+            _audit().complete_span(audit_started, result="failed", exit_code=e.code, error_class="SystemExit")
+        raise
+    except Exception as e:
+        if audit_started:
+            _audit().complete_span(audit_started, result="failed", exit_code=EXIT_RUNTIME, error_class=type(e).__name__, details={"message": str(e)})
+        raise
+    finally:
+        if audit_started:
+            _audit().CURRENT_PARENT_ID.reset(audit_parent_token)
+            _audit().CURRENT_CORRELATION_ID.reset(audit_corr_token)
+    if audit_started:
+        _audit().complete_span(audit_started, result="succeeded" if result == EXIT_OK else "failed", exit_code=result)
     notify_service_after_command(argv, result)
     return result
 
@@ -1490,6 +1694,7 @@ def try_run_service_command(argv):
         try:
             response = runtime.run_via_service(argv)
         except Exception:
+            _audit().record("runtime_service", "skipped", command=argv[0] if argv else None, result="fallback", error_class="ServiceError")
             return None
     finally:
         if old_active is None:
@@ -1497,7 +1702,9 @@ def try_run_service_command(argv):
         else:
             os.environ["AI_MAN_SERVICE_CLIENT_ACTIVE"] = old_active
     if not response.get("ok"):
+        _audit().record("runtime_service", "failed", command=argv[0] if argv else None, result="fallback", details=response.get("error"))
         return None
+    _audit().record("runtime_service", "succeeded", command=argv[0] if argv else None, result="succeeded", details={"returncode": response.get("returncode")})
     stdout = response.get("stdout") or ""
     stderr = response.get("stderr") or ""
     if stdout:
