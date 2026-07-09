@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -39,3 +39,13 @@ documentation accurate as implementation changes.
 - `V_01_Doc_Check_Verification.md`
 - `V_02_Evidence_Verification.md`
 - `V_03_Acceptance_Matrix.md`
+- `V_99_Automated_Evidence.md`
+
+## Completion Notes
+
+- Added `scripts/horizon_governance.py` for deterministic local horizon
+  structure validation and sanitized evidence collection.
+- Added tests for repository-wide horizon validation and evidence redaction.
+- Added README governance instructions and `management/RELEASE_NOTES.md`.
+- Verified with `python3 -m pytest -q`: 118 passed.
+- Verified `python3 scripts/horizon_governance.py --json`: ok.

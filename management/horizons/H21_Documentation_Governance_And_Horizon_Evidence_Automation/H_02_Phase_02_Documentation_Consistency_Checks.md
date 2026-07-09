@@ -5,7 +5,13 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: completed.
+
+## Implementation
+
+`scripts/horizon_governance.py --json` validates required README file lists,
+source-of-truth paths, status vocabulary, acceptance matrix tables, and
+validation command blocks.
 
 ## Objective
 

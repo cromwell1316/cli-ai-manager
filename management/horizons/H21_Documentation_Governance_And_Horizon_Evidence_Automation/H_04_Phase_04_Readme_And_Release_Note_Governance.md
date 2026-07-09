@@ -5,7 +5,12 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: completed.
+
+## Implementation
+
+README now documents horizon governance commands. Completed-horizon change notes
+live in `management/RELEASE_NOTES.md`.
 
 ## Objective
 

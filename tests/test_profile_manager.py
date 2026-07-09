@@ -2131,6 +2131,67 @@ def test_runtime_benchmark_quota_parser_outputs_json():
     assert payload["results"][0]["runs"] == 2
 
 
+def test_horizon_governance_validates_current_horizon_docs():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "horizon_governance.py"),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["ok"] is True
+    assert payload["checked"] >= 21
+    assert payload["issues"] == []
+
+
+def test_horizon_governance_collects_redacted_evidence(tmp_path):
+    horizon = tmp_path / "H99_Test_Horizon"
+    horizon.mkdir()
+    (horizon / "V_00_Validation_Plan.md").write_text(
+        "\n".join(
+            [
+                "# V_00 Validation Plan",
+                "",
+                "```bash",
+                f"{sys.executable} -c \"print('user@example.com sk-test-secret')\"",
+                "```",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "horizon_governance.py"),
+            "--horizon",
+            str(horizon),
+            "--evidence",
+            "--write",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout)
+    evidence = (horizon / "V_99_Automated_Evidence.md").read_text(encoding="utf-8")
+    rendered = json.dumps(payload) + evidence
+    assert payload["ok"] is True
+    assert "[redacted-email]" in rendered
+    assert "[redacted-token]" in rendered
+    assert "user@example.com" not in rendered
+    assert "sk-test-secret" not in rendered
+
+
 def test_status_table_lines_fit_narrow_width_and_preserve_quota():
     from cli_profile_manager.cli import CLR_RED, CLR_RESET, status_table_lines, visible_len
 

@@ -5,7 +5,24 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: completed.
+
+## Lifecycle Model
+
+- `planned`: scope exists, implementation has not started.
+- `active`: implementation is in progress.
+- `implemented`: code or documentation changes are present and validation is
+  expected to pass.
+- `completed`: implementation, validation evidence, and acceptance updates are
+  recorded.
+- `verified`: completed work has an additional independent review or release
+  verification.
+- `blocked`: progress is intentionally stopped by an external dependency.
+- `deferred`: scope remains valid but is no longer scheduled.
+
+Acceptance matrix status vocabulary should use `Planned`, `Implemented`,
+`Completed`, `Verified`, `Blocked`, `Deferred`, or a short evidence phrase such
+as `Verified through full command test suite`.
 
 ## Objective
 

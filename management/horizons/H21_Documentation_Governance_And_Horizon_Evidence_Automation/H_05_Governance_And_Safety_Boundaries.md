@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: completed.
 
 ## Boundaries
 

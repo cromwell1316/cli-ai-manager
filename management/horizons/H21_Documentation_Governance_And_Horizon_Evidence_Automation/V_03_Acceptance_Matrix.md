@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Requirement | Status |
 | --- | --- |
-| Lifecycle model | Planned |
-| Evidence model | Planned |
-| Horizon structure checks | Planned |
-| Source-of-truth checks | Planned |
-| Acceptance matrix checks | Planned |
-| Evidence automation | Planned |
-| README alignment checks | Planned |
-| No-secret evidence policy | Planned |
+| Lifecycle model | Completed |
+| Evidence model | Completed |
+| Horizon structure checks | Completed |
+| Source-of-truth checks | Completed |
+| Acceptance matrix checks | Completed |
+| Evidence automation | Completed |
+| README alignment checks | Completed |
+| No-secret evidence policy | Completed |

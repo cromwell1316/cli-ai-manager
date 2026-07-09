@@ -291,8 +291,32 @@ python3 profile_manager.py list agy --json
 python3 profile_manager.py list codex --json
 python3 profile_manager.py list claude --json
 python3 scripts/benchmark_runtime.py --scenario quota-parser --iterations 100 --json
+python3 scripts/horizon_governance.py --json
 ./scripts/verify_no_tui_surface.sh
 ```
+
+## Documentation Governance
+
+Management horizons live under `management/horizons/`. Validate horizon
+structure, source-of-truth links, statuses, acceptance matrices, and validation
+commands with:
+
+```bash
+python3 scripts/horizon_governance.py --json
+```
+
+Collect sanitized validation evidence for one horizon with:
+
+```bash
+python3 scripts/horizon_governance.py \
+  --horizon management/horizons/H21_Documentation_Governance_And_Horizon_Evidence_Automation \
+  --evidence --write --json
+```
+
+Evidence output is redacted for token-like values, account emails, and the
+local home path before it is printed or written to `V_99_Automated_Evidence.md`.
+Completed horizons should update their acceptance matrix, validation result,
+and `management/RELEASE_NOTES.md`.
 
 ## Project Structure
 
@@ -302,10 +326,12 @@ cli-profile-manager/
 ├── install.sh
 ├── scripts/
 │   ├── benchmark_runtime.py
+│   ├── horizon_governance.py
 │   ├── validate_agy_quota_live.py
 │   ├── verify_install.sh
 │   └── verify_no_tui_surface.sh
 ├── management/
+│   ├── RELEASE_NOTES.md
 │   └── horizons/
 └── README.md
 ```

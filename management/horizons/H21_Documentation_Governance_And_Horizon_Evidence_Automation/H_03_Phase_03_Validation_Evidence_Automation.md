@@ -5,7 +5,13 @@ Source of Truth: management/horizons/H21_Documentation_Governance_And_Horizon_Ev
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: completed.
+
+## Implementation
+
+`scripts/horizon_governance.py --horizon <path> --evidence --write --json`
+runs commands from the horizon validation plan and writes sanitized summaries to
+`V_99_Automated_Evidence.md`.
 
 ## Objective
 
