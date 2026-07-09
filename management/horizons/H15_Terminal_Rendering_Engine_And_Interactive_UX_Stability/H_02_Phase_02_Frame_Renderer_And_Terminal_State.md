@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,11 @@ Build the reusable renderer that all live interactive screens can share.
 - Renderer can update changed lines without full clear.
 - Renderer restores cursor on normal exit and exceptions.
 - Unit tests cover initial paint, diff paint, shrink cleanup, and non-TTY mode.
+
+## Evidence
+
+- Added `cli_profile_manager/terminal_rendering.py` with
+  `TerminalFrameRenderer`, ANSI visible-width helpers, resize-aware repaint, and
+  non-TTY fallback.
+- Renderer tests cover initial paint, changed-line diff, shrink cleanup, resize
+  repaint, exception cleanup, and non-TTY output.

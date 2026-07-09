@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -25,3 +25,11 @@ changes consistently.
 - Live screens no longer flicker during background updates.
 - Narrow terminals keep all text coherent.
 - Resize triggers a full frame repaint rather than broken partial output.
+
+## Evidence
+
+- `render_status_screen()` and `run_menu()` now render complete frame lines and
+  hand them to `TerminalFrameRenderer`.
+- Resize detection compares terminal size between frames and forces a full
+  repaint.
+- Existing narrow table and visible-width tests continue to pass.

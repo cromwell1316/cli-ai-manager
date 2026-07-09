@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Verification
 
@@ -14,3 +14,11 @@ Status: planned.
 - Sync and confirmation screens preserve safety prompts.
 - Narrow-width frames remain readable.
 - Resize repaint does not corrupt the screen.
+
+## Evidence
+
+- `tests/test_profile_manager.py::test_interactive_status_painter_updates_changed_lines_only`
+  verifies status diff painting.
+- `tests/test_profile_manager.py::test_interactive_menu_lines_mark_selection_and_fit_footer`
+  verifies menu frame generation.
+- Existing status refresh key and snapshot reuse tests passed after migration.

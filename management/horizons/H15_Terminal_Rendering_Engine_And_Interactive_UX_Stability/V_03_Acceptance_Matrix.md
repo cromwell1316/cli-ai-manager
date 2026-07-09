@@ -5,15 +5,15 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 | Requirement | Status |
 | --- | --- |
-| Render surface inventory | Planned |
-| Shared frame renderer | Planned |
-| Diff redraw for live screens | Planned |
-| Cursor cleanup guarantees | Planned |
-| Non-TTY fallback | Planned |
-| Resize handling | Planned |
-| Narrow-width tests | Planned |
-| Workflow regression tests | Planned |
+| Render surface inventory | Implemented |
+| Shared frame renderer | Implemented |
+| Diff redraw for live screens | Implemented |
+| Cursor cleanup guarantees | Implemented |
+| Non-TTY fallback | Implemented |
+| Resize handling | Implemented |
+| Narrow-width tests | Implemented |
+| Workflow regression tests | Implemented |

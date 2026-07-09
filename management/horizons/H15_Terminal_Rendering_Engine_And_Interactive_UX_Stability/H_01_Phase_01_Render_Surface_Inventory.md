@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -26,3 +26,12 @@ plain print behavior, or one-shot prompts.
 - Every render path has an owner and migration decision.
 - Existing full-clear behavior is documented before replacement.
 - Non-TTY behavior is explicitly defined.
+
+## Evidence
+
+- Live status screen: migrated to `TerminalFrameRenderer` diff frames.
+- Menu loop: migrated to the shared frame renderer while preserving shortcuts,
+  cancellation, and Ctrl+C behavior.
+- Static prompt and subprocess handoff screens remain simple print/clear flows
+  because they are not frequently refreshed.
+- Non-TTY frame output is plain newline-delimited text without escape noise.

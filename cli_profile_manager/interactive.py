@@ -56,6 +56,13 @@ from .cli import (
     write_json_atomic,
 )
 from .quota import close_persistent_quota_sessions
+from .terminal_rendering import (
+    ANSI_RE,
+    TerminalFrameRenderer,
+    visible_fit,
+    visible_len,
+    visible_ljust,
+)
 
 
 def _audit():
@@ -72,29 +79,8 @@ QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
 QUOTA_ACTIVE_JOB_STATES = ("queued", "running")
 INTERACTIVE_QUOTA_SCHEDULER = None
 INTERACTIVE_QUOTA_SCHEDULER_LOCK = threading.Lock()
+STATUS_RENDERER = TerminalFrameRenderer(cache_key="status")
 STATUS_SCREEN_RENDER_CACHE = {}
-ANSI_RE = re.compile(
-    r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
-)
-
-
-def visible_len(text):
-    return len(ANSI_RE.sub("", str(text)))
-
-
-def visible_ljust(text, width):
-    text = str(text)
-    return text + (" " * max(0, width - visible_len(text)))
-
-
-def visible_fit(text, width):
-    text = str(text)
-    if visible_len(text) <= width:
-        return visible_ljust(text, width)
-    plain = ANSI_RE.sub("", text)
-    if width <= 3:
-        return plain[:width]
-    return plain[:width - 3] + "..."
 
 
 def interactive_quota_enabled():
@@ -839,36 +825,17 @@ def header_lines(title=""):
 
 def reset_status_screen_render():
     STATUS_SCREEN_RENDER_CACHE.clear()
-    sys.stdout.write("\033[?25h")
-    sys.stdout.flush()
+    STATUS_RENDERER.reset()
 
 
 def paint_terminal_frame(lines, cache_key="status"):
-    text_lines = [str(line) for line in lines]
-    if not sys.stdout.isatty():
-        sys.stdout.write("\n".join(text_lines) + "\n")
-        sys.stdout.flush()
-        return
-
-    previous = STATUS_SCREEN_RENDER_CACHE.get(cache_key)
-    output = ["\033[?25l"]
-    if previous is None:
-        output.append("\033[H")
-        output.append("\n".join(text_lines))
-        output.append("\033[J")
-    else:
-        max_lines = max(len(previous), len(text_lines))
-        for idx in range(max_lines):
-            new_line = text_lines[idx] if idx < len(text_lines) else ""
-            old_line = previous[idx] if idx < len(previous) else None
-            if new_line == old_line:
-                continue
-            output.append(f"\033[{idx + 1};1H{new_line}\033[K")
-        if len(text_lines) < len(previous):
-            output.append(f"\033[{len(text_lines) + 1};1H\033[J")
-    STATUS_SCREEN_RENDER_CACHE[cache_key] = text_lines
-    sys.stdout.write("".join(output))
-    sys.stdout.flush()
+    global STATUS_RENDERER
+    if STATUS_RENDERER.stdout is not sys.stdout or STATUS_RENDERER.cache_key != cache_key:
+        STATUS_RENDERER = TerminalFrameRenderer(stdout=sys.stdout, cache_key=cache_key)
+    if cache_key not in STATUS_SCREEN_RENDER_CACHE:
+        STATUS_RENDERER.previous_lines = None
+    STATUS_RENDERER.paint(lines)
+    STATUS_SCREEN_RENDER_CACHE[cache_key] = list(STATUS_RENDERER.previous_lines or [])
 
 
 def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):
@@ -992,45 +959,56 @@ def print_header(title=""):
     for line in header_lines(title):
         print(line)
 
+
+def render_menu_lines(options, title="", selected_idx=0):
+    lines = header_lines(title)
+    lines.append("")
+    for idx, option in enumerate(options):
+        if idx == selected_idx:
+            lines.append(f"  {CLR_BOLD}{CLR_CYAN}--> \033[40m\033[1;37m{option}{CLR_RESET}")
+        else:
+            lines.append(f"      \033[90m{option}{CLR_RESET}")
+    lines.append("")
+    lines.append(
+        f"{CLR_WHITE}Use {CLR_BOLD}↑/↓{CLR_RESET}{CLR_WHITE}, digits/shortcuts, "
+        f"{CLR_BOLD}Enter{CLR_RESET}{CLR_WHITE} to confirm, "
+        f"{CLR_BOLD}Esc/q{CLR_RESET}{CLR_WHITE} to go back.{CLR_RESET}"
+    )
+    return lines
+
+
 def run_menu(options, title="", shortcuts=None):
     shortcuts = shortcuts or {}
     selected_idx = 0
+    renderer = TerminalFrameRenderer(cache_key="menu")
     _audit().record("interactive", "started", details={"workflow": "menu", "title": title, "options": len(options)})
-    while True:
-        clear_screen()
-        print_header(title)
-        print()
-
-        for idx, option in enumerate(options):
-            if idx == selected_idx:
-                print(f"  {CLR_BOLD}{CLR_CYAN}--> \033[40m\033[1;37m{option}{CLR_RESET}")
-            else:
-                print(f"      \033[90m{option}{CLR_RESET}")
-        print()
-        print(f"{CLR_WHITE}Use {CLR_BOLD}↑/↓{CLR_RESET}{CLR_WHITE}, digits/shortcuts, {CLR_BOLD}Enter{CLR_RESET}{CLR_WHITE} to confirm, {CLR_BOLD}Esc/q{CLR_RESET}{CLR_WHITE} to go back.{CLR_RESET}")
-
-        key = get_key()
-        if key == 'up':
-            selected_idx = (selected_idx - 1) % len(options)
-        elif key == 'down':
-            selected_idx = (selected_idx + 1) % len(options)
-        elif key == 'enter':
-            _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": selected_idx})
-            return selected_idx
-        elif key.isdigit() and key != "0":
-            idx = int(key) - 1
-            if 0 <= idx < len(options):
-                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": idx, "key": key})
-                return idx
-        elif key in shortcuts:
-            _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "shortcut": key})
-            return shortcuts[key]
-        elif key in ('esc', 'q'):
-            _audit().record("interactive", "completed", result="cancelled", details={"workflow": "menu", "title": title, "key": key})
-            return -1
-        elif key == 'ctrl+c':
-            _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
-            sys.exit(0)
+    try:
+        while True:
+            renderer.paint(render_menu_lines(options, title, selected_idx))
+            key = get_key()
+            if key == 'up':
+                selected_idx = (selected_idx - 1) % len(options)
+            elif key == 'down':
+                selected_idx = (selected_idx + 1) % len(options)
+            elif key == 'enter':
+                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": selected_idx})
+                return selected_idx
+            elif key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < len(options):
+                    _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": idx, "key": key})
+                    return idx
+            elif key in shortcuts:
+                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "shortcut": key})
+                return shortcuts[key]
+            elif key in ('esc', 'q'):
+                _audit().record("interactive", "completed", result="cancelled", details={"workflow": "menu", "title": title, "key": key})
+                return -1
+            elif key == 'ctrl+c':
+                _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
+                sys.exit(0)
+    finally:
+        renderer.reset()
 
 def launch_account(tool_key):
     tool = TOOLS[tool_key]

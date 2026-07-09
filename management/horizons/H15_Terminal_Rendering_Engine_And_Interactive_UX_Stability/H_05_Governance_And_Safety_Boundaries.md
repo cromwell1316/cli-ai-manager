@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: governance
 
-Status: planned.
+Status: implemented.
 
 ## Boundaries
 

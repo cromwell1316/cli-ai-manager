@@ -1274,6 +1274,89 @@ def test_interactive_email_coloring_preserves_visible_width():
     assert interactive.visible_len(colored) == len("alex123@example.com")
 
 
+def test_terminal_frame_renderer_initial_diff_shrink_and_resize():
+    from cli_profile_manager.terminal_rendering import TerminalFrameRenderer
+
+    class FakeStdout:
+        def __init__(self):
+            self.writes = []
+
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            pass
+
+    sizes = iter([(80, 24), (80, 24), (80, 24), (100, 24)])
+    stdout = FakeStdout()
+    renderer = TerminalFrameRenderer(stdout=stdout, size_provider=lambda **kwargs: next(sizes))
+
+    renderer.paint(["one", "two", "three"])
+    renderer.paint(["one", "TWO", "three"])
+    renderer.paint(["one"])
+    renderer.paint(["one"])
+
+    assert "\033[Hone\ntwo\nthree\033[J" in stdout.writes[0]
+    assert "\033[2;1HTWO\033[K" in stdout.writes[1]
+    assert "\033[H" not in stdout.writes[1]
+    assert "\033[2;1H\033[J" in stdout.writes[2]
+    assert "\033[Hone\033[J" in stdout.writes[3]
+
+
+def test_terminal_frame_renderer_restores_cursor_after_exception():
+    from cli_profile_manager.terminal_rendering import TerminalFrameRenderer
+
+    class FakeStdout:
+        def __init__(self):
+            self.writes = []
+
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            pass
+
+    stdout = FakeStdout()
+
+    with pytest.raises(RuntimeError):
+        with TerminalFrameRenderer(stdout=stdout) as renderer:
+            renderer.paint(["frame"])
+            raise RuntimeError("boom")
+
+    assert stdout.writes[0].startswith("\033[?25l")
+    assert stdout.writes[-1] == "\033[?25h"
+
+
+def test_terminal_frame_renderer_non_tty_avoids_control_sequences():
+    from cli_profile_manager.terminal_rendering import TerminalFrameRenderer
+
+    class FakeStdout:
+        def __init__(self):
+            self.writes = []
+
+        def isatty(self):
+            return False
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            pass
+
+    stdout = FakeStdout()
+    renderer = TerminalFrameRenderer(stdout=stdout)
+
+    renderer.paint(["one", "two"])
+
+    assert stdout.writes == ["one\ntwo\n"]
+
+
 def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
@@ -1301,6 +1384,19 @@ def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
     assert "\033[2;1Hthree\033[K" in stdout.writes[1]
     assert "\033[H" not in stdout.writes[1]
     assert "\033[J" not in stdout.writes[1]
+
+
+def test_interactive_menu_lines_mark_selection_and_fit_footer():
+    import cli_profile_manager.interactive as interactive
+
+    lines = interactive.render_menu_lines(["First", "Second"], "MENU", selected_idx=1)
+    rendered = "\n".join(lines)
+
+    assert "MENU" in rendered
+    assert "-->" in lines[5]
+    assert "First" in lines[4]
+    assert "Second" in lines[5]
+    assert "Enter" in rendered
 
 
 @pytest.mark.parametrize("refresh_key", ["r", "R", "ctrl+r", "к", "К"])

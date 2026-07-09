@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H15_Terminal_Rendering_Engine_And_Interacti
 Lifecycle: living
 Document Class: implementation phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -24,3 +24,11 @@ Prove that terminal UX changes improve stability without breaking workflows.
 - UX regression tests run in the default test suite.
 - Manual validation evidence covers at least one WSL terminal and one Linux TTY.
 - No known terminal state leaks remain.
+
+## Evidence
+
+- `python3 -m pytest -q` passed with renderer, status refresh, keyboard, and
+  menu regression coverage.
+- `bash scripts/verify_no_tui_surface.sh` passed, confirming no full TUI
+  framework was reintroduced.
+- Cursor state is restored by renderer cleanup on normal exit and exceptions.
