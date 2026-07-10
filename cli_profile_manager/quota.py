@@ -91,6 +91,9 @@ AGY_FAILURE_PATTERNS = (
         (
             re.compile(r"\baccount ineligible\b", re.I),
             re.compile(r"\bineligible\b.*\baccount\b", re.I),
+            re.compile(r"\baccount\b.*\bnot eligible\b", re.I),
+            re.compile(r"\bnot eligible for Antigravity\b", re.I),
+            re.compile(r"\bnot currently available in your location\b", re.I),
         ),
     ),
     (
@@ -451,6 +454,25 @@ def classify_agy_probe_error(state, text):
     if state == "startup_pending":
         return "startup_pending", "AGY CLI is still starting; keeping the session warm"
     return None
+
+
+def agy_diagnostic_summary(text, state=None, limit=240):
+    lines = compact_lines(text)
+    if state == "account_ineligible":
+        selected = [
+            line for line in lines
+            if re.search(r"\beligib|not currently available in your location", line, re.I)
+        ]
+        if selected:
+            return "\n".join(selected)[-limit:]
+    if state in ("auth_required", "startup_pending"):
+        selected = [
+            line for line in lines
+            if re.search(r"\bcurrently not signed in\b|\bsigning in\b|\bsign in\b|\blogin\b", line, re.I)
+        ]
+        if selected:
+            return "\n".join(selected)[-limit:]
+    return "\n".join(lines)[:limit]
 
 
 def quota_startup_seconds(tool_key):
@@ -1052,7 +1074,7 @@ def parse_quota(tool_key, screen_text):
                 "limits": {},
                 "warnings": [message],
             }
-            diagnostic = summary[:240]
+            diagnostic = agy_diagnostic_summary(normalized, state)
             if diagnostic:
                 result["diagnostic_summary"] = diagnostic
             return result
@@ -1095,7 +1117,7 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
             classified = classify_agy_probe_error(state, e.raw_output)
             if classified:
                 state, message = classified
-            diagnostic = "\n".join(compact_lines(e.raw_output))[:240]
+            diagnostic = agy_diagnostic_summary(e.raw_output, state)
         audit.record(
             "quota",
             "failed",

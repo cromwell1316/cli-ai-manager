@@ -701,11 +701,17 @@ def test_agy_quota_parser_classifies_native_failure_output():
 
     tty = parse_quota("agy", "CLI error: bubbletea: error opening TTY: open /dev/tty: no such device")
     ineligible = parse_quota("agy", "Account ineligible for Antigravity")
+    location_ineligible = parse_quota(
+        "agy",
+        "Eligibility check failed: Your current account is not eligible for Antigravity, "
+        "because it is not currently available in your location.",
+    )
     exhausted = parse_quota("agy", "RESOURCE_EXHAUSTED: quota exceeded")
     limited = parse_quota("agy", "runtime/cgo: pthread_create failed: Resource temporarily unavailable")
 
     assert tty["state"] == "tty_unavailable"
     assert ineligible["state"] == "account_ineligible"
+    assert location_ineligible["state"] == "account_ineligible"
     assert exhausted["state"] == "resource_exhausted"
     assert limited["state"] == "resource_limited"
     assert "diagnostic_summary" in tty
@@ -734,6 +740,24 @@ def test_quota_payload_refines_agy_process_exit_from_raw_output():
     assert payload["quota"]["state"] == "account_ineligible"
     assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
     assert payload["quota"]["diagnostic_summary"] == "Account ineligible"
+
+
+def test_quota_payload_refines_agy_location_ineligible_from_raw_output():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError(
+            "startup_pending",
+            "AGY CLI is still starting",
+            "Eligibility check failed: Your current account is not eligible for Antigravity, "
+            "because it is not currently available in your location.",
+        )
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "account_ineligible"
+    assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
+    assert "not currently available in your location" in payload["quota"]["diagnostic_summary"]
 
 
 def test_quota_payload_refines_agy_thread_exhaustion_from_raw_output():
