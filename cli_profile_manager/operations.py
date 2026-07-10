@@ -43,6 +43,8 @@ RESULT_NO_TOKEN = "no_token"
 RESULT_RUNTIME_FAILURE = "runtime_failure"
 core_quota_payload = None
 run_persistent_cli_quota_snapshot = None
+run_direct_cli_prompt_snapshot = None
+AGY_PROFILE_PROMPT = "review this code in one sentence"
 
 
 @dataclass
@@ -175,6 +177,41 @@ def _persistent_quota_runner():
 
         run_persistent_cli_quota_snapshot = func
     return run_persistent_cli_quota_snapshot
+
+
+def _direct_prompt_runner():
+    global run_direct_cli_prompt_snapshot
+    if run_direct_cli_prompt_snapshot is None:
+        from cli_profile_manager.quota import run_direct_cli_prompt_snapshot as func
+
+        run_direct_cli_prompt_snapshot = func
+    return run_direct_cli_prompt_snapshot
+
+
+def quota_probe_command(tool_key, n):
+    if tool_key == "agy":
+        return [f"agy{n}", "-p", AGY_PROFILE_PROMPT]
+    return [TOOLS[tool_key]["cmd"]]
+
+
+def quota_probe_env(tool_key, n):
+    if tool_key == "agy":
+        return os.environ.copy()
+    return make_tool_env(tool_key, n)
+
+
+def quota_probe_cwd(tool_key, n):
+    if tool_key == "agy":
+        return os.getcwd()
+    return profile_home(tool_key, n)
+
+
+def quota_probe_runner(tool_key, runner=None):
+    if runner is not None:
+        return runner
+    if tool_key == "agy":
+        return _direct_prompt_runner()
+    return _persistent_quota_runner()
 
 
 def account_email_from_google_accounts(home):
@@ -322,20 +359,18 @@ def status_payload(tool_key, n, metadata=None, snapshot=None):
 
 
 def quota_payload(tool_key, n, timeout_seconds=None, runner=None):
-    tool = TOOLS[tool_key]
-    home = profile_home(tool_key, n)
     timeout = timeout_seconds if timeout_seconds is not None else 20
     kwargs = {"timeout_seconds": timeout}
-    runner = _persistent_quota_runner() if runner is None else runner
+    runner = quota_probe_runner(tool_key, runner)
     if runner is not None:
         kwargs["runner"] = runner
     try:
         return _quota_payload_func()(
             tool_key,
             f"p{n}",
-            [tool["cmd"]],
-            make_tool_env(tool_key, n),
-            home,
+            quota_probe_command(tool_key, n),
+            quota_probe_env(tool_key, n),
+            quota_probe_cwd(tool_key, n),
             **kwargs,
         )
     except TypeError as e:
@@ -345,9 +380,9 @@ def quota_payload(tool_key, n, timeout_seconds=None, runner=None):
         return _quota_payload_func()(
             tool_key,
             f"p{n}",
-            [tool["cmd"]],
-            make_tool_env(tool_key, n),
-            home,
+            quota_probe_command(tool_key, n),
+            quota_probe_env(tool_key, n),
+            quota_probe_cwd(tool_key, n),
             **kwargs,
         )
 

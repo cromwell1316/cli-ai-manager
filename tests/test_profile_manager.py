@@ -707,12 +707,14 @@ def test_agy_quota_parser_classifies_native_failure_output():
         "because it is not currently available in your location.",
     )
     exhausted = parse_quota("agy", "RESOURCE_EXHAUSTED: quota exceeded")
+    capacity_exhausted = parse_quota("agy", "Error: You have exhausted your capacity on this model. Your quota will reset after 50h10m11s.")
     limited = parse_quota("agy", "runtime/cgo: pthread_create failed: Resource temporarily unavailable")
 
     assert tty["state"] == "tty_unavailable"
     assert ineligible["state"] == "account_ineligible"
     assert location_ineligible["state"] == "account_ineligible"
     assert exhausted["state"] == "resource_exhausted"
+    assert capacity_exhausted["state"] == "resource_exhausted"
     assert limited["state"] == "resource_limited"
     assert "diagnostic_summary" in tty
 
@@ -823,6 +825,99 @@ def test_agy_quota_startup_seconds_uses_specific_override(monkeypatch):
     monkeypatch.setenv("AI_MAN_AGY_QUOTA_STARTUP_SECONDS", "77")
     assert quota.quota_startup_seconds("agy") == 77.0
     assert quota.quota_startup_seconds("codex") == 11.0
+
+
+def test_agy_quota_uses_profile_prompt_command(monkeypatch, tmp_path):
+    import cli_profile_manager.operations as operations
+
+    captured = {}
+
+    def fake_core_quota_payload(tool_key, profile_name, command, env, cwd, **kwargs):
+        captured.update({
+            "tool_key": tool_key,
+            "profile_name": profile_name,
+            "command": command,
+            "env": env,
+            "cwd": cwd,
+            "runner": kwargs.get("runner"),
+        })
+        return {"tool": tool_key, "profile": profile_name, "quota": {"state": "available", "limits": {}}}
+
+    def fake_runner(*args, **kwargs):
+        return "ok"
+
+    monkeypatch.setattr(operations, "core_quota_payload", fake_core_quota_payload)
+    monkeypatch.setattr(operations, "run_direct_cli_prompt_snapshot", fake_runner)
+    monkeypatch.chdir(tmp_path)
+
+    payload = operations.quota_payload("agy", 2, timeout_seconds=12)
+
+    assert payload["quota"]["state"] == "available"
+    assert captured["command"] == ["agy2", "-p", "review this code in one sentence"]
+    assert captured["cwd"] == str(tmp_path)
+    assert captured["runner"] is fake_runner
+    assert captured["env"]["HOME"] != str(tmp_path / "agy-homes" / "p2")
+
+
+def test_direct_prompt_runner_marks_success(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    fake_cli = tmp_path / "agy1"
+    fake_cli.write_text(
+        "\n".join([
+            "#!/usr/bin/env python3",
+            "import sys",
+            "print('reviewed: ok')",
+            "assert sys.argv[1:] == ['-p', 'review this code in one sentence']",
+        ]),
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    screen = quota.run_direct_cli_prompt_snapshot(
+        "agy",
+        ["agy1", "-p", "review this code in one sentence"],
+        os.environ.copy(),
+        str(tmp_path),
+        timeout_seconds=2,
+    )
+    parsed = quota.parse_quota("agy", screen)
+
+    assert parsed["state"] == "available"
+    assert parsed["source_command"] == "agy-profile-prompt"
+    assert "quota percentages are not available" in parsed["warnings"][0]
+
+
+def test_direct_prompt_runner_classifies_capacity_exhausted(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    fake_cli = tmp_path / "agy1"
+    fake_cli.write_text(
+        "\n".join([
+            "#!/usr/bin/env python3",
+            "import sys",
+            "print('Error: You have exhausted your capacity on this model. Your quota will reset after 50h10m11s.', file=sys.stderr)",
+            "raise SystemExit(1)",
+        ]),
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    payload = quota.quota_payload(
+        "agy",
+        "p1",
+        ["agy1", "-p", "review this code in one sentence"],
+        os.environ.copy(),
+        str(tmp_path),
+        timeout_seconds=2,
+        runner=quota.run_direct_cli_prompt_snapshot,
+    )
+
+    assert payload["quota"]["state"] == "resource_exhausted"
+    assert payload["quota"]["source_command"] == "agy1 -p review this code in one sentence"
+    assert "quota or resources are exhausted" in payload["quota"]["warnings"][0]
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):

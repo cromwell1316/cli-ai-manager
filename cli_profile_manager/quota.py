@@ -26,6 +26,7 @@ DEFAULT_KEY_DELAY_SECONDS = 0.04
 DEFAULT_AGY_KEY_DELAY_SECONDS = 0.0
 DEFAULT_AGY_STARTUP_SECONDS = 30.0
 DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
+DIRECT_AGY_PROMPT_SUCCESS_MARKER = "__AI_MAN_DIRECT_AGY_PROMPT_SUCCEEDED__"
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
 DEFAULT_PERSISTENT_SESSION_MAX = 24
@@ -102,6 +103,8 @@ AGY_FAILURE_PATTERNS = (
         (
             re.compile(r"\bRESOURCE_EXHAUSTED\b", re.I),
             re.compile(r"\bresource exhausted\b", re.I),
+            re.compile(r"\bexhausted your capacity\b", re.I),
+            re.compile(r"\bquota will reset\b", re.I),
         ),
     ),
 )
@@ -1078,6 +1081,18 @@ def parse_quota(tool_key, screen_text):
             if diagnostic:
                 result["diagnostic_summary"] = diagnostic
             return result
+        if DIRECT_AGY_PROMPT_SUCCESS_MARKER in normalized:
+            clean_summary = summary.replace(DIRECT_AGY_PROMPT_SUCCESS_MARKER, "").strip()
+            result = {
+                "state": "available",
+                "source_command": "agy-profile-prompt",
+                "limits": {},
+                "raw_summary": clean_summary,
+                "warnings": ["AGY profile prompt completed; quota percentages are not available from this probe"],
+            }
+            if clean_summary:
+                result["diagnostic_summary"] = clean_summary[:240]
+            return result
     if detect_auth_required(normalized):
         return {
             "state": "auth_required",
@@ -1102,6 +1117,36 @@ def parse_quota(tool_key, screen_text):
         if diagnostic:
             result["diagnostic_summary"] = diagnostic
     return result
+
+
+def run_direct_cli_prompt_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+    if shutil.which(command[0]) is None:
+        raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raw_output = "".join(part for part in (e.stdout, e.stderr) if part)
+        raise QuotaProbeError("timeout", f"timeout waiting for {command[0]} prompt output", raw_output) from e
+    output = "".join(part for part in (completed.stdout, completed.stderr) if part)
+    if completed.returncode != 0:
+        raise QuotaProbeError("process_exit", f"{command[0]} exited with code {completed.returncode}", output)
+    if tool_key == "agy":
+        output = f"{output}\n{DIRECT_AGY_PROMPT_SUCCESS_MARKER}\n"
+    return output
+
+
+def source_command_for_payload(tool_key, command):
+    if tool_key == "agy" and command and re.fullmatch(r"agy\d+", str(command[0])):
+        return " ".join(str(part) for part in command)
+    return quota_command_for(tool_key)
 
 
 def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, runner=run_cli_quota_snapshot):
@@ -1129,7 +1174,7 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
         )
         quota = {
             "state": state,
-            "source_command": quota_command_for(tool_key),
+            "source_command": source_command_for_payload(tool_key, command),
             "limits": {},
             "warnings": [message],
         }

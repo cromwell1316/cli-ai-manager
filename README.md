@@ -134,13 +134,13 @@ AI_MAN_CODEX_QUOTA_COMMAND              Codex quota command override
 AI_MAN_CLAUDE_QUOTA_COMMAND             Claude quota command override
 ```
 
-Quota probing uses a PTY and the native CLI for each profile, because these
-agents render usage data only in terminal mode. The default quota commands are
-`/usage` for `agy`, `/status` for `codex`, and `/usage` for `claude`; override
-them with `AI_MAN_AGY_QUOTA_COMMAND`, `AI_MAN_CODEX_QUOTA_COMMAND`, or
-`AI_MAN_CLAUDE_QUOTA_COMMAND` if a local CLI version changes its command. If a
-profile is logged out, the quota payload reports `auth_required` or `no_token`
-instead of returning partial numbers.
+Quota probing uses the native CLI for each profile. AGY profiles are checked with
+profile-specific commands such as `agy1 -p "review this code in one sentence"`
+and `agy2 -p "review this code in one sentence"`; a successful prompt marks the
+profile as available, while eligibility/auth failures are reported explicitly.
+Codex and Claude still use terminal quota commands (`/status` and `/usage`).
+If a profile is logged out, the quota payload reports `auth_required` or
+`no_token` instead of returning partial numbers.
 
 Interactive `ai-man` screens load quota automatically in the background for
 active profiles and cache it for the current session. Set
