@@ -44,3 +44,12 @@ tmux ls
 
 Acceptance target: multi-profile AGY quota refreshes complete with bounded
 session count and no orphaned manager-owned tmux sessions.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Pool_Metrics_And_Limits.md`
+- `H_02_Phase_02_Eviction_And_Ownership_Hardening.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

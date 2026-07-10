@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H25_Diagnostics_Fast_Path/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -46,3 +46,22 @@ pytest -q tests/test_profile_manager.py -k "diagnostics"
 
 Acceptance target: reduce subprocess `diagnostics agy --json` latency
 materially while preserving output compatibility and redaction.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Section_Baseline_And_Boundary.md`
+- `H_02_Phase_02_Fast_Collector_And_Cached_Probes.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+
+## Implementation Evidence
+
+- Added fast/deep diagnostics modes.
+- CLI `diagnostics` defaults to fast mode.
+- CLI `diagnostics --deep` preserves full expensive runtime probes.
+- Fast mode skips full audit event scans and live systemd availability checks.
+- Programmatic `diagnostics_payload()` remains deep by default for compatibility.
+- Benchmark sample after implementation: `diagnostics-agy-json` median around
+  `172 ms` over 5 subprocess runs.

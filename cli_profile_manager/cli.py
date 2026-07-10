@@ -1428,6 +1428,7 @@ def cmd_diagnostics(args):
         status_provider=snapshot_status_provider,
         show_accounts=args.show_accounts,
         profile_index_provider=snapshot_profile_index,
+        mode="deep" if args.deep else "fast",
     )
     if args.json:
         print_json_payload(payload)
@@ -1534,6 +1535,7 @@ def build_parser():
     diagnostics_p.add_argument("tool", choices=TOOLS.keys(), nargs="?")
     diagnostics_p.add_argument("--json", action="store_true")
     diagnostics_p.add_argument("--show-accounts", action="store_true", help="include full account identifiers")
+    diagnostics_p.add_argument("--deep", action="store_true", help="include expensive runtime probes")
     diagnostics_p.set_defaults(func=cmd_diagnostics)
 
     config_p = sub.add_parser("config", help="inspect effective runtime configuration")

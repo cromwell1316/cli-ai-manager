@@ -45,3 +45,12 @@ pytest -q tests/test_profile_manager.py::test_in_process_command_perf_budgets
 
 Acceptance target: lower cold `help`, `config show --json`, and `list agy
 --json` latency without regressing in-process command budgets.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Import_Baseline.md`
+- `H_02_Phase_02_Lazy_Surface_And_Parser_Slimming.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

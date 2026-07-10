@@ -41,3 +41,12 @@ python3 scripts/benchmark_runtime.py --scenario status-redraw
 ```
 
 Acceptance target: developer mode does not materially increase redraw time.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Log_Tail_Baseline.md`
+- `H_02_Phase_02_Incremental_Tail_Cache.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

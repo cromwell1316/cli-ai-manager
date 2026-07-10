@@ -43,3 +43,12 @@ python3 profile_manager.py sync --from wsl --mode soft --dry-run
 
 Acceptance target: same sync decisions with less filesystem traversal and faster
 dry-run output.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Sync_Manifest_Model.md`
+- `H_02_Phase_02_Manifest_Diff_And_Copy.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

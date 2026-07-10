@@ -5,7 +5,13 @@ Source of Truth: management/horizons/H25_Diagnostics_Fast_Path/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
+
+## Implementation Notes
+
+- Full audit event scanning was identified as the largest fast-path bottleneck.
+- Live process policy systemd checks were excluded from fast mode.
+- Deep mode remains available for complete troubleshooting output.
 
 ## Objective
 

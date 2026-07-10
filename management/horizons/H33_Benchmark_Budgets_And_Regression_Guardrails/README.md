@@ -44,3 +44,12 @@ pytest -q tests/test_profile_manager.py::test_in_process_command_perf_budgets
 
 Acceptance target: performance changes are measurable, reviewable, and guarded
 by stable local tests.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Benchmark_Surface_Inventory.md`
+- `H_02_Phase_02_JSON_Baselines_And_Comparison.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

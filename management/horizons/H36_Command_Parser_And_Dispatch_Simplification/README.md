@@ -45,3 +45,12 @@ pytest -q tests/test_profile_manager.py -k "command or parser or cli"
 
 Acceptance target: simpler dispatch with equal behavior and lower parse/dispatch
 overhead.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Dispatch_Surface_Inventory.md`
+- `H_02_Phase_02_Table_Dispatch_And_Wrapper_Reduction.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

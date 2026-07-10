@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H25_Diagnostics_Fast_Path/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

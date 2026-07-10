@@ -46,3 +46,12 @@ pytest -q tests/test_profile_manager.py -k "service"
 
 Acceptance target: service-backed read-only commands avoid repeated cold-start
 work and remain output-equivalent to one-shot commands.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Service_Baseline_And_Command_Eligibility.md`
+- `H_02_Phase_02_State_Cache_And_Invalidation.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

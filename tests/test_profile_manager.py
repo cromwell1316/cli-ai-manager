@@ -2802,6 +2802,56 @@ def test_diagnostics_command_json_does_not_print_token_like_values(monkeypatch, 
     assert "[redacted-token]" in completed.stdout
 
 
+def test_diagnostics_command_defaults_to_fast_mode(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "diagnostics", "agy", "--json"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["mode"] == "fast"
+    assert payload["quota_runtime"]["mode"] == "fast"
+    assert payload["audit"]["record_count_check"] == "skipped_fast_diagnostics"
+    assert payload["process_limits"]["systemd_user_scope_check"] == "skipped_fast_diagnostics"
+    assert "policies" in payload["process_limits"]
+
+
+def test_diagnostics_command_deep_mode_reports_full_runtime(monkeypatch, tmp_path):
+    env = os.environ.copy()
+    env.update({
+        "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+        "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+        "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+        "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+    })
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "profile_manager.py"), "diagnostics", "agy", "--json", "--deep"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["mode"] == "deep"
+    assert "systemd_user_scope_check" not in payload["process_limits"]
+    assert "cache" in payload["quota_runtime"]
+
+
 def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

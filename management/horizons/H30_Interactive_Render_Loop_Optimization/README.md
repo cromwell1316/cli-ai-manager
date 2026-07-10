@@ -43,3 +43,12 @@ pytest -q tests/test_profile_manager.py -k "interactive or render"
 
 Acceptance target: lower redraw time and fewer unnecessary frame writes while
 preserving visual output.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Render_Baseline_And_State_Hash.md`
+- `H_02_Phase_02_Row_And_Cell_Caches.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

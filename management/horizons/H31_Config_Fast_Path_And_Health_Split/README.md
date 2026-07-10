@@ -43,3 +43,12 @@ pytest -q tests/test_profile_manager.py -k "config"
 
 Acceptance target: reduce `config show --json` latency while keeping effective
 settings and warnings correct.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Config_Purity_Audit.md`
+- `H_02_Phase_02_Fast_Config_And_Health_Command.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

@@ -44,3 +44,12 @@ python3 scripts/validate_agy_quota_live.py --dry-run
 
 Acceptance target: lower warm AGY quota refresh time with no increase in
 `parser_miss`, `timeout`, or false `auth_required` states.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Cold_Warm_Quota_Baseline.md`
+- `H_02_Phase_02_Adaptive_Capture_And_Waiting.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

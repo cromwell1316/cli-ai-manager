@@ -44,3 +44,12 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 
 Acceptance target: fewer repeated `os.listdir`, `exists`, and JSON reads per
 command with unchanged status payloads.
+
+## Files
+
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Filesystem_Call_Baseline.md`
+- `H_02_Phase_02_Profile_Index_Model.md`
+- `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`

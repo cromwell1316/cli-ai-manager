@@ -19,6 +19,11 @@ TOKEN_LIKE_RE = re.compile(
     r"(?i)(sk-[a-z0-9_-]+|xox[a-z]-[a-z0-9-]+|gh[pousr]_[a-z0-9_]+|ya29\.[a-z0-9._-]+|refresh_token)"
 )
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b", re.I)
+DIAGNOSTICS_MODES = {"fast", "deep"}
+
+
+def _invalid_mode(mode):
+    return mode not in DIAGNOSTICS_MODES
 
 
 def stable_hash(value):
@@ -138,21 +143,145 @@ def tool_diagnostics(
     }
 
 
+def fast_process_policy_diagnostics():
+    from . import process_policy
+
+    def int_env(name, default, warnings):
+        raw = os.environ.get(name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            warnings.append(f"{name}={raw!r} is invalid; using {default}")
+            return default
+
+    enabled = os.environ.get("AI_MAN_PROCESS_LIMITS", "1").lower() not in ("0", "false", "no", "off", "disabled")
+    quota_enabled = os.environ.get("AI_MAN_QUOTA_PROCESS_LIMITS")
+    validation_enabled = os.environ.get("AI_MAN_VALIDATION_PROCESS_LIMITS")
+
+    def tier_enabled(tier):
+        if tier == "quota" and quota_enabled is not None:
+            return quota_enabled.lower() not in ("0", "false", "no", "off", "disabled")
+        if tier == "validation" and validation_enabled is not None:
+            return validation_enabled.lower() not in ("0", "false", "no", "off", "disabled")
+        return enabled
+
+    policies = {}
+    for tier, defaults in process_policy.DEFAULTS.items():
+        tier_is_enabled = tier_enabled(tier)
+        backend = "disabled"
+        if tier_is_enabled:
+            backend = "systemd-run-check-skipped" if defaults.get("prefer_systemd") and tier == "launch" else "setrlimit"
+        prefix = "AI_MAN_QUOTA_" if tier == "quota" else "AI_MAN_VALIDATION_" if tier == "validation" else "AI_MAN_"
+        warnings = []
+        policies[tier] = {
+            "tier": tier,
+            "enabled": tier_is_enabled,
+            "backend": backend,
+            "memory_mb": int_env(f"{prefix}PROCESS_MEMORY_MB", defaults["memory_mb"], warnings),
+            "cpu_percent": int_env(f"{prefix}PROCESS_CPU_PERCENT", defaults["cpu_percent"], warnings),
+            "max_processes": int_env(f"{prefix}PROCESS_MAX_PROCESSES", defaults["max_processes"], warnings),
+            "warnings": warnings,
+        }
+    return {
+        "supported": os.name != "nt",
+        "systemd_user_scope_available": None,
+        "systemd_user_scope_check": "skipped_fast_diagnostics",
+        "policies": policies,
+    }
+
+
+def fast_audit_diagnostics():
+    from . import audit
+
+    selected_path = audit.sqlite_path() if audit.backend_name() == "sqlite" else audit.jsonl_path()
+    return {
+        "ok": True,
+        "enabled": audit.audit_enabled(),
+        "strict": audit.strict_mode(),
+        "backend": audit.backend_name(),
+        "path": str(selected_path),
+        "audit_dir": str(audit.audit_dir()),
+        "audit_dir_mode": audit.user_only_mode(audit.audit_dir()),
+        "path_mode": audit.user_only_mode(selected_path),
+        "record_count": None,
+        "record_count_check": "skipped_fast_diagnostics",
+        "retention_days": audit.retention_days(),
+        "max_bytes": audit.max_bytes(),
+    }
+
+
+def fast_quota_runtime_snapshot(tool_key=None):
+    return {
+        "enabled": os.environ.get("AI_MAN_INTERACTIVE_QUOTA", "1").lower() not in ("0", "false", "no", "off"),
+        "active_jobs": 0,
+        "cache": [],
+        "scheduler": None,
+        "states": [
+            "empty",
+            "queued",
+            "running",
+            "available",
+            "stale_refreshing",
+            "retry_wait",
+            "failed",
+            "auth_required",
+            "disabled",
+        ],
+        "failure_states": [
+            "timeout",
+            "parser_miss",
+            "missing_cli",
+            "process_exit",
+            "auth_required",
+            "empty_output",
+            "pty_failure",
+            "exception",
+            "resource_limited",
+            "tty_unavailable",
+            "account_ineligible",
+            "resource_exhausted",
+            "unsupported",
+            "unknown",
+        ],
+        "legal_transitions": {
+            "queued": ["running", "available", "retry_wait", "failed", "auth_required", "disabled"],
+            "running": ["available", "retry_wait", "failed", "auth_required", "disabled"],
+        },
+        "mode": "fast",
+        "tool": tool_key,
+    }
+
+
 def diagnostics_payload(
     tool_key=None,
     status_provider=None,
     show_accounts=False,
     profile_index_provider=None,
+    mode="deep",
 ):
-    from .interactive import quota_runtime_snapshot
-    from .audit import diagnostics_payload as audit_diagnostics
-    from .process_policy import diagnostics_payload as process_policy_diagnostics
     from .runtime_service import service_status
     from .safety import command_inventory
     from .config import config_health_payload
 
+    if _invalid_mode(mode):
+        raise ValueError(f"unknown diagnostics mode: {mode}")
+
     selected_tools = [tool_key] if tool_key else list(TOOLS)
     config_health = config_health_payload()
+    if mode == "deep":
+        from .audit import diagnostics_payload as audit_diagnostics
+        from .interactive import quota_runtime_snapshot
+        from .process_policy import diagnostics_payload as process_policy_diagnostics
+
+        audit_payload = audit_diagnostics()
+        process_limits = process_policy_diagnostics()
+        quota_runtime = quota_runtime_snapshot(tool_key)
+    else:
+        audit_payload = fast_audit_diagnostics()
+        process_limits = fast_process_policy_diagnostics()
+        quota_runtime = fast_quota_runtime_snapshot(tool_key)
     agy_backend = {
         "configured": agy_quota_backend_configured(),
         "resolved": None,
@@ -165,6 +294,7 @@ def diagnostics_payload(
         agy_backend["warning"] = str(e)
     payload = {
         "ok": True,
+        "mode": mode,
         "generated_at": int(time.time()),
         "tools": {
             key: tool_diagnostics(
@@ -176,15 +306,15 @@ def diagnostics_payload(
             for key in selected_tools
         },
         "environment": relevant_env_snapshot(),
-        "audit": audit_diagnostics(),
-        "process_limits": process_policy_diagnostics(),
+        "audit": audit_payload,
+        "process_limits": process_limits,
         "safety_policy": {
             "commands": command_inventory(),
         },
         "config_health": config_health["health"],
         "effective_config": config_health["settings"],
         "service_runtime": service_status(),
-        "quota_runtime": quota_runtime_snapshot(tool_key),
+        "quota_runtime": quota_runtime,
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
         "agy_quota_backend": agy_backend,
     }
