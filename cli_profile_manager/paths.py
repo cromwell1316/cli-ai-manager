@@ -1,8 +1,23 @@
 import os
+import ntpath
 from pathlib import Path
 
 
 DISPLAY_SLOT_COUNT = 12
+WINDOWS_USER_EXCLUSIONS = {
+    "Public",
+    "Default",
+    "Default User",
+    "All Users",
+    "desktop.ini",
+    "Все пользователи",
+}
+WINDOWS_PROFILE_MARKERS = (
+    "agy-homes",
+    "codex-homes",
+    "claude-homes",
+    os.path.join(".config", "cli-profile-manager"),
+)
 
 
 TOOLS = {
@@ -88,11 +103,12 @@ def is_valid_display_profile(tool_key, n):
     return n in get_display_profiles(tool_key)
 
 
-def normalize_credential_path(tool_key, cred_file):
+def normalize_credential_path(tool_key, cred_file, platform_name=None):
+    platform_name = os.name if platform_name is None else platform_name
     cred_file = cred_file.strip()
     if (cred_file.startswith('"') and cred_file.endswith('"')) or (cred_file.startswith("'") and cred_file.endswith("'")):
         cred_file = cred_file[1:-1]
-    if len(cred_file) >= 3 and cred_file[1:3] == ":\\":
+    if platform_name != "nt" and len(cred_file) >= 3 and cred_file[1:3] == ":\\":
         drive = cred_file[0].lower()
         cred_file = f"/mnt/{drive}/" + cred_file[3:].replace("\\", "/")
     cred_file = os.path.expanduser(cred_file)
@@ -128,12 +144,42 @@ def make_tool_env(tool_key, n):
     return env
 
 
-def find_windows_user():
+def windows_user_score(user_home):
+    score = 0
+    for marker in WINDOWS_PROFILE_MARKERS:
+        marker_path = user_home / marker
+        if marker_path.exists():
+            score += 10
+    agy_home = user_home / "agy-homes"
+    if agy_home.exists():
+        try:
+            if any(child.name.startswith("cred-p") or (child.name.startswith("p") and child.name[1:].isdigit()) for child in agy_home.iterdir()):
+                score += 20
+        except OSError:
+            pass
+    config = user_home / ".config" / "cli-profile-manager" / "profiles_metadata.json"
+    if config.exists():
+        score += 10
+    return score
+
+
+def find_windows_user(users_base="/mnt/c/Users"):
+    env_userprofile = os.environ.get("USERPROFILE")
+    if env_userprofile:
+        candidate = ntpath.basename(env_userprofile.rstrip("\\/")) or Path(env_userprofile).name
+        if candidate and candidate not in WINDOWS_USER_EXCLUSIONS:
+            return candidate
     try:
-        users = os.listdir("/mnt/c/Users")
-        for user in users:
-            if user not in ["Public", "Default", "Default User", "All Users", "desktop.ini"]:
-                return user
+        users_base = Path(users_base)
+        candidates = []
+        for user_path in users_base.iterdir():
+            user = user_path.name
+            if user in WINDOWS_USER_EXCLUSIONS or not user_path.is_dir():
+                continue
+            candidates.append((windows_user_score(user_path), user.lower(), user))
+        if candidates:
+            candidates.sort(key=lambda item: (-item[0], item[1]))
+            return candidates[0][2]
     except Exception:
         pass
     return "Oliver"

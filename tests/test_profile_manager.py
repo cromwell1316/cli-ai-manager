@@ -2550,6 +2550,36 @@ def test_sync_dry_run_json_shape_and_hard_delete_preflight(monkeypatch, tmp_path
         pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=False)
 
 
+def test_find_windows_user_prefers_profile_home_over_first_directory(monkeypatch, tmp_path):
+    from cli_profile_manager import paths
+
+    users = tmp_path / "Users"
+    (users / "Admin").mkdir(parents=True)
+    write_json(users / "Oliver" / "agy-homes" / "cred-p1.json", {"BlobBase64": "x"})
+    write_json(users / "Oliver" / ".config" / "cli-profile-manager" / "profiles_metadata.json", {})
+    monkeypatch.delenv("USERPROFILE", raising=False)
+
+    assert paths.find_windows_user(users) == "Oliver"
+
+
+def test_find_windows_user_honors_userprofile(monkeypatch, tmp_path):
+    from cli_profile_manager import paths
+
+    users = tmp_path / "Users"
+    (users / "Admin").mkdir(parents=True)
+    (users / "Oliver").mkdir()
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\Admin")
+
+    assert paths.find_windows_user(users) == "Admin"
+
+
+def test_normalize_credential_path_keeps_native_windows_path(monkeypatch):
+    from cli_profile_manager import paths
+
+    assert paths.normalize_credential_path("codex", r"C:\Users\Oliver\codex-homes\p1\auth.json", platform_name="nt") == r"C:\Users\Oliver\codex-homes\p1\auth.json"
+    assert paths.normalize_credential_path("codex", r"C:\Users\Oliver\codex-homes\p1\auth.json", platform_name="posix") == "/mnt/c/Users/Oliver/codex-homes/p1/auth.json"
+
+
 def test_sync_only_managed_profile_files(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     wsl = tmp_path / "wsl"
