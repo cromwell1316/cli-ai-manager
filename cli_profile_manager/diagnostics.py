@@ -5,7 +5,14 @@ import shutil
 import time
 
 from .paths import DISPLAY_SLOT_COUNT, TOOLS, get_display_profiles, get_occupied_profiles, profile_home
-from .quota import persistent_quota_sessions_snapshot, quota_command_for
+from .quota import (
+    QuotaProbeError,
+    agy_quota_backend_configured,
+    persistent_quota_sessions_snapshot,
+    quota_command_for,
+    resolve_quota_backend,
+    tmux_path,
+)
 
 
 TOKEN_LIKE_RE = re.compile(
@@ -60,6 +67,7 @@ def relevant_env_snapshot():
         "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
         "AI_MAN_QUOTA_SESSION_MAX",
+        "AI_MAN_AGY_QUOTA_BACKEND",
         "AI_MAN_AUDIT",
         "AI_MAN_AUDIT_BACKEND",
         "AI_MAN_AUDIT_STRICT",
@@ -145,6 +153,16 @@ def diagnostics_payload(
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
     config_health = config_health_payload()
+    agy_backend = {
+        "configured": agy_quota_backend_configured(),
+        "resolved": None,
+        "tmux_path": tmux_path(),
+    }
+    try:
+        agy_backend["resolved"] = resolve_quota_backend("agy")
+    except QuotaProbeError as e:
+        agy_backend["resolved"] = e.state
+        agy_backend["warning"] = str(e)
     payload = {
         "ok": True,
         "generated_at": int(time.time()),
@@ -168,5 +186,6 @@ def diagnostics_payload(
         "service_runtime": service_status(),
         "quota_runtime": quota_runtime_snapshot(tool_key),
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
+        "agy_quota_backend": agy_backend,
     }
     return redact_sensitive(payload, show_accounts)

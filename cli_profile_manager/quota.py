@@ -1,5 +1,6 @@
 import os
 import atexit
+import hashlib
 import re
 import select
 import shutil
@@ -30,6 +31,8 @@ DIRECT_AGY_PROMPT_SUCCESS_MARKER = "__AI_MAN_DIRECT_AGY_PROMPT_SUCCEEDED__"
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
 DEFAULT_PERSISTENT_SESSION_MAX = 24
+TMUX_QUOTA_SESSION_PREFIX = "ai_man_quota_"
+AGY_QUOTA_BACKEND_ENV = "AI_MAN_AGY_QUOTA_BACKEND"
 
 
 QUOTA_COMMANDS = {
@@ -48,6 +51,7 @@ AGY_READY_PATTERNS = (
     re.compile(r"\bCLI ready for user input\b", re.I),
     re.compile(r"\bready for user input\b", re.I),
     re.compile(r"\btype\s+/help\b", re.I),
+    re.compile(r"\?\s+for\s+shortcuts\b", re.I),
 )
 
 AGY_PROMPT_PATTERNS = (
@@ -457,7 +461,9 @@ def classify_agy_probe_error(state, text):
         re.search(r"\bcurrently not signed in\b", text, re.I)
         and re.search(r"\bsigning in\b", text, re.I)
     )
-    if state in ("startup_pending", "timeout") and sign_in_stalled:
+    if state == "startup_pending" and sign_in_stalled:
+        return "startup_pending", "AGY CLI is still signing in; keeping the session warm"
+    if state == "timeout" and sign_in_stalled:
         return "auth_required", "AGY CLI could not complete sign-in for this profile; /usage was not sent"
     if state == "startup_pending":
         return "startup_pending", "AGY CLI is still starting; keeping the session warm"
@@ -724,6 +730,229 @@ def start_quota_pty_process(tool_key, command, env, cwd, backend):
     return proc, master_fd, policy
 
 
+def agy_quota_backend_configured():
+    raw = os.environ.get(AGY_QUOTA_BACKEND_ENV, "auto").strip().lower()
+    if raw not in ("auto", "tmux", "pty"):
+        logging.warning("%s=%r is invalid; using auto", AGY_QUOTA_BACKEND_ENV, raw)
+        return "auto"
+    return raw
+
+
+def tmux_path():
+    return shutil.which("tmux")
+
+
+def resolve_quota_backend(tool_key):
+    if tool_key != "agy":
+        return "persistent_pty"
+    configured = agy_quota_backend_configured()
+    found_tmux = tmux_path()
+    if configured == "pty":
+        return "persistent_pty"
+    if configured == "tmux":
+        if not found_tmux:
+            raise QuotaProbeError("missing_backend", "tmux quota backend was requested but tmux is not installed or not in PATH")
+        return "tmux"
+    if found_tmux:
+        return "tmux"
+    logging.warning("AGY quota backend auto falling back to persistent_pty because tmux is unavailable")
+    return "persistent_pty"
+
+
+def tmux_quota_session_name(tool_key, command, env, cwd):
+    home = os.path.abspath(env.get("HOME") or "")
+    absolute_cwd = os.path.abspath(cwd)
+    identity = "\0".join([tool_key, "\0".join(command), absolute_cwd, home])
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    profile = os.path.basename(home) or "unknown"
+    safe_profile = re.sub(r"[^A-Za-z0-9_-]+", "_", profile).strip("_") or "profile"
+    return f"{TMUX_QUOTA_SESSION_PREFIX}{tool_key}_{safe_profile}_{digest}"
+
+
+class TmuxQuotaSession:
+    def __init__(self, tool_key, command, env, cwd):
+        self.tool_key = tool_key
+        self.command = list(command)
+        self.env = env.copy()
+        self.cwd = cwd
+        self.session_name = tmux_quota_session_name(tool_key, self.command, self.env, cwd)
+        self.lock = threading.Lock()
+        self.created_at = time.time()
+        self.last_used_at = self.created_at
+        self.ready = False
+        self.starting = False
+
+    @property
+    def backend(self):
+        return "tmux"
+
+    def _run_tmux(self, args, check=True, timeout=5):
+        tmux = tmux_path()
+        if not tmux:
+            raise QuotaProbeError("missing_backend", "tmux quota backend was requested but tmux is not installed or not in PATH")
+        try:
+            completed = subprocess.run(
+                [tmux, *args],
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raw_output = "".join(part for part in (e.stdout, e.stderr) if part)
+            raise QuotaProbeError("timeout", "timeout waiting for tmux quota backend", raw_output) from e
+        output = "".join(part for part in (completed.stdout, completed.stderr) if part)
+        if check and completed.returncode != 0:
+            raise QuotaProbeError("tmux_failure", f"tmux command failed with code {completed.returncode}", output)
+        return completed
+
+    def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+        if shutil.which(self.command[0]) is None:
+            raise QuotaProbeError("missing_cli", f"{self.command[0]} CLI is not installed or not in PATH")
+        self.starting = True
+        home = self.env.get("HOME")
+        tmux_command = ["new-session", "-d", "-s", self.session_name, "-c", self.cwd]
+        if home:
+            tmux_command.extend(["env", f"HOME={home}"])
+        tmux_command.extend(self.command)
+        try:
+            self._run_tmux(tmux_command)
+            audit.record(
+                "quota",
+                "started",
+                tool=self.tool_key,
+                backend="tmux",
+                details={"session": self.session_name, "cwd": self.cwd, "home": home, "command": self.command},
+            )
+            logging.debug(
+                "quota session create tool=%s backend=tmux session=%s cwd=%s home=%s",
+                self.tool_key,
+                self.session_name,
+                self.cwd,
+                home,
+            )
+            self.wait_for_ready(timeout_seconds=timeout_seconds)
+        except QuotaProbeError as e:
+            if self.tool_key == "agy" and e.state == "startup_pending" and self.is_alive():
+                self.starting = False
+                audit.record(
+                    "quota",
+                    "completed",
+                    tool=self.tool_key,
+                    backend="tmux",
+                    result="startup_pending",
+                    details={"session": self.session_name},
+                )
+                raise
+            self.starting = False
+            if self.is_alive():
+                self.close()
+            raise
+        except Exception:
+            self.starting = False
+            if self.is_alive():
+                self.close()
+            raise
+        self.ready = True
+        self.starting = False
+        audit.record("quota", "completed", tool=self.tool_key, backend="tmux", result="succeeded", details={"session": self.session_name})
+        logging.debug(
+            "quota session ready tool=%s backend=tmux session=%s cwd=%s home=%s",
+            self.tool_key,
+            self.session_name,
+            self.cwd,
+            home,
+        )
+
+    def is_alive(self):
+        if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
+            return False
+        try:
+            completed = self._run_tmux(["has-session", "-t", self.session_name], check=False)
+        except QuotaProbeError:
+            return False
+        return completed.returncode == 0
+
+    def capture(self, start="-200"):
+        completed = self._run_tmux(["capture-pane", "-pt", self.session_name, "-S", str(start)])
+        return completed.stdout or ""
+
+    def wait_for_ready(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
+        startup_seconds = quota_startup_seconds(self.tool_key)
+        deadline = time.monotonic() + min(max(startup_seconds, 0.0), max(timeout_seconds, startup_seconds, 0.0))
+        last_snapshot = ""
+        while time.monotonic() <= deadline:
+            if not self.is_alive():
+                raise QuotaProbeError("process_exit", "tmux quota session exited during startup", last_snapshot)
+            last_snapshot = self.capture()
+            classified = classify_agy_failure(last_snapshot, fatal_only=True) if self.tool_key == "agy" else None
+            if classified:
+                state, message = classified
+                raise QuotaProbeError(state, message, last_snapshot)
+            if self.tool_key == "agy" and (agy_cli_ready(last_snapshot) or agy_prompt_ready(last_snapshot)):
+                return last_snapshot
+            time.sleep(0.1)
+        if self.tool_key == "agy" and AGY_STARTUP_PENDING_PATTERN.search(last_snapshot):
+            raise QuotaProbeError("startup_pending", "AGY CLI is still starting", last_snapshot)
+        raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", last_snapshot)
+
+    def snapshot(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+        with self.lock:
+            self.last_used_at = time.time()
+            if not self.is_alive():
+                self.close()
+                self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
+            elif not self.ready:
+                audit.record("quota", "retried", tool=self.tool_key, backend="tmux", details={"reuse": True, "session": self.session_name})
+                self.wait_for_ready(timeout_seconds=timeout_seconds)
+                self.ready = True
+            else:
+                audit.record("quota", "retried", tool=self.tool_key, backend="tmux", details={"reuse": True, "session": self.session_name})
+                logging.debug(
+                    "quota session reuse tool=%s backend=tmux session=%s cwd=%s home=%s",
+                    self.tool_key,
+                    self.session_name,
+                    self.cwd,
+                    self.env.get("HOME"),
+                )
+            slash_command = quota_command_for(self.tool_key)
+            if not slash_command:
+                raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
+            self._run_tmux(["send-keys", "-t", self.session_name, slash_command, "Enter"])
+            logging.debug(
+                "quota command sent tool=%s backend=tmux session=%s command=%s",
+                self.tool_key,
+                self.session_name,
+                slash_command,
+            )
+            post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
+            post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
+            time.sleep(max(0.0, post_command_seconds))
+            snapshot = self.capture()
+            self._run_tmux(["send-keys", "-t", self.session_name, "Escape"], check=False)
+            if not self.is_alive():
+                raise QuotaProbeError("process_exit", "tmux quota session exited during quota probe", snapshot)
+            return snapshot
+
+    def close(self):
+        self.ready = False
+        self.starting = False
+        if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
+            return
+        try:
+            self._run_tmux(["kill-session", "-t", self.session_name], check=False)
+        except QuotaProbeError:
+            pass
+        audit.record("quota", "completed", tool=self.tool_key, backend="tmux", result="closed", details={"session": self.session_name})
+        logging.debug(
+            "quota session close tool=%s backend=tmux session=%s cwd=%s home=%s",
+            self.tool_key,
+            self.session_name,
+            self.cwd,
+            self.env.get("HOME"),
+        )
+
+
 class PersistentQuotaSession:
     def __init__(self, tool_key, command, env, cwd):
         self.tool_key = tool_key
@@ -737,6 +966,10 @@ class PersistentQuotaSession:
         self.last_used_at = self.created_at
         self.ready = False
         self.starting = False
+
+    @property
+    def backend(self):
+        return "persistent_pty"
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         self.starting = True
@@ -896,7 +1129,7 @@ def persistent_session_max_count():
         return DEFAULT_PERSISTENT_SESSION_MAX
 
 
-def persistent_quota_session_key(tool_key, command, env, cwd):
+def persistent_quota_session_key(tool_key, command, env, cwd, backend="persistent_pty"):
     home = env.get("HOME")
     return (
         tool_key,
@@ -905,6 +1138,7 @@ def persistent_quota_session_key(tool_key, command, env, cwd):
         os.path.abspath(home) if home else None,
         env.get("CODEX_HOME"),
         env.get("CLAUDE_CONFIG_DIR"),
+        backend,
     )
 
 
@@ -942,18 +1176,23 @@ def evict_persistent_quota_sessions(now=None):
                 PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
         if len(PERSISTENT_QUOTA_SESSIONS) > max_count:
             by_idle = sorted(
-                PERSISTENT_QUOTA_SESSIONS.items(),
+                (
+                    item for item in PERSISTENT_QUOTA_SESSIONS.items()
+                    if not getattr(item[1], "starting", False)
+                ),
                 key=lambda item: getattr(item[1], "last_used_at", 0),
             )
-            for key, session in by_idle[:len(PERSISTENT_QUOTA_SESSIONS) - max_count]:
+            for key, session in by_idle[:max(0, len(PERSISTENT_QUOTA_SESSIONS) - max_count)]:
                 evicted.append(session)
                 del PERSISTENT_QUOTA_SESSIONS[key]
                 PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
     for session in evicted:
-        audit.record("quota", "skipped", tool=getattr(session, "tool_key", None), backend="persistent_pty", result="evicted")
+        backend = getattr(session, "backend", "persistent_pty")
+        audit.record("quota", "skipped", tool=getattr(session, "tool_key", None), backend=backend, result="evicted")
         logging.debug(
-            "quota session evict tool=%s cwd=%s home=%s",
+            "quota session evict tool=%s backend=%s cwd=%s home=%s",
             getattr(session, "tool_key", None),
+            backend,
             getattr(session, "cwd", None),
             getattr(session, "env", {}).get("HOME"),
         )
@@ -974,6 +1213,8 @@ def persistent_quota_sessions_snapshot(tool_key=None):
                 "home": key[3],
                 "codex_home": key[4],
                 "claude_config_dir": key[5],
+                "backend": key[6] if len(key) > 6 else getattr(session, "backend", "persistent_pty"),
+                "session_name": getattr(session, "session_name", None),
                 "alive": session.is_alive(),
                 "parser_misses": PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0),
                 "created_age_seconds": round(time.time() - getattr(session, "created_at", time.time()), 3),
@@ -989,14 +1230,16 @@ atexit.register(close_persistent_quota_sessions)
 
 
 def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-    key = persistent_quota_session_key(tool_key, command, env, cwd)
+    backend = resolve_quota_backend(tool_key)
+    key = persistent_quota_session_key(tool_key, command, env, cwd, backend)
     evict_persistent_quota_sessions()
     with PERSISTENT_QUOTA_LOCK:
         session = PERSISTENT_QUOTA_SESSIONS.get(key)
         if session is None:
-            session = PersistentQuotaSession(tool_key, command, env, cwd)
+            session_class = TmuxQuotaSession if backend == "tmux" else PersistentQuotaSession
+            session = session_class(tool_key, command, env, cwd)
             PERSISTENT_QUOTA_SESSIONS[key] = session
-            logging.debug("quota session create tool=%s cwd=%s home=%s", tool_key, cwd, env.get("HOME"))
+            logging.debug("quota session create tool=%s backend=%s cwd=%s home=%s", tool_key, backend, cwd, env.get("HOME"))
     try:
         return session.snapshot(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
     except Exception as e:
@@ -1007,8 +1250,9 @@ def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_secon
                     del PERSISTENT_QUOTA_SESSIONS[key]
                     PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
             logging.debug(
-                "quota session invalidate tool=%s cwd=%s home=%s reason=%s",
+                "quota session invalidate tool=%s backend=%s cwd=%s home=%s reason=%s",
                 tool_key,
+                backend,
                 cwd,
                 env.get("HOME"),
                 getattr(e, "state", type(e).__name__),
@@ -1018,7 +1262,11 @@ def run_persistent_cli_quota_snapshot(tool_key, command, env, cwd, timeout_secon
 
 
 def record_persistent_parser_result(tool_key, command, env, cwd, quota):
-    key = persistent_quota_session_key(tool_key, command, env, cwd)
+    try:
+        backend = resolve_quota_backend(tool_key)
+    except QuotaProbeError:
+        return
+    key = persistent_quota_session_key(tool_key, command, env, cwd, backend)
     state = quota.get("state")
     with PERSISTENT_QUOTA_LOCK:
         if key not in PERSISTENT_QUOTA_SESSIONS:
@@ -1032,7 +1280,7 @@ def record_persistent_parser_result(tool_key, command, env, cwd, quota):
             return
         session = PERSISTENT_QUOTA_SESSIONS.pop(key)
         PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
-    logging.debug("quota session invalidate tool=%s cwd=%s home=%s reason=parser_miss", tool_key, cwd, env.get("HOME"))
+    logging.debug("quota session invalidate tool=%s backend=%s cwd=%s home=%s reason=parser_miss", tool_key, backend, cwd, env.get("HOME"))
     session.close()
 
 

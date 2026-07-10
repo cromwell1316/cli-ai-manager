@@ -814,8 +814,8 @@ def test_quota_payload_refines_agy_sign_in_startup_pending_from_raw_output():
 
     payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
 
-    assert payload["quota"]["state"] == "auth_required"
-    assert payload["quota"]["warnings"] == ["AGY CLI could not complete sign-in for this profile; /usage was not sent"]
+    assert payload["quota"]["state"] == "startup_pending"
+    assert payload["quota"]["warnings"] == ["AGY CLI is still signing in; keeping the session warm"]
 
 
 def test_agy_quota_startup_seconds_uses_specific_override(monkeypatch):
@@ -883,6 +883,45 @@ def test_agy_quota_pty_default_timeout(monkeypatch, tmp_path):
     operations.quota_payload("agy", 1)
 
     assert captured["timeout_seconds"] == 120
+
+
+def test_agy_quota_backend_selection_auto_prefers_tmux(monkeypatch):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.delenv("AI_MAN_AGY_QUOTA_BACKEND", raising=False)
+    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+
+    assert quota.resolve_quota_backend("agy") == "tmux"
+    assert quota.resolve_quota_backend("codex") == "persistent_pty"
+
+
+def test_agy_quota_backend_selection_auto_falls_back_to_pty(monkeypatch):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "auto")
+    monkeypatch.setattr(quota.shutil, "which", lambda name: None)
+
+    assert quota.resolve_quota_backend("agy") == "persistent_pty"
+
+
+def test_agy_quota_backend_selection_forced_pty(monkeypatch):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
+    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux")
+
+    assert quota.resolve_quota_backend("agy") == "persistent_pty"
+
+
+def test_agy_quota_backend_selection_forced_tmux_missing(monkeypatch):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "tmux")
+    monkeypatch.setattr(quota.shutil, "which", lambda name: None)
+
+    with pytest.raises(quota.QuotaProbeError) as exc_info:
+        quota.resolve_quota_backend("agy")
+    assert exc_info.value.state == "missing_backend"
 
 
 def test_direct_prompt_runner_marks_success(monkeypatch, tmp_path):
@@ -1510,6 +1549,7 @@ def test_interactive_force_refresh_preserves_stale_quota(monkeypatch):
 def test_persistent_quota_runner_reuses_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
 
     class FakeSession:
@@ -1546,6 +1586,7 @@ def test_persistent_quota_runner_reuses_session(monkeypatch, tmp_path):
 def test_persistent_quota_runner_uses_separate_sessions_per_profile(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
 
     class FakeSession:
@@ -1576,6 +1617,7 @@ def test_persistent_quota_runner_uses_separate_sessions_per_profile(monkeypatch,
 def test_persistent_quota_runner_replaces_dead_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
 
     class FakeSession:
@@ -1609,6 +1651,7 @@ def test_persistent_quota_runner_replaces_dead_session(monkeypatch, tmp_path):
 def test_persistent_quota_runner_invalidates_timeout_session_only(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
     calls = {}
 
@@ -1650,6 +1693,7 @@ def test_persistent_quota_runner_invalidates_timeout_session_only(monkeypatch, t
 def test_persistent_quota_runner_keeps_agy_startup_pending_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
     calls = 0
 
@@ -1706,6 +1750,7 @@ def test_persistent_quota_evict_skips_starting_session(tmp_path):
 def test_persistent_quota_parser_miss_threshold_invalidates_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
 
     class FakeSession:
@@ -1824,10 +1869,117 @@ def test_persistent_quota_sessions_respect_max_count(monkeypatch, tmp_path):
     quota.close_persistent_quota_sessions()
 
 
+def test_tmux_quota_session_name_is_stable_and_profile_scoped(tmp_path):
+    import cli_profile_manager.quota as quota
+
+    cwd = str(tmp_path)
+    p1 = {"HOME": str(tmp_path / "agy-homes" / "p1")}
+    p2 = {"HOME": str(tmp_path / "agy-homes" / "p2")}
+
+    first = quota.tmux_quota_session_name("agy", ["agy"], p1, cwd)
+    second = quota.tmux_quota_session_name("agy", ["agy"], p1, cwd)
+    other = quota.tmux_quota_session_name("agy", ["agy"], p2, cwd)
+
+    assert first == second
+    assert first != other
+    assert first.startswith("ai_man_quota_agy_p1_")
+    assert "/" not in first
+
+
+def test_tmux_quota_session_uses_expected_commands(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    calls = []
+    screen = (
+        "Antigravity CLI 1.1.1\n"
+        "Eligibility Check\n"
+        "not currently available in your location\n"
+        ">\n"
+        "? for shortcuts\n"
+        "Account: user@example.com\n"
+        "Gemini 3.5 Flash Medium\n"
+        "Usage 94% remaining\n"
+    )
+
+    def fake_which(name):
+        return f"/usr/bin/{name}" if name in ("tmux", "agy") else None
+
+    def fake_run(args, text=True, capture_output=True, timeout=5, check=False):
+        calls.append(args)
+        if "has-session" in args:
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "capture-pane" in args:
+            return types.SimpleNamespace(returncode=0, stdout=screen, stderr="")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(quota.shutil, "which", fake_which)
+    monkeypatch.setattr(quota.subprocess, "run", fake_run)
+    monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0")
+
+    home = str(tmp_path / "agy-homes" / "p1")
+    session = quota.TmuxQuotaSession("agy", ["agy"], {"HOME": home}, str(tmp_path))
+    session.start(timeout_seconds=1)
+    captured = session.snapshot(timeout_seconds=1)
+    session.close()
+
+    assert captured == screen
+    assert any(call[1:5] == ["new-session", "-d", "-s", session.session_name] for call in calls)
+    new_session_call = next(call for call in calls if "new-session" in call)
+    assert ["-c", str(tmp_path)] == new_session_call[5:7]
+    assert f"HOME={home}" in new_session_call
+    assert any(call[-2:] == ["/usage", "Enter"] for call in calls)
+    assert any("capture-pane" in call and "-S" in call and "-200" in call for call in calls)
+    assert any(call[-1:] == ["Escape"] for call in calls)
+    assert any(call[1:3] == ["kill-session", "-t"] and call[3] == session.session_name for call in calls)
+
+
+def test_run_persistent_agy_uses_tmux_in_auto(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    created = []
+
+    class FakeTmuxSession:
+        backend = "tmux"
+
+        def __init__(self, tool_key, command, env, cwd):
+            self.tool_key = tool_key
+            self.command = command
+            self.env = env
+            self.cwd = cwd
+            self.closed = False
+            self.created_at = time.time()
+            self.last_used_at = self.created_at
+            self.session_name = "ai_man_quota_agy_p1_fake"
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            return "Daily limit 50% remaining"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.delenv("AI_MAN_AGY_QUOTA_BACKEND", raising=False)
+    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+    monkeypatch.setattr(quota, "TmuxQuotaSession", FakeTmuxSession)
+
+    payload = quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": str(tmp_path / "p1")}, str(tmp_path))
+    snapshot = quota.persistent_quota_sessions_snapshot("agy")
+
+    assert payload == "Daily limit 50% remaining"
+    assert len(created) == 1
+    assert snapshot["sessions"][0]["backend"] == "tmux"
+    quota.close_persistent_quota_sessions()
+
+
 def test_interactive_invalidate_closes_matching_persistent_session(monkeypatch, tmp_path):
     import cli_profile_manager.interactive as interactive
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     created = []
 
     class FakeSession:
@@ -3045,6 +3197,7 @@ def test_quota_read_available_treats_bad_fd_as_empty():
 def test_persistent_agy_quota_session_uses_readiness_gated_fake_cli(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
     fake_cli = tmp_path / "fake_persistent_agy_cli.py"
     fake_cli.write_text(
         "\n".join([

@@ -67,6 +67,7 @@ CONFIG_REGISTRY = [
     SettingDefinition("quota.key_delay_seconds", ("AI_MAN_QUOTA_KEY_DELAY_SECONDS",), "per-key delay when typing slash commands into the PTY", 0.04, "float", "quota", minimum=0.0),
     SettingDefinition("quota.session_ttl_seconds", ("AI_MAN_QUOTA_SESSION_TTL_SECONDS",), "persistent quota session idle TTL in seconds", 1800.0, "float", "quota", minimum=1.0),
     SettingDefinition("quota.session_max", ("AI_MAN_QUOTA_SESSION_MAX",), "maximum persistent quota sessions", 24, "int", "quota", minimum=1),
+    SettingDefinition("quota.agy_backend", ("AI_MAN_AGY_QUOTA_BACKEND",), "AGY quota backend selection: auto, tmux, or pty", "auto", "enum", "quota"),
     SettingDefinition("quota.agy_command", ("AI_MAN_AGY_QUOTA_COMMAND",), "AGY quota slash command override", "/usage", "string", "quota", redact=True),
     SettingDefinition("quota.codex_command", ("AI_MAN_CODEX_QUOTA_COMMAND",), "Codex quota slash command override", "/status", "string", "quota", redact=True),
     SettingDefinition("quota.claude_command", ("AI_MAN_CLAUDE_QUOTA_COMMAND",), "Claude quota slash command override", "/usage", "string", "quota", redact=True),
@@ -153,6 +154,9 @@ def _parse_value(definition, raw, warnings, source_name):
     if definition.value_type == "enum":
         value = str(raw).strip().lower()
         if definition.key == "audit.backend" and value not in ("jsonl", "sqlite"):
+            warnings.append(f"{source_name}={raw!r} is invalid; using {default}")
+            return default
+        if definition.key == "quota.agy_backend" and value not in ("auto", "tmux", "pty"):
             warnings.append(f"{source_name}={raw!r} is invalid; using {default}")
             return default
         return value
