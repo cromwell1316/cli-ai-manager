@@ -188,6 +188,8 @@ def quota_probe_env(tool_key, n):
 
 
 def quota_probe_cwd(tool_key, n):
+    if tool_key == "agy":
+        return os.getcwd()
     return profile_home(tool_key, n)
 
 

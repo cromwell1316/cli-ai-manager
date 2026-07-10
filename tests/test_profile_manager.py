@@ -862,7 +862,7 @@ def test_agy_quota_uses_profile_pty_command(monkeypatch, tmp_path):
 
     assert payload["quota"]["state"] == "available"
     assert captured["command"] == ["agy"]
-    assert captured["cwd"].endswith(os.path.join("agy-homes", "p2"))
+    assert captured["cwd"] == str(tmp_path)
     assert captured["runner"] is fake_runner
     assert captured["env"]["HOME"].endswith(os.path.join("agy-homes", "p2"))
 
