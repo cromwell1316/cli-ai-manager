@@ -123,6 +123,7 @@ AI_MAN_INTERACTIVE_QUOTA_TIMEOUT        generic interactive quota timeout
 AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT    AGY interactive quota timeout
 AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY AGY quota worker count
 AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS  quota color freshness threshold
+AI_MAN_DEVELOPER_MODE                   show live logs on interactive status screens
 AI_MAN_QUOTA_STARTUP_SECONDS            native CLI startup wait
 AI_MAN_AGY_QUOTA_STARTUP_SECONDS        AGY CLI startup wait
 AI_MAN_QUOTA_POST_COMMAND_SECONDS       post slash-command wait
@@ -157,6 +158,8 @@ readiness window. Persistent quota sessions are bounded by
 startup uses a real controlling terminal and a `6144 MB` quota-process memory
 cap by default; override the cap with `AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy
 requires a different ceiling.
+Developer mode can be enabled from Settings or with `AI_MAN_DEVELOPER_MODE=1`;
+status screens then show a live tail of relevant quota/network/error log lines.
 
 AGY status uses separate quota columns. `FM`, `FH`, and `FL` are Gemini Flash
 medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude

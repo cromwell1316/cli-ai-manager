@@ -2097,6 +2097,38 @@ def test_interactive_settings_menu_lines_show_quota_refresh(monkeypatch, tmp_pat
     assert "Quota refresh interval" in rendered
     assert "15m" in rendered
     assert "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in rendered
+    assert "Developer mode" in rendered
+    assert "AI_MAN_DEVELOPER_MODE" in rendered
+
+
+def test_interactive_status_screen_shows_live_logs_in_developer_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_MAN_METADATA_DIR", str(tmp_path / "metadata"))
+    monkeypatch.setenv("AI_MAN_DEVELOPER_MODE", "1")
+    import cli_profile_manager.metadata as metadata
+    import cli_profile_manager.interactive as interactive
+
+    metadata.refresh_from_env()
+    log_path = tmp_path / "ai-man.log"
+    log_path.write_text(
+        "\n".join([
+            "debug noise",
+            "2026-07-10 16:00:00 - INFO - quota refresh finished tool=agy profile=p1 state=resource_exhausted",
+            "2026-07-10 16:00:01 - ERROR - network failed while probing agy2",
+        ]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive, "interactive_log_path", lambda: str(log_path))
+    interactive.invalidate_quota_cache()
+
+    lines = interactive.render_status_screen_lines(
+        "agy",
+        base_statuses=[{"num": 1, "email": "one@example.com", "has_token": True, "label": ""}],
+    )
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
+
+    assert "Live logs" in rendered
+    assert "resource_exhausted" in rendered
+    assert "network failed" in rendered
 
 
 def test_interactive_main_shutdown_closes_runtime(monkeypatch):

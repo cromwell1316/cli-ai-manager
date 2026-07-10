@@ -101,6 +101,7 @@ def safety_decision(operation, command=None, tool=None, profile=None, target=Non
 AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
 SETTINGS_METADATA_KEY = "_settings"
 QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
+DEVELOPER_MODE_SETTING_KEY = "developer_mode"
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
 INTERACTIVE_SETTINGS_CACHE = None
@@ -198,6 +199,13 @@ def interactive_quota_fresh_seconds():
         return 600.0
 
 
+def interactive_developer_mode_enabled():
+    raw = os.environ.get("AI_MAN_DEVELOPER_MODE")
+    if raw is None:
+        raw = load_interactive_setting(DEVELOPER_MODE_SETTING_KEY, False)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "enabled")
+
+
 def load_interactive_settings():
     global INTERACTIVE_SETTINGS_CACHE
     if INTERACTIVE_SETTINGS_CACHE is None:
@@ -221,6 +229,26 @@ def save_interactive_setting(key, value):
     settings[key] = value
     save_metadata(metadata)
     INTERACTIVE_SETTINGS_CACHE = dict(settings)
+
+
+def interactive_log_path():
+    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai-man.log")
+
+
+def live_log_lines(limit=8, width=118):
+    path = interactive_log_path()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-400:]
+    except FileNotFoundError:
+        return [f"log file not found: {path}"]
+    patterns = re.compile(r"\b(error|fail|failed|timeout|exception|resource_exhausted|account_ineligible|missing_cli|quota|agy\d*)\b", re.I)
+    selected = []
+    for line in lines:
+        cleaned = line.strip()
+        if cleaned and patterns.search(cleaned):
+            selected.append(visible_fit(cleaned, width))
+    return selected[-limit:]
 
 
 class InteractiveQuotaScheduler:
@@ -1367,6 +1395,11 @@ def render_status_screen_lines(tool_key, status_message=None, base_statuses=None
     progress_line = quota_progress_line(statuses)
     if progress_line:
         lines.append(progress_line)
+    if interactive_developer_mode_enabled():
+        lines.append("")
+        lines.append(f"{CLR_BOLD}{CLR_YELLOW}Live logs{CLR_RESET}")
+        for log_line in live_log_lines():
+            lines.append(f"  {CLR_WHITE}{log_line}{CLR_RESET}")
     lines.append(
         f"Next auto refresh: {CLR_CYAN}{quota_refresh_countdown(tool_key)}{CLR_RESET}. "
         "Press Enter/q to return, r to refresh quota now..."
@@ -2062,9 +2095,12 @@ def parse_duration_seconds(value):
 def settings_menu_lines():
     current = interactive_quota_fresh_seconds()
     source = "environment" if "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in os.environ else "saved/default"
+    dev_mode = "on" if interactive_developer_mode_enabled() else "off"
     return [
         f"      Quota refresh interval: {CLR_CYAN}{format_duration(current)}{CLR_RESET} ({current:g}s, {source})",
         f"      Env: AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        f"      Developer mode: {CLR_CYAN}{dev_mode}{CLR_RESET} (shows live logs on status screens)",
+        f"      Env: AI_MAN_DEVELOPER_MODE",
         "",
     ]
 
@@ -2091,16 +2127,27 @@ def edit_quota_refresh_interval():
     input("Press Enter to return...")
 
 
+def toggle_developer_mode():
+    enabled = not interactive_developer_mode_enabled()
+    save_interactive_setting(DEVELOPER_MODE_SETTING_KEY, enabled)
+    os.environ["AI_MAN_DEVELOPER_MODE"] = "1" if enabled else "0"
+    print(f"\n{CLR_GREEN}Developer mode {'enabled' if enabled else 'disabled'}.{CLR_RESET}")
+    input("Press Enter to return...")
+
+
 def settings_menu():
     options = [
         "[1] Quota refresh interval",
+        "[2] Toggle developer mode",
         "[x] Back to main menu",
     ]
     while True:
-        sel = run_menu(options, "SETTINGS", shortcuts={"x": 1}, pre_lines=settings_menu_lines())
+        sel = run_menu(options, "SETTINGS", shortcuts={"x": 2}, pre_lines=settings_menu_lines())
         if sel == 0:
             edit_quota_refresh_interval()
-        elif sel in (1, -1):
+        elif sel == 1:
+            toggle_developer_mode()
+        elif sel in (2, -1):
             break
 
 
