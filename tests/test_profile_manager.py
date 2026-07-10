@@ -509,6 +509,166 @@ def test_interactive_quota_text_marks_unknown_state_as_retrying():
     assert interactive.quota_text(status, color=False) == "retrying"
 
 
+def test_interactive_quota_text_uses_color_for_expired_available_quota(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    status = {
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": interactive.time.time() - 601,
+        },
+    }
+
+    assert interactive.quota_text(status, color=False) == "day:77%"
+    assert interactive.quota_text(status).startswith(interactive.CLR_WHITE)
+
+
+def test_interactive_quota_progress_line_tracks_active_refresh():
+    import cli_profile_manager.interactive as interactive
+
+    statuses = [
+        {
+            "has_token": True,
+            "quota": {"state": "available", "job_state": "ready", "limits": {"daily": {"percent": 77}}},
+        },
+        {
+            "has_token": True,
+            "quota": {"state": "loading", "job_state": "running", "limits": {}},
+        },
+        {
+            "has_token": True,
+            "quota": {"state": "loading", "job_state": "queued", "limits": {}},
+        },
+        {
+            "has_token": True,
+            "quota": {"state": "parser_miss", "job_state": "retryable", "limits": {}},
+        },
+        {
+            "has_token": False,
+            "quota": {"state": "no_token", "limits": {}},
+        },
+    ]
+
+    progress = interactive.quota_progress_snapshot(statuses)
+    line = interactive.quota_progress_line(statuses, now=0.0)
+
+    assert progress == {
+        "total": 4,
+        "completed": 1,
+        "queued": 1,
+        "running": 1,
+        "warming": 0,
+        "failed": 1,
+        "pending": 0,
+        "active": 2,
+    }
+    assert "Quota refresh |" in line
+    assert "1/4 25%" in line
+    assert "running 1, queued 1, failed 1" in line
+
+
+def test_interactive_quota_progress_line_hidden_when_idle():
+    import cli_profile_manager.interactive as interactive
+
+    statuses = [
+        {
+            "has_token": True,
+            "quota": {"state": "available", "job_state": "ready", "limits": {"daily": {"percent": 77}}},
+        },
+    ]
+
+    assert interactive.quota_progress_line(statuses, now=0.0) is None
+
+
+def test_interactive_quota_progress_counts_only_obtained_quota_values():
+    import cli_profile_manager.interactive as interactive
+
+    statuses = [
+        {
+            "has_token": True,
+            "quota": {
+                "state": "available",
+                "job_state": "retryable",
+                "limits": {"daily": {"percent": 77}},
+            },
+        },
+        {
+            "has_token": True,
+            "quota": {
+                "state": "startup_pending",
+                "job_state": "retryable",
+                "limits": {},
+            },
+        },
+        {
+            "has_token": True,
+            "quota": {
+                "state": "available",
+                "job_state": "ready",
+                "limits": {"daily": {"percent": 88}},
+            },
+        },
+    ]
+
+    progress = interactive.quota_progress_snapshot(statuses)
+    line = interactive.quota_progress_line(statuses, now=0.0)
+
+    assert progress["completed"] == 1
+    assert progress["failed"] == 1
+    assert progress["warming"] == 1
+    assert "1/3 33%" in line
+    assert "warming 1" in line
+
+
+def test_interactive_status_screen_renders_quota_progress(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    interactive.invalidate_quota_cache()
+    now = interactive.time.time()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "ready",
+        "job_state": "ready",
+        "machine_state": "available",
+        "quota": {
+            "state": "available",
+            "job_state": "ready",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": now,
+        },
+        "fetched_at": now,
+        "started_at": None,
+        "attempts": 0,
+        "last_error": None,
+        "next_retry_at": None,
+    })
+    interactive.store_quota_cache("agy", 2, {
+        "state": "running",
+        "job_state": "running",
+        "machine_state": "running",
+        "quota": {"state": "loading", "job_state": "running", "limits": {}},
+        "fetched_at": None,
+        "started_at": now,
+        "attempts": 0,
+        "last_error": None,
+        "next_retry_at": None,
+    })
+    base_statuses = [
+        {"num": 1, "email": "one@example.com", "has_token": True, "label": ""},
+        {"num": 2, "email": "two@example.com", "has_token": True, "label": ""},
+    ]
+
+    lines = interactive.render_status_screen_lines("agy", base_statuses=base_statuses)
+    plain = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
+
+    assert "Quota refresh" in plain
+    assert "1/2 50%" in plain
+    assert "running 1, queued 0" in plain
+    interactive.invalidate_quota_cache()
+
+
 def test_quota_state_machine_rejects_illegal_transitions():
     import cli_profile_manager.interactive as interactive
 
@@ -542,10 +702,12 @@ def test_agy_quota_parser_classifies_native_failure_output():
     tty = parse_quota("agy", "CLI error: bubbletea: error opening TTY: open /dev/tty: no such device")
     ineligible = parse_quota("agy", "Account ineligible for Antigravity")
     exhausted = parse_quota("agy", "RESOURCE_EXHAUSTED: quota exceeded")
+    limited = parse_quota("agy", "runtime/cgo: pthread_create failed: Resource temporarily unavailable")
 
     assert tty["state"] == "tty_unavailable"
     assert ineligible["state"] == "account_ineligible"
     assert exhausted["state"] == "resource_exhausted"
+    assert limited["state"] == "resource_limited"
     assert "diagnostic_summary" in tty
 
 
@@ -572,6 +734,71 @@ def test_quota_payload_refines_agy_process_exit_from_raw_output():
     assert payload["quota"]["state"] == "account_ineligible"
     assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
     assert payload["quota"]["diagnostic_summary"] == "Account ineligible"
+
+
+def test_quota_payload_refines_agy_thread_exhaustion_from_raw_output():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError(
+            "process_exit",
+            "CLI process exited during startup",
+            "runtime/cgo: pthread_create failed: Resource temporarily unavailable",
+        )
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "resource_limited"
+    assert payload["quota"]["warnings"] == ["AGY CLI was stopped by local quota process resource limits"]
+
+
+def test_quota_payload_refines_agy_sign_in_timeout_from_raw_output():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError(
+            "timeout",
+            "timeout waiting for AGY CLI readiness",
+            "Welcome to the Antigravity CLI. You are currently not signed in.\nSigning in...",
+        )
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "auth_required"
+    assert payload["quota"]["warnings"] == ["AGY CLI could not complete sign-in for this profile; /usage was not sent"]
+
+
+def test_quota_payload_refines_agy_sign_in_startup_pending_from_raw_output():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError(
+            "startup_pending",
+            "AGY CLI is still starting",
+            "Welcome to the Antigravity CLI. You are currently not signed in.\nSigning in...",
+        )
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "auth_required"
+    assert payload["quota"]["warnings"] == ["AGY CLI could not complete sign-in for this profile; /usage was not sent"]
+
+
+def test_agy_quota_startup_seconds_uses_specific_override(monkeypatch):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.delenv("AI_MAN_QUOTA_STARTUP_SECONDS", raising=False)
+    monkeypatch.delenv("AI_MAN_AGY_QUOTA_STARTUP_SECONDS", raising=False)
+    assert quota.quota_startup_seconds("agy") == 30.0
+    assert quota.quota_startup_seconds("codex") == 3.0
+
+    monkeypatch.setenv("AI_MAN_QUOTA_STARTUP_SECONDS", "11")
+    assert quota.quota_startup_seconds("agy") == 11.0
+    assert quota.quota_startup_seconds("codex") == 11.0
+
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_STARTUP_SECONDS", "77")
+    assert quota.quota_startup_seconds("agy") == 77.0
+    assert quota.quota_startup_seconds("codex") == 11.0
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
@@ -895,6 +1122,8 @@ def test_interactive_auth_required_maps_to_terminal_state(monkeypatch):
     assert refreshed["machine_state"] == "auth_required"
     assert refreshed["quota"]["pipeline_state"] == "auth_required"
     assert refreshed["last_error"]["state"] == "auth_required"
+    assert refreshed["next_retry_at"] is None
+    assert interactive.schedule_due_quota_refresh("agy", now=interactive.time.time() + 3600) == 0
 
 
 def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
@@ -925,6 +1154,47 @@ def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
     interactive.invalidate_quota_cache()
 
 
+def test_interactive_retry_wait_stale_quota_can_refresh(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    submitted = []
+
+    class FakeScheduler:
+        def submit(self, tool_key, profile_num, priority=10):
+            submitted.append((tool_key, profile_num, priority))
+            return object()
+
+    monkeypatch.setattr(interactive, "quota_scheduler", lambda: FakeScheduler())
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    interactive.invalidate_quota_cache()
+    stale_fetched_at = interactive.time.time() - interactive.interactive_quota_fresh_seconds() - 1
+    interactive.store_quota_cache("agy", 1, {
+        "state": "retryable",
+        "job_state": "retryable",
+        "machine_state": "retry_wait",
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": stale_fetched_at,
+            "pipeline_state": "retry_wait",
+        },
+        "fetched_at": stale_fetched_at,
+        "started_at": None,
+        "attempts": 1,
+        "last_error": {"state": "process_exit", "message": "previous failure"},
+        "next_retry_at": 700.0,
+    })
+
+    entry = interactive.ensure_quota_loading("agy", 1)
+
+    assert submitted == [("agy", 1, 10)]
+    assert entry["machine_state"] == "stale_refreshing"
+    assert entry["quota"]["state"] == "available"
+    assert entry["quota"]["limits"]["daily"]["percent"] == 77
+    assert entry["quota"]["job_state"] == "queued"
+    interactive.invalidate_quota_cache()
+
+
 def test_interactive_next_quota_wake_timeout_tracks_auto_refresh(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
@@ -949,6 +1219,82 @@ def test_interactive_next_quota_wake_timeout_tracks_auto_refresh(monkeypatch):
     assert interactive.next_quota_wake_timeout("agy", now=700.0) == 0.0
     assert interactive.quota_refresh_countdown("agy", now=640.0) == "1m00s"
     assert interactive.quota_refresh_countdown("agy", now=700.0) == "now"
+    interactive.invalidate_quota_cache()
+
+
+def test_interactive_schedule_due_quota_refresh_enqueues_expired_available_quota(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    submitted = []
+
+    class FakeScheduler:
+        def submit(self, tool_key, profile_num, priority=10):
+            submitted.append((tool_key, profile_num, priority))
+            return object()
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    monkeypatch.setattr(interactive, "quota_scheduler", lambda: FakeScheduler())
+    interactive.invalidate_quota_cache()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "ready",
+        "job_state": "ready",
+        "machine_state": "available",
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": 100.0,
+        },
+        "fetched_at": 100.0,
+        "started_at": None,
+        "attempts": 0,
+        "last_error": None,
+        "next_retry_at": None,
+    })
+
+    assert interactive.schedule_due_quota_refresh("agy", now=700.0) == 1
+    entry = interactive.quota_cache_entry("agy", 1)
+
+    assert submitted == [("agy", 1, 5)]
+    assert entry["machine_state"] == "stale_refreshing"
+    assert entry["job_state"] == "queued"
+    assert entry["quota"]["job_state"] == "queued"
+    assert interactive.schedule_due_quota_refresh("agy", now=700.0) == 0
+    interactive.invalidate_quota_cache()
+
+
+def test_interactive_schedule_due_quota_refresh_respects_retry_backoff(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    submitted = []
+
+    class FakeScheduler:
+        def submit(self, tool_key, profile_num, priority=10):
+            submitted.append((tool_key, profile_num, priority))
+            return object()
+
+    monkeypatch.setenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    monkeypatch.setattr(interactive, "quota_scheduler", lambda: FakeScheduler())
+    interactive.invalidate_quota_cache()
+    interactive.store_quota_cache("agy", 1, {
+        "state": "retryable",
+        "job_state": "retryable",
+        "machine_state": "retry_wait",
+        "quota": {
+            "state": "available",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": 100.0,
+        },
+        "fetched_at": 100.0,
+        "started_at": None,
+        "attempts": 5,
+        "last_error": {"state": "empty_output", "message": "quota command returned no readable output"},
+        "next_retry_at": 760.0,
+    })
+
+    assert interactive.schedule_due_quota_refresh("agy", now=700.0) == 0
+    assert submitted == []
+    assert interactive.schedule_due_quota_refresh("agy", now=760.0) == 1
+    assert submitted == [("agy", 1, 5)]
     interactive.invalidate_quota_cache()
 
 
@@ -1129,6 +1475,62 @@ def test_persistent_quota_runner_invalidates_timeout_session_only(monkeypatch, t
     quota.close_persistent_quota_sessions()
 
 
+def test_persistent_quota_runner_keeps_agy_startup_pending_session(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    created = []
+    calls = 0
+
+    class FakeSession:
+        def __init__(self, tool_key, command, env, cwd):
+            self.closed = False
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise quota.QuotaProbeError("startup_pending", "AGY CLI is still starting")
+            return "Daily limit 55% remaining"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setattr(quota, "PersistentQuotaSession", FakeSession)
+    env = {"HOME": str(tmp_path / "p1")}
+
+    with pytest.raises(quota.QuotaProbeError):
+        quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path / "p1"))
+
+    assert created[0].closed is False
+    assert quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path / "p1")) == "Daily limit 55% remaining"
+    assert len(created) == 1
+    quota.close_persistent_quota_sessions()
+
+
+def test_persistent_quota_evict_skips_starting_session(tmp_path):
+    import cli_profile_manager.quota as quota
+
+    quota.close_persistent_quota_sessions()
+    home = str(tmp_path / "p1")
+    session = quota.PersistentQuotaSession("agy", ["agy"], {"HOME": home}, home)
+    session.starting = True
+    session.master_fd = 123
+    session.last_used_at = 10.0
+    key = quota.persistent_quota_session_key("agy", ["agy"], {"HOME": home}, home)
+
+    with quota.PERSISTENT_QUOTA_LOCK:
+        quota.PERSISTENT_QUOTA_SESSIONS[key] = session
+
+    assert quota.evict_persistent_quota_sessions(now=20.0) == 0
+    assert quota.persistent_quota_sessions_snapshot("agy")["count"] == 1
+    quota.close_persistent_quota_sessions()
+
+
 def test_persistent_quota_parser_miss_threshold_invalidates_session(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
@@ -1302,11 +1704,13 @@ def test_interactive_agy_quota_cells_render_h05_markers():
     }
     failed = {"quota": {"state": "timeout", "job_state": "retryable", "limits": {}}}
     parser_miss = {"quota": {"state": "parser_miss", "limits": {}}}
+    startup_pending = {"quota": {"state": "startup_pending", "job_state": "retryable", "limits": {}}}
     no_token = {"quota": {"state": "no_token", "limits": {}}}
 
-    assert agy_quota_cells(stale, columns)[0] == "94%~"
+    assert agy_quota_cells(stale, columns)[0] == "94%"
     assert agy_quota_cells(failed, columns)[0] == "!"
     assert agy_quota_cells(parser_miss, columns)[0] == "!"
+    assert agy_quota_cells(startup_pending, columns)[0] == "..."
     assert agy_quota_cells(no_token, columns) == ["", "", "", "", "", "", ""]
 
 
@@ -1362,11 +1766,37 @@ def test_terminal_frame_renderer_initial_diff_shrink_and_resize():
     renderer.paint(["one"])
     renderer.paint(["one"])
 
-    assert "\033[Hone\ntwo\nthree\033[J" in stdout.writes[0]
+    assert "\033[H\033[Jone\ntwo\nthree" in stdout.writes[0]
     assert "\033[2;1HTWO\033[K" in stdout.writes[1]
     assert "\033[H" not in stdout.writes[1]
     assert "\033[2;1H\033[J" in stdout.writes[2]
-    assert "\033[Hone\033[J" in stdout.writes[3]
+    assert "\033[H\033[Jone" in stdout.writes[3]
+
+
+def test_terminal_frame_renderer_full_repaint_clears_old_line_tails():
+    from cli_profile_manager.terminal_rendering import TerminalFrameRenderer
+
+    class FakeStdout:
+        def __init__(self):
+            self.writes = []
+
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            self.writes.append(value)
+
+        def flush(self):
+            pass
+
+    stdout = FakeStdout()
+    renderer = TerminalFrameRenderer(stdout=stdout)
+
+    renderer.paint(["long previous row"])
+    renderer.reset()
+    renderer.paint(["short"])
+
+    assert "\033[H\033[Jshort" in stdout.writes[-1]
 
 
 def test_terminal_frame_renderer_restores_cursor_after_exception():
@@ -1443,7 +1873,7 @@ def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
     interactive.paint_terminal_frame(["one", "two"])
     interactive.paint_terminal_frame(["one", "three"])
 
-    assert "\033[Hone\ntwo\033[J" in stdout.writes[0]
+    assert "\033[H\033[Jone\ntwo" in stdout.writes[0]
     assert "\033[2;1Hthree\033[K" in stdout.writes[1]
     assert "\033[H" not in stdout.writes[1]
     assert "\033[J" not in stdout.writes[1]
@@ -1460,6 +1890,124 @@ def test_interactive_menu_lines_mark_selection_and_fit_footer():
     assert "First" in lines[4]
     assert "Second" in lines[5]
     assert "Enter" in rendered
+
+
+def test_interactive_menu_lines_can_render_table_header():
+    import cli_profile_manager.interactive as interactive
+
+    lines = interactive.render_menu_lines(
+        ["p1     account@example.com"],
+        "LAUNCH",
+        selected_idx=0,
+        pre_lines=["      Profile Account Quota", "      ---------------------"],
+    )
+    rendered = "\n".join(lines)
+
+    assert "Profile Account Quota" in rendered
+    assert "p1" in rendered
+    assert "-->" in rendered
+
+
+def test_interactive_settings_duration_parsing_and_formatting():
+    import cli_profile_manager.interactive as interactive
+
+    assert interactive.parse_duration_seconds("10m") == 600.0
+    assert interactive.parse_duration_seconds("1h") == 3600.0
+    assert interactive.parse_duration_seconds("45") == 45.0
+    assert interactive.format_duration(600) == "10m"
+    assert interactive.format_duration(3600) == "1h"
+
+
+def test_interactive_settings_menu_lines_show_quota_refresh(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_MAN_METADATA_DIR", str(tmp_path / "metadata"))
+    monkeypatch.delenv("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", raising=False)
+    import cli_profile_manager.metadata as metadata
+    import cli_profile_manager.interactive as interactive
+
+    metadata.refresh_from_env()
+    interactive.INTERACTIVE_SETTINGS_CACHE = None
+    interactive.save_interactive_setting(interactive.QUOTA_REFRESH_SETTING_KEY, 900.0)
+
+    rendered = "\n".join(interactive.settings_menu_lines())
+
+    assert "Quota refresh interval" in rendered
+    assert "15m" in rendered
+    assert "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in rendered
+
+
+def test_interactive_main_shutdown_closes_runtime(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    class FakeScheduler:
+        def __init__(self):
+            self.calls = []
+
+        def shutdown(self, wait=False, timeout=2.0):
+            self.calls.append((wait, timeout))
+
+        def wait(self, timeout=2.0):
+            self.calls.append(("wait", timeout))
+
+    scheduler = FakeScheduler()
+    closed = []
+    restored = []
+
+    monkeypatch.setattr(interactive, "INTERACTIVE_QUOTA_SCHEDULER", scheduler)
+    monkeypatch.setattr(interactive, "INTERACTIVE_SHUTTING_DOWN", False)
+    monkeypatch.setattr(interactive, "install_interactive_signal_handlers", lambda: {"handlers": True})
+    monkeypatch.setattr(interactive, "restore_interactive_signal_handlers", lambda handlers: restored.append(handlers))
+    monkeypatch.setattr(interactive, "close_persistent_quota_sessions", lambda: closed.append(True))
+    monkeypatch.setattr(interactive, "run_menu", lambda *args, **kwargs: 5)
+    monkeypatch.setattr(interactive, "clear_screen", lambda: None)
+
+    assert interactive.run_interactive_main() == interactive.EXIT_OK
+
+    assert scheduler.calls == [(False, 2.0), ("wait", 2.0)]
+    assert closed == [True]
+    assert restored == [{"handlers": True}]
+    assert interactive.INTERACTIVE_QUOTA_SCHEDULER is None
+
+
+def test_launch_account_table_renders_agy_quota_columns():
+    import cli_profile_manager.interactive as interactive
+
+    statuses = [
+        {
+            "num": 1,
+            "email": "logged in",
+            "has_token": True,
+            "label": "work",
+            "quota": {
+                "state": "available",
+                "account": "user@example.com",
+                "limits": {
+                    "gemini_3_5_flash_medium": {"model": "Gemini 3.5 Flash (Medium)", "percent": 12},
+                    "gemini_3_5_flash_high": {"model": "Gemini 3.5 Flash (High)", "percent": 34},
+                    "claude_sonnet_4_6_thinking": {"model": "Claude Sonnet 4.6 (Thinking)", "percent": 100},
+                },
+            },
+        },
+        {
+            "num": 2,
+            "email": "(no login)",
+            "has_token": False,
+            "label": "",
+            "quota": {"state": "no_token", "limits": {}},
+        },
+    ]
+
+    pre_lines, rows = interactive.launch_account_table("agy", statuses)
+    rendered = "\n".join(pre_lines + rows)
+
+    assert "Profile" in rendered
+    assert "FM" in rendered
+    assert "FH" in rendered
+    assert "CS" in rendered
+    assert "12%" in rendered
+    assert "34%" in rendered
+    assert "100%" in rendered
+    assert "work" in rendered
+    assert "No Token" in rendered
 
 
 @pytest.mark.parametrize("refresh_key", ["r", "R", "ctrl+r", "к", "К"])
@@ -1644,6 +2192,29 @@ def test_sync_dry_run_json_shape_and_hard_delete_preflight(monkeypatch, tmp_path
 
     with pytest.raises(PermissionError):
         pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=False)
+
+
+def test_sync_only_managed_profile_files(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    wsl = tmp_path / "wsl"
+    windows = tmp_path / "windows"
+    write_json(wsl / "codex-homes" / "p1" / "auth.json", {"OPENAI_API_KEY": "new"})
+    write_json(wsl / "codex-homes" / "p1" / "site-packages" / "httpcore" / "__init__.py", {"ignored": True})
+    write_json(wsl / "codex-homes" / "p1" / "__pycache__" / "auth.cpython-311.pyc", {"ignored": True})
+    write_json(wsl / "claude-homes" / "p2" / ".credentials.json", {"claude": "token"})
+    write_json(windows / "codex-homes" / "p9" / "auth.json", {"OPENAI_API_KEY": "old"})
+    write_json(windows / "codex-homes" / "p9" / "node_modules" / "pkg" / "index.js", {"ignored": True})
+
+    result = pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=True)
+
+    assert result["copied"] == 2
+    assert result["would_delete"] == 1
+    assert (windows / "codex-homes" / "p1" / "auth.json").exists()
+    assert (windows / "claude-homes" / "p2" / ".credentials.json").exists()
+    assert not (windows / "codex-homes" / "p1" / "site-packages").exists()
+    assert not (windows / "codex-homes" / "p1" / "__pycache__").exists()
+    assert (windows / "codex-homes" / "p9" / "node_modules" / "pkg" / "index.js").exists()
+    assert not (windows / "codex-homes" / "p9" / "auth.json").exists()
 
 
 def test_safety_policy_inventory_covers_sensitive_commands():
@@ -1859,6 +2430,7 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
         "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS": "900",
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS": "120",
         "AI_MAN_QUOTA_SESSION_MAX": "3",
+        "AI_MAN_AGY_QUOTA_STARTUP_SECONDS": "75",
         "AI_MAN_AGY_QUOTA_COMMAND": "sk-test-secret",
         "AI_MAN_PROCESS_MEMORY_MB": "bad",
         "AI_MAN_QUOTA_PROCESS_CPU_PERCENT": "5",
@@ -1879,6 +2451,7 @@ def test_config_show_json_reports_effective_values_and_invalid_env_warnings(monk
     assert payload["quota"]["interactive_agy_concurrency"] == 2
     assert payload["quota"]["interactive_timeout"] == 12.0
     assert payload["quota"]["interactive_fresh_seconds"] == 900.0
+    assert payload["quota"]["agy_startup_seconds"] == 75.0
     assert payload["quota"]["session_ttl_seconds"] == 120.0
     assert payload["quota"]["session_max"] == 3
     assert any("AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY" in warning for warning in payload["warnings"])
@@ -1917,6 +2490,7 @@ def test_config_registry_covers_known_environment_knobs():
         "AI_MAN_AUDIT_SHOW_ACCOUNTS",
         "AI_MAN_AUDIT_SHOW_PATHS",
         "AI_MAN_QUOTA_STARTUP_SECONDS",
+        "AI_MAN_AGY_QUOTA_STARTUP_SECONDS",
         "AI_MAN_QUOTA_POST_COMMAND_SECONDS",
         "AI_MAN_QUOTA_KEY_DELAY_SECONDS",
         "AI_MAN_QUOTA_SESSION_TTL_SECONDS",
@@ -2170,6 +2744,64 @@ def test_agy_quota_pty_assigns_controlling_tty_and_waits_for_readiness(monkeypat
     assert "EARLY_COMMAND" not in screen
     assert parsed["state"] == "available"
     assert parsed["limits"]["gemini_3_5_flash_medium"]["percent"] == 94
+
+
+def test_agy_quota_pty_accepts_stable_prompt_as_readiness(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    fake_cli = tmp_path / "fake_agy_prompt_cli.py"
+    fake_cli.write_text(
+        "\n".join([
+            "import sys",
+            "import time",
+            "open('/dev/tty', 'rb+', buffering=0)",
+            "print('Antigravity CLI 1.1.0', flush=True)",
+            "print('user@example.com', flush=True)",
+            "print('Gemini 3.5 Flash (Medium)', flush=True)",
+            "print('~', flush=True)",
+            "for line in sys.stdin:",
+            "    command = line.strip()",
+            "    if command == '/exit':",
+            "        break",
+            "    if command == '/usage':",
+            "        print('Gemini 3.5 Flash (Medium)', flush=True)",
+            "        print('Usage 94% remaining', flush=True)",
+            "    time.sleep(0.05)",
+        ]),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AI_MAN_PROCESS_LIMITS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_KEY_DELAY_SECONDS", "0")
+    monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0.1")
+
+    screen = quota.run_cli_quota_snapshot(
+        "agy",
+        [sys.executable, str(fake_cli)],
+        {"HOME": str(tmp_path)},
+        str(tmp_path),
+        timeout_seconds=2,
+        idle_seconds=0.1,
+    )
+    parsed = quota.parse_quota("agy", screen)
+
+    assert parsed["state"] == "available"
+    assert parsed["limits"]["gemini_3_5_flash_medium"]["percent"] == 94
+
+
+def test_agy_readiness_does_not_accept_idle_splash_without_prompt():
+    import os
+    import cli_profile_manager.quota as quota
+
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, b"Antigravity CLI 1.1.0\nSigning in...\n")
+        with pytest.raises(quota.QuotaProbeError, match="AGY CLI is still starting") as exc_info:
+            quota.wait_for_agy_readiness(read_fd, [], startup_seconds=0.2, idle_seconds=0.05)
+        assert exc_info.value.state == "startup_pending"
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
 
 
 def test_persistent_agy_quota_session_uses_readiness_gated_fake_cli(monkeypatch, tmp_path):

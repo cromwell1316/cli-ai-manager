@@ -69,9 +69,8 @@ class TerminalFrameRenderer:
             self.cursor_hidden = True
 
         if force or resized or self.previous_lines is None:
-            output.append("\033[H")
+            output.append("\033[H\033[J")
             output.append("\n".join(text_lines))
-            output.append("\033[J")
         else:
             max_lines = max(len(self.previous_lines), len(text_lines))
             for idx in range(max_lines):

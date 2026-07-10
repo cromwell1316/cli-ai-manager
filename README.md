@@ -124,6 +124,7 @@ AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT    AGY interactive quota timeout
 AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY AGY quota worker count
 AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS  quota color freshness threshold
 AI_MAN_QUOTA_STARTUP_SECONDS            native CLI startup wait
+AI_MAN_AGY_QUOTA_STARTUP_SECONDS        AGY CLI startup wait
 AI_MAN_QUOTA_POST_COMMAND_SECONDS       post slash-command wait
 AI_MAN_QUOTA_KEY_DELAY_SECONDS          PTY slash-command key delay
 AI_MAN_QUOTA_SESSION_TTL_SECONDS        persistent quota session idle TTL
@@ -148,18 +149,18 @@ active profiles and cache it for the current session. Set
 timeout. AGY supports `AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` and
 `AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY=<workers>` for its slower interactive
 quota probes. Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
-more startup time before slash commands are accepted. Persistent quota sessions
-are bounded by `AI_MAN_QUOTA_SESSION_TTL_SECONDS` and
-`AI_MAN_QUOTA_SESSION_MAX`. AGY quota startup uses a real controlling terminal,
-a longer readiness window, and a `6144 MB` quota-process memory cap by default;
-override the cap with `AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy
+more startup time before slash commands are accepted; AGY can be tuned separately
+with `AI_MAN_AGY_QUOTA_STARTUP_SECONDS=<seconds>` and defaults to a longer
+readiness window. Persistent quota sessions are bounded by
+`AI_MAN_QUOTA_SESSION_TTL_SECONDS` and `AI_MAN_QUOTA_SESSION_MAX`. AGY quota
+startup uses a real controlling terminal and a `6144 MB` quota-process memory
+cap by default; override the cap with `AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy
 requires a different ceiling.
 
 AGY status uses separate quota columns. `FM`, `FH`, and `FL` are Gemini Flash
 medium/high/low; `PL` and `PH` are Gemini Pro low/high; `CS` and `CO` are Claude
-Sonnet/Opus. `...` means a quota probe is queued or running, `~` marks a stale
-value being refreshed, and `!` marks a retryable failure whose details are
-available from JSON commands or diagnostics.
+Sonnet/Opus. `...` means a quota probe is queued or running, and `!` marks a
+retryable failure whose details are available from JSON commands or diagnostics.
 Fresh AGY quota values are colored by remaining percentage: red for 0-20%,
 yellow for 21-40%, and green above 40%. Values older than
 `AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS` are shown in white; the default is
@@ -216,6 +217,7 @@ Launching `ai-man` opens the keyboard selector:
 [2] OpenAI Codex CLI
 [3] Anthropic Claude CLI
 [4] Sync Profiles (WSL <-> Windows)
+[5] Settings
 [x] Exit
 ```
 
@@ -233,6 +235,10 @@ s       status
 c       clear
 q/Esc   back or exit
 ```
+
+Settings currently includes the quota refresh interval used by the interactive
+quota status cache. Values can be entered in seconds or with `s`, `m`, or `h`
+suffixes.
 
 Inside each tool manager you can:
 

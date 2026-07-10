@@ -12,6 +12,35 @@ from .credentials.common import write_json_atomic
 
 
 DEFAULT_DIRS_TO_SYNC = ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"]
+PROFILE_SYNC_FILES = {
+    "agy-homes": (
+        Path(".gemini") / "oauth_creds.json",
+        Path(".gemini") / "google_accounts.json",
+    ),
+    "codex-homes": (Path("auth.json"),),
+    "claude-homes": (Path(".credentials.json"),),
+}
+CONFIG_SYNC_FILES = {
+    ".config/cli-profile-manager": (Path("profiles_metadata.json"),),
+}
+PRUNED_DIR_NAMES = {
+    ".cache",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tempmediaStorage",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "cache",
+    "dist",
+    "log",
+    "logs",
+    "node_modules",
+    "site-packages",
+    "venv",
+}
 
 
 def profile_number_from_dir_name(name):
@@ -39,6 +68,7 @@ def deletion_preflight_paths(path):
         return []
     paths = []
     for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in PRUNED_DIR_NAMES]
         for file_name in files:
             paths.append(str(Path(root) / file_name))
         for dir_name in dirs:
@@ -48,6 +78,53 @@ def deletion_preflight_paths(path):
     if not paths:
         paths.append(str(path))
     return sorted(paths)
+
+
+def sync_file_rel_paths(base, name):
+    if name in PROFILE_SYNC_FILES:
+        if not base.exists():
+            return []
+        rel_paths = []
+        for profile_dir in base.iterdir():
+            if not profile_dir.is_dir() or profile_number_from_dir_name(profile_dir.name) is None:
+                continue
+            for rel_file in PROFILE_SYNC_FILES[name]:
+                candidate = profile_dir / rel_file
+                if candidate.exists() and candidate.is_file():
+                    rel_paths.append(Path(profile_dir.name) / rel_file)
+        return sorted(rel_paths)
+    if name in CONFIG_SYNC_FILES:
+        return sorted(rel_file for rel_file in CONFIG_SYNC_FILES[name] if (base / rel_file).exists())
+    return sync_file_rel_paths_by_walk(base)
+
+
+def sync_file_rel_paths_by_walk(base):
+    if not base.exists():
+        return []
+    rel_paths = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in PRUNED_DIR_NAMES]
+        rel_root = Path(root).relative_to(base)
+        for file_name in files:
+            rel_paths.append(rel_root / file_name)
+    return sorted(rel_paths)
+
+
+def managed_destination_rel_paths(base, name):
+    if name in PROFILE_SYNC_FILES or name in CONFIG_SYNC_FILES:
+        return sync_file_rel_paths(base, name)
+    return sync_file_rel_paths_by_walk(base)
+
+
+def remove_empty_parents(path, stop_at):
+    stop_at = stop_at.resolve()
+    current = path.parent
+    while current != stop_at and path_is_within(current, stop_at):
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run=False):
@@ -127,37 +204,42 @@ def sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run=Fal
             continue
         if not path_is_within(dst, dst_base):
             raise PermissionError(f"refusing to sync unsafe destination path: {dst}")
+        src_rel_paths = sync_file_rel_paths(src, name)
         if hard_mode and dst.exists():
-            delete_paths.extend(deletion_preflight_paths(dst))
-        if hard_mode and dst.exists() and not dry_run:
-            shutil.rmtree(dst)
-        if not dry_run:
-            dst.mkdir(parents=True, exist_ok=True)
-        for root, dirs, files in os.walk(src):
-            dirs[:] = [d for d in dirs if d not in ("cache", "log", ".tempmediaStorage", ".venv", "node_modules")]
-            rel_root = Path(root).relative_to(src)
-            if not dry_run:
-                (dst / rel_root).mkdir(parents=True, exist_ok=True)
-            for file_name in files:
-                src_file = Path(root) / file_name
-                if direction == "windows" and name == "agy-homes" and is_windows_agy_backup_name(file_name):
-                    skipped += 1
-                    skipped_items.append({"source": str(src_file), "reason": "windows-agy-backup-converted"})
-                    continue
-                if src_file.is_symlink():
-                    skipped += 1
-                    skipped_items.append({"source": str(src_file), "reason": "symlink"})
-                    continue
-                dst_file = dst / rel_root / file_name
-                if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
-                    copied += 1
-                    copied_items.append({"source": str(src_file), "destination": str(dst_file)})
+            src_rel_set = set(src_rel_paths)
+            for rel_path in managed_destination_rel_paths(dst, name):
+                if rel_path not in src_rel_set:
+                    dst_file = dst / rel_path
+                    delete_paths.append(str(dst_file))
                     if not dry_run:
-                        dst_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_file, dst_file)
-                else:
-                    skipped += 1
-                    skipped_items.append({"source": str(src_file), "destination": str(dst_file), "reason": "up-to-date"})
+                        try:
+                            dst_file.unlink()
+                        except FileNotFoundError:
+                            pass
+                        remove_empty_parents(dst_file, dst)
+        if not dry_run and src_rel_paths:
+            dst.mkdir(parents=True, exist_ok=True)
+        for rel_path in src_rel_paths:
+            src_file = src / rel_path
+            file_name = src_file.name
+            if direction == "windows" and name == "agy-homes" and is_windows_agy_backup_name(file_name):
+                skipped += 1
+                skipped_items.append({"source": str(src_file), "reason": "windows-agy-backup-converted"})
+                continue
+            if src_file.is_symlink():
+                skipped += 1
+                skipped_items.append({"source": str(src_file), "reason": "symlink"})
+                continue
+            dst_file = dst / rel_path
+            if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
+                copied += 1
+                copied_items.append({"source": str(src_file), "destination": str(dst_file)})
+                if not dry_run:
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+            else:
+                skipped += 1
+                skipped_items.append({"source": str(src_file), "destination": str(dst_file), "reason": "up-to-date"})
     conversion = sync_agy_credentials_between_bases(src_base, dst_base, direction, dry_run)
     return {
         "ok": True,

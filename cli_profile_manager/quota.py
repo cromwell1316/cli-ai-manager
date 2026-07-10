@@ -49,14 +49,21 @@ AGY_READY_PATTERNS = (
     re.compile(r"\btype\s+/help\b", re.I),
 )
 
+AGY_PROMPT_PATTERNS = (
+    re.compile(r"(?:^|\n)\s*(?:[^\n]*\s)?[~>]\s*$"),
+    re.compile(r"(?:^|\n)\s*>\s*$"),
+)
+
 AGY_FAILURE_PATTERNS = (
     (
         "resource_limited",
-        "AGY CLI was stopped by local quota process memory limits",
+        "AGY CLI was stopped by local quota process resource limits",
         (
             re.compile(r"\bMmapAligned\(\) failed\b", re.I),
             re.compile(r"\btcmalloc\b.*\bunable to allocate\b", re.I | re.S),
             re.compile(r"\bfailed - unable to allocate\b", re.I),
+            re.compile(r"\bpthread_create failed\b", re.I),
+            re.compile(r"\bResource temporarily unavailable\b", re.I),
         ),
     ),
     (
@@ -95,6 +102,7 @@ AGY_FAILURE_PATTERNS = (
         ),
     ),
 )
+AGY_STARTUP_PENDING_PATTERN = re.compile(r"\bAntigravity CLI\b|\bSigning in\b|\bcurrently not signed in\b", re.I)
 
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
@@ -430,8 +438,44 @@ def classify_agy_failure(text):
     return None
 
 
+def classify_agy_probe_error(state, text):
+    classified = classify_agy_failure(text)
+    if classified:
+        return classified
+    sign_in_stalled = (
+        re.search(r"\bcurrently not signed in\b", text, re.I)
+        and re.search(r"\bsigning in\b", text, re.I)
+    )
+    if state in ("startup_pending", "timeout") and sign_in_stalled:
+        return "auth_required", "AGY CLI could not complete sign-in for this profile; /usage was not sent"
+    if state == "startup_pending":
+        return "startup_pending", "AGY CLI is still starting; keeping the session warm"
+    return None
+
+
+def quota_startup_seconds(tool_key):
+    default = DEFAULT_AGY_STARTUP_SECONDS if tool_key == "agy" else DEFAULT_STARTUP_SECONDS
+    if tool_key == "agy":
+        raw = os.environ.get("AI_MAN_AGY_QUOTA_STARTUP_SECONDS", os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", default))
+    else:
+        raw = os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", default)
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
 def agy_cli_ready(text):
     return any(pattern.search(text) for pattern in AGY_READY_PATTERNS)
+
+
+def agy_prompt_ready(text):
+    summary = "\n".join(compact_lines(text))
+    if not re.search(r"\bAntigravity CLI\b", summary, re.I):
+        return False
+    if re.search(r"\b(signing in|loading|checking|authenticating)\b", summary, re.I):
+        return False
+    return any(pattern.search(summary) for pattern in AGY_PROMPT_PATTERNS)
 
 
 def has_spinner_frame(text):
@@ -486,8 +530,6 @@ def wait_for_startup(fd, output, startup_seconds):
 
 def wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds):
     deadline = time.monotonic() + startup_seconds
-    stable_since = None
-    last_len = -1
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
@@ -497,18 +539,12 @@ def wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds):
         if classified:
             state, message = classified
             raise QuotaProbeError(state, message, current)
-        if agy_cli_ready(current):
+        if agy_cli_ready(current) or agy_prompt_ready(current):
             return current
-        current_len = len(current)
-        if current_len == last_len and current_len > 0 and not has_spinner_frame(current):
-            if stable_since is None:
-                stable_since = time.monotonic()
-            if time.monotonic() - stable_since >= idle_seconds:
-                return current
-        else:
-            last_len = current_len
-            stable_since = None
-    raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", "".join(output))
+    current = "".join(output)
+    if AGY_STARTUP_PENDING_PATTERN.search(current):
+        raise QuotaProbeError("startup_pending", "AGY CLI is still starting", current)
+    raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", current)
 
 
 def wait_for_cli_startup(tool_key, fd, output, startup_seconds, idle_seconds, timeout_seconds):
@@ -647,24 +683,32 @@ class PersistentQuotaSession:
         self.lock = threading.Lock()
         self.created_at = time.time()
         self.last_used_at = self.created_at
+        self.ready = False
+        self.starting = False
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-        proc, master_fd, policy = start_quota_pty_process(
-            self.tool_key,
-            self.command,
-            self.env,
-            self.cwd,
-            "persistent_pty",
-        )
+        self.starting = True
+        try:
+            proc, master_fd, policy = start_quota_pty_process(
+                self.tool_key,
+                self.command,
+                self.env,
+                self.cwd,
+                "persistent_pty",
+            )
+        except Exception:
+            self.starting = False
+            raise
+        self.proc = proc
+        self.master_fd = master_fd
         output = []
         try:
-            startup_default = DEFAULT_AGY_STARTUP_SECONDS if self.tool_key == "agy" else DEFAULT_STARTUP_SECONDS
-            startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
+            startup_seconds = quota_startup_seconds(self.tool_key)
             wait_for_cli_startup(
                 self.tool_key,
                 master_fd,
                 output,
-                max(0.0, startup_seconds),
+                startup_seconds,
                 idle_seconds,
                 timeout_seconds,
             )
@@ -680,21 +724,48 @@ class PersistentQuotaSession:
                         state,
                         message,
                         "".join(output),
-                    )
+                )
                 raise QuotaProbeError("process_exit", "CLI process exited during startup", "".join(output))
-        except Exception:
+        except QuotaProbeError as e:
+            if self.tool_key == "agy" and e.state == "startup_pending" and proc.poll() is None:
+                self.starting = False
+                audit.record(
+                    "quota",
+                    "completed",
+                    tool=self.tool_key,
+                    backend="persistent_pty",
+                    result="startup_pending",
+                    details={"pid": proc.pid},
+                )
+                raise
             terminate_process(proc, master_fd, output)
+            self.proc = None
+            self.master_fd = None
+            self.starting = False
             try:
                 os.close(master_fd)
             except OSError:
                 pass
             raise
-        self.proc = proc
-        self.master_fd = master_fd
+        except Exception:
+            terminate_process(proc, master_fd, output)
+            self.proc = None
+            self.master_fd = None
+            self.starting = False
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+            raise
+        self.ready = True
+        self.starting = False
         audit.record("quota", "completed", tool=self.tool_key, backend="persistent_pty", result="succeeded", details={"pid": proc.pid})
 
     def is_alive(self):
-        return self.proc is not None and self.proc.poll() is None and self.master_fd is not None
+        return (
+            (self.starting and self.master_fd is not None)
+            or (self.proc is not None and self.proc.poll() is None and self.master_fd is not None)
+        )
 
     def snapshot(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         with self.lock:
@@ -704,6 +775,16 @@ class PersistentQuotaSession:
                 self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
             else:
                 audit.record("quota", "retried", tool=self.tool_key, backend="persistent_pty", details={"reuse": True})
+                if self.tool_key == "agy" and not self.ready:
+                    output = []
+                    startup_seconds = quota_startup_seconds(self.tool_key)
+                    wait_for_agy_readiness(
+                        self.master_fd,
+                        output,
+                        startup_seconds,
+                        idle_seconds,
+                    )
+                    self.ready = True
             read_available(self.master_fd)
             slash_command = quota_command_for(self.tool_key)
             if not slash_command:
@@ -723,6 +804,8 @@ class PersistentQuotaSession:
         master_fd = self.master_fd
         self.proc = None
         self.master_fd = None
+        self.ready = False
+        self.starting = False
         if proc is None or master_fd is None:
             return
         audit.record("quota", "completed", tool=self.tool_key, backend="persistent_pty", result="closed")
@@ -905,13 +988,12 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
     proc, master_fd, policy = start_quota_pty_process(tool_key, command, env, cwd, "pty")
     output = []
     try:
-        startup_default = DEFAULT_AGY_STARTUP_SECONDS if tool_key == "agy" else DEFAULT_STARTUP_SECONDS
-        startup_seconds = float(os.environ.get("AI_MAN_QUOTA_STARTUP_SECONDS", startup_default))
+        startup_seconds = quota_startup_seconds(tool_key)
         wait_for_cli_startup(
             tool_key,
             master_fd,
             output,
-            max(0.0, startup_seconds),
+            startup_seconds,
             idle_seconds,
             timeout_seconds,
         )
@@ -1010,11 +1092,19 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
         message = str(e)
         diagnostic = None
         if tool_key == "agy":
-            classified = classify_agy_failure(e.raw_output)
+            classified = classify_agy_probe_error(state, e.raw_output)
             if classified:
                 state, message = classified
             diagnostic = "\n".join(compact_lines(e.raw_output))[:240]
-        audit.record("quota", "failed", tool=tool_key, profile=profile_name, result="failed", error_class=state, details={"message": message})
+        audit.record(
+            "quota",
+            "failed",
+            tool=tool_key,
+            profile=profile_name,
+            result="failed",
+            error_class=state,
+            details={"message": message, "diagnostic_summary": diagnostic},
+        )
         quota = {
             "state": state,
             "source_command": quota_command_for(tool_key),
@@ -1025,7 +1115,19 @@ def quota_payload(tool_key, profile_name, command, env, cwd, timeout_seconds=DEF
             quota["diagnostic_summary"] = diagnostic
     if runner is run_persistent_cli_quota_snapshot:
         record_persistent_parser_result(tool_key, command, env, cwd, quota)
-    audit.record("quota", "completed", tool=tool_key, profile=profile_name, result=quota.get("state"), details={"limits": list(quota.get("limits", {}))})
+    audit.record(
+        "quota",
+        "completed",
+        tool=tool_key,
+        profile=profile_name,
+        result=quota.get("state"),
+        details={
+            "source_command": quota.get("source_command"),
+            "limits": list(quota.get("limits", {})),
+            "warnings": list(quota.get("warnings") or []),
+            "diagnostic_summary": quota.get("diagnostic_summary"),
+        },
+    )
     return {
         "tool": tool_key,
         "profile": profile_name,

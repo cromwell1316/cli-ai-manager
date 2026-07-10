@@ -18,7 +18,7 @@ DEFAULTS = {
         "enabled": True,
         "memory_mb": 6144,
         "cpu_percent": 150,
-        "max_processes": 512,
+        "max_processes": 4096,
         "nice": 10,
         "ionice_class": 2,
         "ionice_level": 7,

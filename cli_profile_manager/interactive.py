@@ -4,6 +4,7 @@ import os
 import queue
 import re
 import select
+import signal
 import sys
 import termios
 import threading
@@ -50,6 +51,7 @@ from .operations import (
     status_payload,
     sync_profiles_noninteractive,
 )
+from .metadata import save_metadata
 from .quota import close_persistent_quota_sessions
 from .terminal_rendering import (
     ANSI_RE,
@@ -71,6 +73,18 @@ def _safety():
     return safety
 
 
+def configure_interactive_logging():
+    if logging.getLogger().handlers:
+        return
+    log_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai-man.log")
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
 def safety_decision(operation, command=None, tool=None, profile=None, target=None, facts=None, yes=False, dry_run=False):
     descriptor = _safety().operation_descriptor(
         operation,
@@ -85,12 +99,16 @@ def safety_decision(operation, command=None, tool=None, profile=None, target=Non
     return decision
 
 AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
+SETTINGS_METADATA_KEY = "_settings"
+QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
+INTERACTIVE_SETTINGS_CACHE = None
 QUOTA_FRESH_SECONDS = 300
 QUOTA_STALE_SECONDS = 3600
 QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
 QUOTA_ACTIVE_JOB_STATES = ("queued", "running")
+QUOTA_PROGRESS_SPINNER = "|/-\\"
 QUOTA_PIPELINE_STATES = (
     "empty",
     "queued",
@@ -125,13 +143,14 @@ QUOTA_LEGAL_TRANSITIONS = {
     "running": {"available", "retry_wait", "failed", "auth_required", "disabled"},
     "available": {"queued", "stale_refreshing", "disabled"},
     "stale_refreshing": {"available", "retry_wait", "failed", "auth_required", "disabled"},
-    "retry_wait": {"queued", "disabled"},
+    "retry_wait": {"queued", "stale_refreshing", "disabled"},
     "failed": {"queued", "disabled"},
     "auth_required": {"queued", "disabled"},
     "disabled": {"queued"},
 }
 INTERACTIVE_QUOTA_SCHEDULER = None
 INTERACTIVE_QUOTA_SCHEDULER_LOCK = threading.Lock()
+INTERACTIVE_SHUTTING_DOWN = False
 STATUS_RENDERER = TerminalFrameRenderer(cache_key="status")
 STATUS_SCREEN_RENDER_CACHE = {}
 
@@ -162,11 +181,38 @@ def interactive_agy_quota_concurrency():
 
 
 def interactive_quota_fresh_seconds():
-    raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS", "600")
+    raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS")
+    if raw is None:
+        raw = load_interactive_setting(QUOTA_REFRESH_SETTING_KEY, "600")
     try:
         return max(1.0, float(raw))
     except ValueError:
         return 600.0
+
+
+def load_interactive_settings():
+    global INTERACTIVE_SETTINGS_CACHE
+    if INTERACTIVE_SETTINGS_CACHE is None:
+        metadata = load_metadata()
+        settings = metadata.get(SETTINGS_METADATA_KEY, {})
+        INTERACTIVE_SETTINGS_CACHE = settings if isinstance(settings, dict) else {}
+    return dict(INTERACTIVE_SETTINGS_CACHE)
+
+
+def load_interactive_setting(key, default=None):
+    return load_interactive_settings().get(key, default)
+
+
+def save_interactive_setting(key, value):
+    global INTERACTIVE_SETTINGS_CACHE
+    metadata = load_metadata()
+    settings = metadata.setdefault(SETTINGS_METADATA_KEY, {})
+    if not isinstance(settings, dict):
+        settings = {}
+        metadata[SETTINGS_METADATA_KEY] = settings
+    settings[key] = value
+    save_metadata(metadata)
+    INTERACTIVE_SETTINGS_CACHE = dict(settings)
 
 
 class InteractiveQuotaScheduler:
@@ -205,6 +251,9 @@ class InteractiveQuotaScheduler:
 
     def submit(self, tool_key, profile_num, priority=10):
         future = Future()
+        if self.closed:
+            future.cancel()
+            return future
         self.increment_metric("submitted")
         self.increment_metric("queued")
         self.queue.put((priority, next(self.sequence), tool_key, profile_num, future, time.time()))
@@ -241,16 +290,37 @@ class InteractiveQuotaScheduler:
             finally:
                 self.queue.task_done()
 
-    def shutdown(self):
+    def shutdown(self, wait=False, timeout=2.0):
         if self.closed:
             return
         self.closed = True
+        while True:
+            try:
+                _priority, _seq, _tool_key, _profile_num, future, _submitted_at = self.queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if future is not None:
+                    future.cancel()
+                    self.increment_metric("cancelled")
+            finally:
+                self.queue.task_done()
         for _ in self.workers:
             self.queue.put((9999, next(self.sequence), None, None, None, time.time()))
+        if wait:
+            self.wait(timeout)
+
+    def wait(self, timeout=2.0):
+        deadline = time.monotonic() + timeout
+        for worker in self.workers:
+            remaining = max(0.0, deadline - time.monotonic())
+            worker.join(remaining)
 
 
 def quota_scheduler():
     global INTERACTIVE_QUOTA_SCHEDULER
+    if INTERACTIVE_SHUTTING_DOWN:
+        raise RuntimeError("interactive runtime is shutting down")
     concurrency = interactive_agy_quota_concurrency()
     with INTERACTIVE_QUOTA_SCHEDULER_LOCK:
         if (
@@ -261,6 +331,37 @@ def quota_scheduler():
                 INTERACTIVE_QUOTA_SCHEDULER.shutdown()
             INTERACTIVE_QUOTA_SCHEDULER = InteractiveQuotaScheduler(concurrency)
         return INTERACTIVE_QUOTA_SCHEDULER
+
+
+def shutdown_interactive_runtime(wait=False):
+    global INTERACTIVE_QUOTA_SCHEDULER, INTERACTIVE_SHUTTING_DOWN
+    INTERACTIVE_SHUTTING_DOWN = True
+    with INTERACTIVE_QUOTA_SCHEDULER_LOCK:
+        scheduler = INTERACTIVE_QUOTA_SCHEDULER
+        INTERACTIVE_QUOTA_SCHEDULER = None
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+    close_persistent_quota_sessions()
+    if scheduler is not None and wait:
+        scheduler.wait(2.0)
+
+
+def install_interactive_signal_handlers():
+    previous_handlers = {}
+
+    def handle_signal(signum, frame):
+        shutdown_interactive_runtime(wait=True)
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, handle_signal)
+    return previous_handlers
+
+
+def restore_interactive_signal_handlers(previous_handlers):
+    for signum, handler in previous_handlers.items():
+        signal.signal(signum, handler)
 
 
 def record_quota_job_coalesced():
@@ -417,7 +518,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "message": diagnostic_text(quota),
                 "warnings": list(quota.get("warnings") or []),
             }
-            delay = retry_delay_for_attempts(attempts)
+            delay = None if state == "auth_required" else retry_delay_for_attempts(attempts)
             if had_previous:
                 preserved = dict(previous_quota)
                 preserved["job_state"] = "retryable"
@@ -441,11 +542,41 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "started_at": current.get("started_at"),
                 "attempts": attempts,
                 "last_error": last_error,
-                "next_retry_at": now + delay,
+                "next_retry_at": None if delay is None else now + delay,
             }
             transition_quota_entry(entry, machine_state, tool_key, profile_num, state, now)
         INTERACTIVE_QUOTA_CACHE[key] = entry
-        return entry
+    details = {
+        "state": state,
+        "attempts": entry.get("attempts"),
+        "had_previous_available": had_previous,
+        "machine_state": entry.get("machine_state"),
+        "job_state": entry.get("job_state"),
+        "fetched_at": entry.get("fetched_at"),
+        "next_retry_at": entry.get("next_retry_at"),
+        "limits": list((entry.get("quota") or {}).get("limits", {})),
+        "warnings": list(quota.get("warnings") or []),
+        "diagnostic_summary": quota.get("diagnostic_summary"),
+    }
+    _audit().record(
+        "quota",
+        "refresh_finished",
+        tool=tool_key,
+        profile=f"p{profile_num}",
+        result=state,
+        details=details,
+    )
+    logging.info(
+        "quota refresh finished tool=%s profile=p%s state=%s machine=%s attempts=%s warnings=%s diagnostic=%s",
+        tool_key,
+        profile_num,
+        state,
+        entry.get("machine_state"),
+        entry.get("attempts"),
+        details["warnings"],
+        details["diagnostic_summary"],
+    )
+    return entry
 
 
 def load_quota_background(tool_key, profile_num):
@@ -461,6 +592,13 @@ def load_quota_background(tool_key, profile_num):
             if (entry.get("quota") or {}).get("state") == "loading":
                 entry["quota"]["job_state"] = "running"
                 entry["quota"]["pipeline_state"] = "running"
+    _audit().record(
+        "quota",
+        "refresh_started",
+        tool=tool_key,
+        profile=f"p{profile_num}",
+        details={"timeout_seconds": interactive_quota_timeout(tool_key)},
+    )
     monotonic = getattr(time, "monotonic", time.time)
     started = monotonic()
     logging.debug("quota job start tool=%s profile=p%s", tool_key, profile_num)
@@ -532,6 +670,13 @@ def ensure_quota_loading(tool_key, profile_num):
             return entry
     if should_submit:
         logging.debug("quota job enqueue tool=%s profile=p%s", tool_key, profile_num)
+        _audit().record(
+            "quota",
+            "refresh_queued",
+            tool=tool_key,
+            profile=f"p{profile_num}",
+            details={"reason": "ensure_quota_loading", "priority": 10},
+        )
         future = quota_scheduler().submit(tool_key, profile_num, priority=10)
         with INTERACTIVE_QUOTA_LOCK:
             current = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(tool_key, profile_num))
@@ -581,6 +726,15 @@ def color_quota_text(text, status):
     return f"{color}{text}{CLR_RESET}"
 
 
+def quota_expired(status, now=None):
+    quota = status.get("quota") or {}
+    fetched_at = quota.get("fetched_at")
+    if fetched_at is None or quota.get("state") != "available":
+        return False
+    now = time.time() if now is None else now
+    return now - fetched_at > interactive_quota_fresh_seconds()
+
+
 def quota_text(status, color=True, width=24):
     summary = quota_summary(status)
     if summary == "unknown":
@@ -589,6 +743,77 @@ def quota_text(status, color=True, width=24):
     if len(text) > width:
         text = f"{text[:max(0, width - 3)]}..."
     return color_quota_text(text, status) if color else text
+
+
+def quota_progress_snapshot(statuses):
+    total = 0
+    completed = 0
+    queued = 0
+    running = 0
+    warming = 0
+    failed = 0
+    pending = 0
+    for status in statuses:
+        if not status.get("has_token"):
+            continue
+        total += 1
+        quota = status.get("quota") or {}
+        state = quota.get("state")
+        job_state = quota.get("job_state") or status.get("job_state")
+        if job_state == "queued":
+            queued += 1
+        elif job_state == "running":
+            running += 1
+        elif state == "available" and quota.get("limits") and job_state in (None, "ready"):
+            completed += 1
+        elif state == "startup_pending":
+            warming += 1
+        elif state == "loading":
+            queued += 1
+        else:
+            failed += 1
+    pending = max(0, total - completed - queued - running - warming - failed)
+    return {
+        "total": total,
+        "completed": completed,
+        "queued": queued,
+        "running": running,
+        "warming": warming,
+        "failed": failed,
+        "pending": pending,
+        "active": queued + running + warming,
+    }
+
+
+def quota_progress_bar(done, total, width=24):
+    if total <= 0:
+        filled = 0
+    else:
+        filled = min(width, max(0, int((done / total) * width)))
+    return f"[{'#' * filled}{'-' * (width - filled)}]"
+
+
+def quota_progress_line(statuses, now=None):
+    progress = quota_progress_snapshot(statuses)
+    total = progress["total"]
+    if total <= 0 or progress["active"] <= 0:
+        return None
+    now = time.time() if now is None else now
+    spinner = QUOTA_PROGRESS_SPINNER[int(now * 4) % len(QUOTA_PROGRESS_SPINNER)]
+    done = progress["completed"]
+    percent = int((done / total) * 100) if total else 0
+    bar = quota_progress_bar(done, total)
+    details = (
+        f"{done}/{total} {percent}% "
+        f"running {progress['running']}, queued {progress['queued']}"
+    )
+    if progress["warming"]:
+        details += f", warming {progress['warming']}"
+    if progress["failed"]:
+        details += f", failed {progress['failed']}"
+    if progress["pending"]:
+        details += f", pending {progress['pending']}"
+    return f"Quota refresh {spinner} {CLR_CYAN}{bar}{CLR_RESET} {details}"
 
 
 def agy_quota_cell_map(status):
@@ -612,19 +837,12 @@ def agy_quota_cells(status, columns):
     quota = status.get("quota") or {}
     job_state = quota.get("job_state") or status.get("job_state")
     if cells:
-        marker = "~" if job_state in QUOTA_ACTIVE_JOB_STATES else ""
-        values = [cells.get(column, "") for column in columns]
-        if marker and values:
-            for idx, value in enumerate(values):
-                if value:
-                    values[idx] = f"{value}{marker}"
-                    break
-        return values
+        return [cells.get(column, "") for column in columns]
     state = quota.get("state")
     marker = ""
     if state == "no_token":
         marker = ""
-    elif job_state in QUOTA_ACTIVE_JOB_STATES or state == "loading":
+    elif job_state in QUOTA_ACTIVE_JOB_STATES or state in ("loading", "startup_pending"):
         marker = "..."
     elif job_state in ("retryable", "failed") or state in (
         "unknown",
@@ -745,6 +963,80 @@ def force_quota_refresh(tool_key=None):
             submissions.append((entry_tool, profile_num))
     for entry_tool, profile_num in submissions:
         future = quota_scheduler().submit(entry_tool, profile_num, priority=0)
+        with INTERACTIVE_QUOTA_LOCK:
+            entry = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(entry_tool, profile_num))
+            if entry is not None:
+                entry["future"] = future
+    return len(submissions)
+
+
+def schedule_due_quota_refresh(tool_key=None, now=None):
+    now = time.time() if now is None else now
+    submissions = []
+    with INTERACTIVE_QUOTA_LOCK:
+        for key, entry in list(INTERACTIVE_QUOTA_CACHE.items()):
+            entry_tool, profile_num = key
+            if tool_key is not None and entry_tool != tool_key:
+                continue
+            if entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
+                record_quota_job_coalesced()
+                continue
+            quota = entry.get("quota") or {}
+            fetched_at = entry.get("fetched_at")
+            reasons = []
+            machine_state = quota_entry_machine_state(entry)
+            retryable = (
+                machine_state != "auth_required"
+                and (entry.get("state") == "retryable" or entry.get("job_state") == "retryable")
+            )
+            retry_at = entry.get("next_retry_at")
+            if retryable and retry_at is not None and now < retry_at:
+                continue
+            if fetched_at is not None and quota.get("state") == "available":
+                age = now - fetched_at
+                if age >= interactive_quota_fresh_seconds():
+                    reasons.append("freshness_expired")
+            if retryable:
+                if retry_at is None or now >= retry_at:
+                    reasons.append("retry_due")
+            if not reasons:
+                continue
+            previous_machine = quota_entry_machine_state(entry)
+            entry["state"] = "queued"
+            entry["job_state"] = "queued"
+            entry["started_at"] = None
+            entry["next_retry_at"] = None
+            if quota:
+                quota["job_state"] = "queued"
+                entry["quota"] = quota
+            else:
+                entry["quota"] = loading_quota("queued")
+            target_state = "stale_refreshing" if (quota.get("state") == "available" and quota.get("limits")) else "queued"
+            if previous_machine != target_state:
+                transition_quota_entry(entry, target_state, entry_tool, profile_num, ",".join(reasons), now)
+            submissions.append((entry_tool, profile_num, reasons, fetched_at))
+    for entry_tool, profile_num, reasons, fetched_at in submissions:
+        age = None if fetched_at is None else round(now - fetched_at, 3)
+        _audit().record(
+            "quota",
+            "auto_refresh_queued",
+            tool=entry_tool,
+            profile=f"p{profile_num}",
+            details={
+                "reasons": reasons,
+                "priority": 5,
+                "age_seconds": age,
+                "fresh_seconds": interactive_quota_fresh_seconds(),
+            },
+        )
+        logging.info(
+            "quota auto refresh queued tool=%s profile=p%s reasons=%s age=%s",
+            entry_tool,
+            profile_num,
+            reasons,
+            age,
+        )
+        future = quota_scheduler().submit(entry_tool, profile_num, priority=5)
         with INTERACTIVE_QUOTA_LOCK:
             entry = INTERACTIVE_QUOTA_CACHE.get(quota_cache_key(entry_tool, profile_num))
             if entry is not None:
@@ -1058,6 +1350,9 @@ def render_status_screen_lines(tool_key, status_message=None, base_statuses=None
     lines.append("")
     if status_message:
         lines.append(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
+    progress_line = quota_progress_line(statuses)
+    if progress_line:
+        lines.append(progress_line)
     lines.append(
         f"Next auto refresh: {CLR_CYAN}{quota_refresh_countdown(tool_key)}{CLR_RESET}. "
         "Press Enter/q to return, r to refresh quota now..."
@@ -1080,6 +1375,15 @@ def view_status(tool_key):
             status_message = None
             key = get_key(timeout=next_quota_wake_timeout(tool_key))
             if key is None:
+                count = schedule_due_quota_refresh(tool_key)
+                if count:
+                    _audit().record(
+                        "interactive",
+                        "retried",
+                        command="status",
+                        tool=tool_key,
+                        details={"workflow": "auto_quota_refresh", "profiles": count},
+                    )
                 continue
             if key in ("enter", "esc", "q"):
                 _audit().record("interactive", "completed", command="status", tool=tool_key, result="succeeded", details={"workflow": "view_status", "key": key})
@@ -1100,7 +1404,11 @@ def view_status(tool_key):
 
 
 def clear_screen():
-    sys.stdout.write("\033[H\033[J")
+    STATUS_SCREEN_RENDER_CACHE.clear()
+    STATUS_RENDERER.previous_lines = None
+    STATUS_RENDERER.previous_size = None
+    STATUS_RENDERER.cursor_hidden = False
+    sys.stdout.write("\033[?25h\033[H\033[2J\033[3J")
     sys.stdout.flush()
 
 
@@ -1109,9 +1417,11 @@ def print_header(title=""):
         print(line)
 
 
-def render_menu_lines(options, title="", selected_idx=0):
+def render_menu_lines(options, title="", selected_idx=0, pre_lines=None):
     lines = header_lines(title)
     lines.append("")
+    if pre_lines:
+        lines.extend(str(line) for line in pre_lines)
     for idx, option in enumerate(options):
         if idx == selected_idx:
             lines.append(f"  {CLR_BOLD}{CLR_CYAN}--> \033[40m\033[1;37m{option}{CLR_RESET}")
@@ -1126,14 +1436,14 @@ def render_menu_lines(options, title="", selected_idx=0):
     return lines
 
 
-def run_menu(options, title="", shortcuts=None):
+def run_menu(options, title="", shortcuts=None, pre_lines=None):
     shortcuts = shortcuts or {}
     selected_idx = 0
     renderer = TerminalFrameRenderer(cache_key="menu")
     _audit().record("interactive", "started", details={"workflow": "menu", "title": title, "options": len(options)})
     try:
         while True:
-            renderer.paint(render_menu_lines(options, title, selected_idx))
+            renderer.paint(render_menu_lines(options, title, selected_idx, pre_lines=pre_lines))
             key = get_key()
             if key == 'up':
                 selected_idx = (selected_idx - 1) % len(options)
@@ -1157,22 +1467,82 @@ def run_menu(options, title="", shortcuts=None):
                 _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
                 sys.exit(0)
     finally:
+        renderer.clear()
         renderer.reset()
+
+
+def launch_account_table(tool_key, statuses):
+    if tool_key == "agy":
+        quota_columns = agy_status_quota_columns(statuses)
+        widths = {
+            "profile": 6,
+            "account": 30,
+            "status": 10,
+            "quota": 5,
+            "label": 14,
+        }
+        quota_header = " ".join(f"{column:<{widths['quota']}}" for column in quota_columns)
+        total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
+        total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
+    else:
+        quota_columns = []
+        widths = {
+            "profile": 6,
+            "account": 30,
+            "status": 10,
+            "quota": 28,
+            "label": 14,
+        }
+        quota_header = f"{'Quota':<{widths['quota']}}"
+        total_width = sum(widths.values()) + len(widths) - 1
+
+    prefix = "      "
+    header = (
+        f"{prefix}{CLR_BOLD}{CLR_WHITE}"
+        f"{'Profile':<{widths['profile']}} "
+        f"{'Account':<{widths['account']}} "
+        f"{'Status':<{widths['status']}} "
+        f"{quota_header} "
+        f"{'Label':<{widths['label']}}"
+        f"{CLR_RESET}"
+    )
+    separator = f"{prefix}{'-' * total_width}"
+    rows = []
+    for status in statuses:
+        label_text = f"({status['label']})" if status["label"] else ""
+        state_text = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
+        display_account = status.get("email", "")
+        quota_account = (status.get("quota") or {}).get("account")
+        if quota_account and (tool_key == "agy" or display_account in ("logged in", "(no login)")):
+            display_account = quota_account
+        account = color_email_parts(display_account) if status["has_token"] else display_account
+        if tool_key == "agy":
+            quota_text_value = " ".join(
+                visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
+                for cell in agy_quota_cells(status, quota_columns)
+            )
+        else:
+            quota_text_value = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
+        profile_text = f"p{status['num']}"
+        label = f"{CLR_YELLOW}{label_text}{CLR_RESET}" if label_text else ""
+        rows.append(
+            f"{visible_fit(profile_text, widths['profile'])} "
+            f"{visible_fit(account, widths['account'])} "
+            f"{visible_fit(state_text, widths['status'])} "
+            f"{quota_text_value} "
+            f"{visible_fit(label, widths['label'])}"
+        )
+    return [header, separator], rows
 
 def launch_account(tool_key):
     tool = TOOLS[tool_key]
     metadata = load_metadata()
     while True:
         profiles = get_display_profiles(tool_key)
-        options = []
-        for n in profiles:
-            status = status_with_auto_quota(tool_key, n, metadata)
-            lbl = f" ({status['label']})" if status['label'] else ""
-            tok = f"{CLR_GREEN}[Active]{CLR_RESET}" if status['has_token'] else f"{CLR_RED}[No Token]{CLR_RESET}"
-            quota = quota_text(status)
-            options.append(f"p{status['num']:<3} | {status['email']:<28} {tok} {quota:<24}{CLR_YELLOW}{lbl}{CLR_RESET}")
+        statuses = [status_with_auto_quota(tool_key, n, metadata) for n in profiles]
+        pre_lines, options = launch_account_table(tool_key, statuses)
 
-        sel = run_menu(options, f"LAUNCH {tool['name'].upper()}")
+        sel = run_menu(options, f"LAUNCH {tool['name'].upper()}", pre_lines=pre_lines)
         if sel == -1:
             break
 
@@ -1641,26 +2011,116 @@ def sync_profiles():
     input("\nPress Enter to return...")
 
 
-def run_interactive_main():
+def format_duration(seconds):
+    try:
+        seconds = int(float(seconds))
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds >= 3600 and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return f"{seconds}s"
+
+
+def parse_duration_seconds(value):
+    raw = str(value).strip().lower()
+    if not raw:
+        raise ValueError("empty duration")
+    multiplier = 1.0
+    if raw.endswith("ms"):
+        multiplier = 0.001
+        raw = raw[:-2].strip()
+    elif raw.endswith("s"):
+        raw = raw[:-1].strip()
+    elif raw.endswith("m"):
+        multiplier = 60.0
+        raw = raw[:-1].strip()
+    elif raw.endswith("h"):
+        multiplier = 3600.0
+        raw = raw[:-1].strip()
+    seconds = float(raw) * multiplier
+    if seconds < 1:
+        raise ValueError("duration must be at least 1 second")
+    return seconds
+
+
+def settings_menu_lines():
+    current = interactive_quota_fresh_seconds()
+    source = "environment" if "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in os.environ else "saved/default"
+    return [
+        f"      Quota refresh interval: {CLR_CYAN}{format_duration(current)}{CLR_RESET} ({current:g}s, {source})",
+        f"      Env: AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        "",
+    ]
+
+
+def edit_quota_refresh_interval():
+    clear_screen()
+    print_header("SET QUOTA REFRESH INTERVAL")
+    current = interactive_quota_fresh_seconds()
+    print(f"\nCurrent value: {CLR_CYAN}{format_duration(current)}{CLR_RESET} ({current:g} seconds)")
+    print("Enter seconds, or use suffix: 30s, 10m, 1h.")
+    value = input("\nNew value (empty to cancel): ").strip()
+    if not value:
+        return
+    try:
+        seconds = parse_duration_seconds(value)
+    except ValueError as e:
+        print(f"\n{CLR_RED}Invalid interval: {e}{CLR_RESET}")
+        input("\nPress Enter to return...")
+        return
+    save_interactive_setting(QUOTA_REFRESH_SETTING_KEY, seconds)
+    os.environ["AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS"] = str(seconds)
+    invalidate_quota_cache()
+    print(f"\n{CLR_GREEN}Quota refresh interval updated to {format_duration(seconds)}.{CLR_RESET}")
+    input("Press Enter to return...")
+
+
+def settings_menu():
+    options = [
+        "[1] Quota refresh interval",
+        "[x] Back to main menu",
+    ]
     while True:
-        options = [
-            "[1] Antigravity CLI (agy)",
-            "[2] OpenAI Codex CLI",
-            "[3] Anthropic Claude CLI",
-            "[4] Sync Profiles (WSL <-> Windows)",
-            "[x] Exit",
-        ]
-        sel = run_menu(options, "UNIFIED PROFILE MANAGER")
+        sel = run_menu(options, "SETTINGS", shortcuts={"x": 1}, pre_lines=settings_menu_lines())
         if sel == 0:
-            run_tool_manager("agy")
-        elif sel == 1:
-            run_tool_manager("codex")
-        elif sel == 2:
-            run_tool_manager("claude")
-        elif sel == 3:
-            sync_profiles()
-        elif sel in (4, -1):
-            clear_screen()
-            print("Exiting Profile Manager. Goodbye!")
+            edit_quota_refresh_interval()
+        elif sel in (1, -1):
             break
-    return EXIT_OK
+
+
+def run_interactive_main():
+    global INTERACTIVE_SHUTTING_DOWN
+    configure_interactive_logging()
+    INTERACTIVE_SHUTTING_DOWN = False
+    previous_handlers = install_interactive_signal_handlers()
+    try:
+        while True:
+            options = [
+                "[1] Antigravity CLI (agy)",
+                "[2] OpenAI Codex CLI",
+                "[3] Anthropic Claude CLI",
+                "[4] Sync Profiles (WSL <-> Windows)",
+                "[5] Settings",
+                "[x] Exit",
+            ]
+            sel = run_menu(options, "UNIFIED PROFILE MANAGER", shortcuts={"x": 5})
+            if sel == 0:
+                run_tool_manager("agy")
+            elif sel == 1:
+                run_tool_manager("codex")
+            elif sel == 2:
+                run_tool_manager("claude")
+            elif sel == 3:
+                sync_profiles()
+            elif sel == 4:
+                settings_menu()
+            elif sel in (5, -1):
+                clear_screen()
+                print("Exiting Profile Manager. Goodbye!")
+                break
+        return EXIT_OK
+    finally:
+        shutdown_interactive_runtime(wait=True)
+        restore_interactive_signal_handlers(previous_handlers)
