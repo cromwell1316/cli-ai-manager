@@ -87,17 +87,6 @@ AGY_FAILURE_PATTERNS = (
         ),
     ),
     (
-        "account_ineligible",
-        "AGY CLI reported that the account is ineligible",
-        (
-            re.compile(r"\baccount ineligible\b", re.I),
-            re.compile(r"\bineligible\b.*\baccount\b", re.I),
-            re.compile(r"\baccount\b.*\bnot eligible\b", re.I),
-            re.compile(r"\bnot eligible for Antigravity\b", re.I),
-            re.compile(r"\bnot currently available in your location\b", re.I),
-        ),
-    ),
-    (
         "resource_exhausted",
         "AGY CLI reported that quota or resources are exhausted",
         (
@@ -107,7 +96,19 @@ AGY_FAILURE_PATTERNS = (
             re.compile(r"\bquota will reset\b", re.I),
         ),
     ),
+    (
+        "account_ineligible",
+        "AGY CLI reported an account eligibility warning",
+        (
+            re.compile(r"\baccount ineligible\b", re.I),
+            re.compile(r"\bineligible\b.*\baccount\b", re.I),
+            re.compile(r"\baccount\b.*\bnot eligible\b", re.I),
+            re.compile(r"\bnot eligible for Antigravity\b", re.I),
+            re.compile(r"\bnot currently available in your location\b", re.I),
+        ),
+    ),
 )
+AGY_NONFATAL_WARNING_STATES = {"account_ineligible"}
 AGY_STARTUP_PENDING_PATTERN = re.compile(r"\bAntigravity CLI\b|\bSigning in\b|\bcurrently not signed in\b", re.I)
 
 ANSI_RE = re.compile(
@@ -435,10 +436,12 @@ def detect_auth_required(text):
     return any(pattern.search(text) for pattern in AUTH_PATTERNS)
 
 
-def classify_agy_failure(text):
+def classify_agy_failure(text, fatal_only=False):
     if not text:
         return None
     for state, message, patterns in AGY_FAILURE_PATTERNS:
+        if fatal_only and state in AGY_NONFATAL_WARNING_STATES:
+            continue
         if any(pattern.search(text) for pattern in patterns):
             return state, message
     return None
@@ -446,6 +449,8 @@ def classify_agy_failure(text):
 
 def classify_agy_probe_error(state, text):
     classified = classify_agy_failure(text)
+    if classified and state in ("startup_pending", "timeout") and classified[0] in AGY_NONFATAL_WARNING_STATES:
+        classified = None
     if classified:
         return classified
     sign_in_stalled = (
@@ -478,6 +483,13 @@ def agy_diagnostic_summary(text, state=None, limit=240):
     return "\n".join(lines)[:limit]
 
 
+def agy_eligibility_warning(text):
+    classified = classify_agy_failure(text)
+    if classified and classified[0] == "account_ineligible":
+        return classified[1]
+    return None
+
+
 def quota_startup_seconds(tool_key):
     default = DEFAULT_AGY_STARTUP_SECONDS if tool_key == "agy" else DEFAULT_STARTUP_SECONDS
     if tool_key == "agy":
@@ -507,11 +519,30 @@ def has_spinner_frame(text):
     return any(char in text[-200:] for char in SPINNER_CHARS)
 
 
+def output_text(output):
+    parts = []
+    for part in output:
+        if isinstance(part, bytes):
+            parts.append(part.decode("utf-8", errors="replace"))
+        elif part is None:
+            continue
+        else:
+            parts.append(str(part))
+    return "".join(parts)
+
+
+def fd_readable(fd, timeout=0):
+    try:
+        ready, _, _ = select.select([fd], [], [], timeout)
+    except (OSError, ValueError):
+        return False
+    return bool(ready)
+
+
 def read_available(fd):
     chunks = []
     while True:
-        ready, _, _ = select.select([fd], [], [], 0)
-        if not ready:
+        if not fd_readable(fd, 0):
             break
         try:
             data = os.read(fd, 4096)
@@ -528,10 +559,9 @@ def wait_for_idle(fd, output, idle_seconds, timeout_seconds):
     stable_since = None
     last_len = -1
     while True:
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if ready:
+        if fd_readable(fd, 0.1):
             output.append(read_available(fd))
-        current = "".join(output)
+        current = output_text(output)
         current_len = len(current)
         if current_len == last_len and not has_spinner_frame(current):
             if stable_since is None:
@@ -548,25 +578,23 @@ def wait_for_idle(fd, output, idle_seconds, timeout_seconds):
 def wait_for_startup(fd, output, startup_seconds):
     deadline = time.monotonic() + startup_seconds
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if ready:
+        if fd_readable(fd, 0.1):
             output.append(read_available(fd))
 
 
 def wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds):
     deadline = time.monotonic() + startup_seconds
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if ready:
+        if fd_readable(fd, 0.1):
             output.append(read_available(fd))
-        current = "".join(output)
-        classified = classify_agy_failure(current)
+        current = output_text(output)
+        classified = classify_agy_failure(current, fatal_only=True)
         if classified:
             state, message = classified
             raise QuotaProbeError(state, message, current)
         if agy_cli_ready(current) or agy_prompt_ready(current):
             return current
-    current = "".join(output)
+    current = output_text(output)
     if AGY_STARTUP_PENDING_PATTERN.search(current):
         raise QuotaProbeError("startup_pending", "AGY CLI is still starting", current)
     raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", current)
@@ -583,8 +611,7 @@ def wait_for_cli_startup(tool_key, fd, output, startup_seconds, idle_seconds, ti
 def wait_after_command(fd, output, minimum_seconds):
     deadline = time.monotonic() + minimum_seconds
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([fd], [], [], 0.1)
-        if ready:
+        if fd_readable(fd, 0.1):
             output.append(read_available(fd))
 
 
@@ -748,9 +775,9 @@ class PersistentQuotaSession:
                     raise QuotaProbeError(
                         state,
                         message,
-                        "".join(output),
+                        output_text(output),
                 )
-                raise QuotaProbeError("process_exit", "CLI process exited during startup", "".join(output))
+                raise QuotaProbeError("process_exit", "CLI process exited during startup", output_text(output))
         except QuotaProbeError as e:
             if self.tool_key == "agy" and e.state == "startup_pending" and proc.poll() is None:
                 self.starting = False
@@ -1032,7 +1059,7 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
             raise QuotaProbeError(
                 state,
                 message,
-                "".join(output),
+                output_text(output),
             )
         slash_command = quota_command_for(tool_key)
         if not slash_command:
@@ -1069,7 +1096,7 @@ def parse_quota(tool_key, screen_text):
         }
     if tool_key == "agy":
         classified = classify_agy_failure(normalized)
-        if classified:
+        if classified and classified[0] not in AGY_NONFATAL_WARNING_STATES:
             state, message = classified
             result = {
                 "state": state,
@@ -1114,6 +1141,9 @@ def parse_quota(tool_key, screen_text):
         result["state"] = "parser_miss"
         diagnostic = summary[:240]
         result["warnings"] = ["quota output was captured but no known quota fields matched"]
+        eligibility_warning = agy_eligibility_warning(normalized) if tool_key == "agy" else None
+        if eligibility_warning:
+            result["warnings"].append(eligibility_warning)
         if diagnostic:
             result["diagnostic_summary"] = diagnostic
     return result

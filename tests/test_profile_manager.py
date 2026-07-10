@@ -708,13 +708,22 @@ def test_agy_quota_parser_classifies_native_failure_output():
     )
     exhausted = parse_quota("agy", "RESOURCE_EXHAUSTED: quota exceeded")
     capacity_exhausted = parse_quota("agy", "Error: You have exhausted your capacity on this model. Your quota will reset after 50h10m11s.")
+    warning_then_capacity = parse_quota(
+        "agy",
+        "Eligibility check failed: Your current account is not eligible for Antigravity, "
+        "because it is not currently available in your location.\n"
+        "Error: You have exhausted your capacity on this model. Your quota will reset after 44h24m59s.",
+    )
     limited = parse_quota("agy", "runtime/cgo: pthread_create failed: Resource temporarily unavailable")
 
     assert tty["state"] == "tty_unavailable"
-    assert ineligible["state"] == "account_ineligible"
-    assert location_ineligible["state"] == "account_ineligible"
+    assert ineligible["state"] == "parser_miss"
+    assert "eligibility warning" in ineligible["warnings"][1]
+    assert location_ineligible["state"] == "parser_miss"
+    assert "eligibility warning" in location_ineligible["warnings"][1]
     assert exhausted["state"] == "resource_exhausted"
     assert capacity_exhausted["state"] == "resource_exhausted"
+    assert warning_then_capacity["state"] == "resource_exhausted"
     assert limited["state"] == "resource_limited"
     assert "diagnostic_summary" in tty
 
@@ -740,7 +749,7 @@ def test_quota_payload_refines_agy_process_exit_from_raw_output():
     payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
 
     assert payload["quota"]["state"] == "account_ineligible"
-    assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
+    assert payload["quota"]["warnings"] == ["AGY CLI reported an account eligibility warning"]
     assert payload["quota"]["diagnostic_summary"] == "Account ineligible"
 
 
@@ -757,9 +766,8 @@ def test_quota_payload_refines_agy_location_ineligible_from_raw_output():
 
     payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
 
-    assert payload["quota"]["state"] == "account_ineligible"
-    assert payload["quota"]["warnings"] == ["AGY CLI reported that the account is ineligible"]
-    assert "not currently available in your location" in payload["quota"]["diagnostic_summary"]
+    assert payload["quota"]["state"] == "startup_pending"
+    assert payload["quota"]["warnings"] == ["AGY CLI is still starting; keeping the session warm"]
 
 
 def test_quota_payload_refines_agy_thread_exhaustion_from_raw_output():
@@ -827,7 +835,7 @@ def test_agy_quota_startup_seconds_uses_specific_override(monkeypatch):
     assert quota.quota_startup_seconds("codex") == 11.0
 
 
-def test_agy_quota_uses_profile_prompt_command(monkeypatch, tmp_path):
+def test_agy_quota_uses_profile_pty_command(monkeypatch, tmp_path):
     import cli_profile_manager.operations as operations
 
     captured = {}
@@ -847,19 +855,19 @@ def test_agy_quota_uses_profile_prompt_command(monkeypatch, tmp_path):
         return "ok"
 
     monkeypatch.setattr(operations, "core_quota_payload", fake_core_quota_payload)
-    monkeypatch.setattr(operations, "run_direct_cli_prompt_snapshot", fake_runner)
+    monkeypatch.setattr(operations, "run_persistent_cli_quota_snapshot", fake_runner)
     monkeypatch.chdir(tmp_path)
 
     payload = operations.quota_payload("agy", 2, timeout_seconds=12)
 
     assert payload["quota"]["state"] == "available"
-    assert captured["command"] == ["agy2", "-p", "review this code in one sentence"]
-    assert captured["cwd"] == str(tmp_path)
+    assert captured["command"] == ["agy"]
+    assert captured["cwd"].endswith(os.path.join("agy-homes", "p2"))
     assert captured["runner"] is fake_runner
-    assert captured["env"]["HOME"] != str(tmp_path / "agy-homes" / "p2")
+    assert captured["env"]["HOME"].endswith(os.path.join("agy-homes", "p2"))
 
 
-def test_agy_quota_profile_prompt_default_timeout(monkeypatch, tmp_path):
+def test_agy_quota_pty_default_timeout(monkeypatch, tmp_path):
     import cli_profile_manager.operations as operations
 
     captured = {}
@@ -869,7 +877,7 @@ def test_agy_quota_profile_prompt_default_timeout(monkeypatch, tmp_path):
         return {"tool": tool_key, "profile": profile_name, "quota": {"state": "available", "limits": {}}}
 
     monkeypatch.setattr(operations, "core_quota_payload", fake_core_quota_payload)
-    monkeypatch.setattr(operations, "run_direct_cli_prompt_snapshot", lambda *args, **kwargs: "ok")
+    monkeypatch.setattr(operations, "run_persistent_cli_quota_snapshot", lambda *args, **kwargs: "ok")
     monkeypatch.chdir(tmp_path)
 
     operations.quota_payload("agy", 1)
@@ -2998,6 +3006,40 @@ def test_agy_readiness_does_not_accept_idle_splash_without_prompt():
     finally:
         os.close(read_fd)
         os.close(write_fd)
+
+
+def test_agy_readiness_accepts_prompt_after_eligibility_warning():
+    import os
+    import cli_profile_manager.quota as quota
+
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(
+            write_fd,
+            (
+                "Antigravity CLI 1.1.1\n"
+                "Eligibility check failed: Your current account is not eligible for Antigravity, "
+                "because it is not currently available in your location.\n"
+                ">\n"
+            ).encode("utf-8"),
+        )
+        screen = quota.wait_for_agy_readiness(read_fd, [], startup_seconds=0.2, idle_seconds=0.05)
+        assert "Eligibility check failed" in screen
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_quota_output_text_accepts_bytes_from_pty_buffers():
+    import cli_profile_manager.quota as quota
+
+    assert quota.output_text([b"Daily quota ", "55% ", bytes("осталось", "utf-8")]) == "Daily quota 55% осталось"
+
+
+def test_quota_read_available_treats_bad_fd_as_empty():
+    import cli_profile_manager.quota as quota
+
+    assert quota.read_available(-1) == ""
 
 
 def test_persistent_agy_quota_session_uses_readiness_gated_fake_cli(monkeypatch, tmp_path):

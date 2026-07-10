@@ -558,7 +558,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "message": diagnostic_text(quota),
                 "warnings": list(quota.get("warnings") or []),
             }
-            terminal_failure = terminal_quota_failure_state(state)
+            terminal_failure = terminal_quota_failure_state(state) and not had_previous
             delay = None if terminal_failure else retry_delay_for_attempts(attempts)
             machine_state = "auth_required" if state == "auth_required" else ("failed" if terminal_failure else "retry_wait")
             job_state = "failed" if terminal_failure else "retryable"
