@@ -108,6 +108,14 @@ QUOTA_FRESH_SECONDS = 300
 QUOTA_STALE_SECONDS = 3600
 QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
 QUOTA_ACTIVE_JOB_STATES = ("queued", "running")
+QUOTA_TERMINAL_FAILURE_STATES = {
+    "account_ineligible",
+    "auth_required",
+    "missing_cli",
+    "resource_exhausted",
+    "timeout",
+    "unsupported",
+}
 QUOTA_PROGRESS_SPINNER = "|/-\\"
 QUOTA_PIPELINE_STATES = (
     "empty",
@@ -471,6 +479,10 @@ def retry_allowed(entry, now=None):
     return now >= (entry.get("next_retry_at") or 0)
 
 
+def terminal_quota_failure_state(state):
+    return state in QUOTA_TERMINAL_FAILURE_STATES
+
+
 def loading_quota(job_state="queued"):
     return {
         "state": "loading",
@@ -518,24 +530,26 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
                 "message": diagnostic_text(quota),
                 "warnings": list(quota.get("warnings") or []),
             }
-            delay = None if state == "auth_required" else retry_delay_for_attempts(attempts)
+            terminal_failure = terminal_quota_failure_state(state)
+            delay = None if terminal_failure else retry_delay_for_attempts(attempts)
+            machine_state = "auth_required" if state == "auth_required" else ("failed" if terminal_failure else "retry_wait")
+            job_state = "failed" if terminal_failure else "retryable"
             if had_previous:
                 preserved = dict(previous_quota)
-                preserved["job_state"] = "retryable"
-                preserved["pipeline_state"] = "retry_wait"
+                preserved["job_state"] = job_state
+                preserved["pipeline_state"] = machine_state
                 preserved["last_error"] = last_error
                 preserved["warnings"] = list(previous_quota.get("warnings") or [])
                 if last_error["message"] and last_error["message"] not in preserved["warnings"]:
                     preserved["warnings"].append(last_error["message"])
                 entry_quota = preserved
             else:
-                quota["job_state"] = "retryable"
-                quota["pipeline_state"] = "auth_required" if state == "auth_required" else "retry_wait"
+                quota["job_state"] = job_state
+                quota["pipeline_state"] = machine_state
                 entry_quota = quota
-            machine_state = "auth_required" if state == "auth_required" else "retry_wait"
             entry = {
-                "state": "retryable",
-                "job_state": "retryable",
+                "state": job_state,
+                "job_state": job_state,
                 "machine_state": current.get("machine_state", "running"),
                 "quota": entry_quota,
                 "fetched_at": current.get("fetched_at"),

@@ -1263,6 +1263,33 @@ def test_interactive_auth_required_maps_to_terminal_state(monkeypatch):
     assert interactive.schedule_due_quota_refresh("agy", now=interactive.time.time() + 3600) == 0
 
 
+@pytest.mark.parametrize("state", ["resource_exhausted", "account_ineligible", "timeout"])
+def test_interactive_terminal_quota_failures_do_not_auto_retry(monkeypatch, state):
+    import cli_profile_manager.interactive as interactive
+
+    def fake_quota_payload(tool_key, profile_num, timeout_seconds):
+        return {
+            "quota": {
+                "state": state,
+                "limits": {},
+                "warnings": [f"{state} warning"],
+            },
+        }
+
+    monkeypatch.setattr(interactive, "quota_payload", fake_quota_payload)
+    interactive.invalidate_quota_cache()
+
+    entry = interactive.ensure_quota_loading("agy", 1)
+    entry["future"].result(timeout=1)
+    refreshed = interactive.quota_cache_entry("agy", 1)
+
+    assert refreshed["machine_state"] == "failed"
+    assert refreshed["job_state"] == "failed"
+    assert refreshed["last_error"]["state"] == state
+    assert refreshed["next_retry_at"] is None
+    assert interactive.schedule_due_quota_refresh("agy", now=interactive.time.time() + 3600) == 0
+
+
 def test_interactive_next_quota_wake_timeout_for_active_retryable_and_idle():
     import cli_profile_manager.interactive as interactive
 
