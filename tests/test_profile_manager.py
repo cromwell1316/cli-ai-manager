@@ -859,6 +859,24 @@ def test_agy_quota_uses_profile_prompt_command(monkeypatch, tmp_path):
     assert captured["env"]["HOME"] != str(tmp_path / "agy-homes" / "p2")
 
 
+def test_agy_quota_profile_prompt_default_timeout(monkeypatch, tmp_path):
+    import cli_profile_manager.operations as operations
+
+    captured = {}
+
+    def fake_core_quota_payload(tool_key, profile_name, command, env, cwd, **kwargs):
+        captured["timeout_seconds"] = kwargs.get("timeout_seconds")
+        return {"tool": tool_key, "profile": profile_name, "quota": {"state": "available", "limits": {}}}
+
+    monkeypatch.setattr(operations, "core_quota_payload", fake_core_quota_payload)
+    monkeypatch.setattr(operations, "run_direct_cli_prompt_snapshot", lambda *args, **kwargs: "ok")
+    monkeypatch.chdir(tmp_path)
+
+    operations.quota_payload("agy", 1)
+
+    assert captured["timeout_seconds"] == 120
+
+
 def test_direct_prompt_runner_marks_success(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 
@@ -926,7 +944,7 @@ def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
     monkeypatch.delenv("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", raising=False)
     monkeypatch.delenv("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", raising=False)
 
-    assert interactive.interactive_quota_timeout("agy") == 40.0
+    assert interactive.interactive_quota_timeout("agy") == 120.0
     assert interactive.interactive_quota_timeout("codex") == 12.0
 
 
@@ -952,7 +970,7 @@ def test_interactive_unknown_quota_cache_is_retryable(monkeypatch):
     entry = interactive.quota_cache_entry("agy", 1)
 
     assert entry["state"] == "retryable"
-    assert calls == [("agy", 1, 40.0)]
+    assert calls == [("agy", 1, 120.0)]
 
 
 def test_interactive_agy_quota_cache_is_per_profile(monkeypatch):
@@ -977,7 +995,7 @@ def test_interactive_agy_quota_cache_is_per_profile(monkeypatch):
     first["future"].result(timeout=1)
     second["future"].result(timeout=1)
 
-    assert sorted(calls) == [("agy", 1, 40.0), ("agy", 2, 40.0)]
+    assert sorted(calls) == [("agy", 1, 120.0), ("agy", 2, 120.0)]
     assert interactive.quota_cache_key("agy", 1) != interactive.quota_cache_key("agy", 2)
     assert interactive.quota_cache_entry("agy", 1)["quota"]["limits"]["daily"]["percent"] == 41
     assert interactive.quota_cache_entry("agy", 2)["quota"]["limits"]["daily"]["percent"] == 42

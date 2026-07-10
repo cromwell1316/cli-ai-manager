@@ -45,6 +45,8 @@ core_quota_payload = None
 run_persistent_cli_quota_snapshot = None
 run_direct_cli_prompt_snapshot = None
 AGY_PROFILE_PROMPT = "review this code in one sentence"
+DEFAULT_AGY_PROMPT_TIMEOUT_SECONDS = 120
+DEFAULT_QUOTA_TIMEOUT_SECONDS = 20
 
 
 @dataclass
@@ -359,7 +361,8 @@ def status_payload(tool_key, n, metadata=None, snapshot=None):
 
 
 def quota_payload(tool_key, n, timeout_seconds=None, runner=None):
-    timeout = timeout_seconds if timeout_seconds is not None else 20
+    default_timeout = DEFAULT_AGY_PROMPT_TIMEOUT_SECONDS if tool_key == "agy" else DEFAULT_QUOTA_TIMEOUT_SECONDS
+    timeout = timeout_seconds if timeout_seconds is not None else default_timeout
     kwargs = {"timeout_seconds": timeout}
     runner = quota_probe_runner(tool_key, runner)
     if runner is not None:

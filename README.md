@@ -146,9 +146,10 @@ Interactive `ai-man` screens load quota automatically in the background for
 active profiles and cache it for the current session. Set
 `AI_MAN_INTERACTIVE_QUOTA=0` to disable automatic probing, or
 `AI_MAN_INTERACTIVE_QUOTA_TIMEOUT=<seconds>` to change the generic per-profile
-timeout. AGY supports `AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` and
-`AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY=<workers>` for its slower interactive
-quota probes. Set `AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
+timeout. AGY prompt probes default to `120` seconds and support
+`AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT=<seconds>` plus
+`AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY=<workers>` for slower accounts. Set
+`AI_MAN_QUOTA_STARTUP_SECONDS=<seconds>` if a native CLI needs
 more startup time before slash commands are accepted; AGY can be tuned separately
 with `AI_MAN_AGY_QUOTA_STARTUP_SECONDS=<seconds>` and defaults to a longer
 readiness window. Persistent quota sessions are bounded by

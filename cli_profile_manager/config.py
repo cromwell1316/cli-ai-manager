@@ -49,7 +49,7 @@ CONFIG_REGISTRY = [
     SettingDefinition("sync.userprofile", ("USERPROFILE",), "Windows user profile fallback", r"C:\Users\Oliver", "path", "sync"),
     SettingDefinition("interactive.quota_enabled", ("AI_MAN_INTERACTIVE_QUOTA",), "enable automatic interactive quota loading", True, "bool", "interactive"),
     SettingDefinition("interactive.quota_timeout", ("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT",), "generic interactive quota timeout in seconds", 12.0, "float", "interactive", minimum=1.0),
-    SettingDefinition("interactive.agy_quota_timeout", ("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT",), "AGY interactive quota timeout in seconds", 40.0, "float", "interactive", minimum=1.0),
+    SettingDefinition("interactive.agy_quota_timeout", ("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT",), "AGY interactive quota timeout in seconds", 120.0, "float", "interactive", minimum=1.0),
     SettingDefinition("interactive.agy_quota_concurrency", ("AI_MAN_INTERACTIVE_AGY_QUOTA_CONCURRENCY",), "AGY interactive quota worker count", 2, "int", "interactive", minimum=1),
     SettingDefinition("interactive.quota_fresh_seconds", ("AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",), "quota color freshness threshold in seconds", 600.0, "float", "interactive", minimum=1.0),
     SettingDefinition("service.enabled", ("AI_MAN_SERVICE",), "enable optional local runtime service client for eligible read-only commands", False, "bool", "service"),

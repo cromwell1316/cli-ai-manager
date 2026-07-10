@@ -161,8 +161,8 @@ def interactive_quota_enabled():
 
 def interactive_quota_timeout(tool_key=None):
     if tool_key == "agy":
-        raw = os.environ.get("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "40"))
-        fallback = 40.0
+        raw = os.environ.get("AI_MAN_INTERACTIVE_AGY_QUOTA_TIMEOUT", os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "120"))
+        fallback = 120.0
     else:
         raw = os.environ.get("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT", "12")
         fallback = 12.0
