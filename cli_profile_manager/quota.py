@@ -19,6 +19,8 @@ from . import audit
 
 DEFAULT_COLS = 120
 DEFAULT_ROWS = 40
+DEFAULT_TMUX_QUOTA_COLS = 120
+DEFAULT_TMUX_QUOTA_ROWS = 80
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_IDLE_SECONDS = 0.8
 DEFAULT_STARTUP_SECONDS = 3.0
@@ -39,6 +41,7 @@ DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
 DEFAULT_PERSISTENT_SESSION_MAX = 24
 TMUX_QUOTA_SESSION_PREFIX = "ai_man_quota_"
 AGY_QUOTA_BACKEND_ENV = "AI_MAN_AGY_QUOTA_BACKEND"
+AGY_COMPLETE_MODEL_LABELS = ("FM", "FH", "FL", "PL", "PH", "CS", "CO")
 
 
 QUOTA_COMMANDS = {
@@ -667,6 +670,20 @@ def tmux_capture_lines(kind):
         return default
 
 
+def tmux_quota_cols():
+    try:
+        return max(80, int(os.environ.get("AI_MAN_TMUX_QUOTA_COLS", DEFAULT_TMUX_QUOTA_COLS)))
+    except ValueError:
+        return DEFAULT_TMUX_QUOTA_COLS
+
+
+def tmux_quota_rows():
+    try:
+        return max(40, int(os.environ.get("AI_MAN_TMUX_QUOTA_ROWS", DEFAULT_TMUX_QUOTA_ROWS)))
+    except ValueError:
+        return DEFAULT_TMUX_QUOTA_ROWS
+
+
 def tmux_poll_interval_seconds():
     try:
         return max(0.01, float(os.environ.get("AI_MAN_TMUX_QUOTA_POLL_INTERVAL_SECONDS", DEFAULT_TMUX_POLL_INTERVAL_SECONDS)))
@@ -688,8 +705,57 @@ def tmux_warm_snapshot_concurrency():
         return DEFAULT_TMUX_WARM_SNAPSHOT_CONCURRENCY
 
 
+def agy_model_quota_label(model):
+    model_l = model.lower()
+    if "gemini" in model_l and "flash" in model_l:
+        label = "F"
+    elif "gemini" in model_l and "pro" in model_l:
+        label = "P"
+    elif "claude" in model_l:
+        label = "C"
+    elif "gpt" in model_l:
+        label = "G"
+    else:
+        return None
+
+    if "medium" in model_l:
+        tier = "M"
+    elif "high" in model_l:
+        tier = "H"
+    elif "low" in model_l:
+        tier = "L"
+    elif "sonnet" in model_l:
+        tier = "S"
+    elif "opus" in model_l:
+        tier = "O"
+    else:
+        tier = ""
+    return f"{label}{tier}"
+
+
+def agy_model_quota_labels(quota):
+    labels = set()
+    for name, data in quota.get("limits", {}).items():
+        model = data.get("model", name)
+        label = agy_model_quota_label(model)
+        if label:
+            labels.add(label)
+    return labels
+
+
+def agy_full_model_quota_ready(screen_text, quota):
+    if not re.search(r"\bALL MODELS\b|Models\s*&\s*Quota", screen_text, re.I):
+        return True
+    labels = agy_model_quota_labels(quota)
+    if not labels:
+        return False
+    return all(label in labels for label in AGY_COMPLETE_MODEL_LABELS)
+
+
 def quota_snapshot_ready(tool_key, screen_text):
     quota = parse_quota(tool_key, screen_text)
+    if tool_key == "agy" and quota.get("state") == "available" and not agy_full_model_quota_ready(screen_text, quota):
+        return False
     return quota.get("state") not in ("empty_output", "parser_miss")
 
 
@@ -891,13 +957,25 @@ class TmuxQuotaSession:
         self.starting = True
         started_at = time.monotonic()
         home = self.env.get("HOME")
-        tmux_command = ["new-session", "-d", "-s", self.session_name, "-c", self.cwd]
+        tmux_command = [
+            "new-session",
+            "-d",
+            "-x",
+            str(tmux_quota_cols()),
+            "-y",
+            str(tmux_quota_rows()),
+            "-s",
+            self.session_name,
+            "-c",
+            self.cwd,
+        ]
         if home:
             tmux_command.extend(["env", f"HOME={home}"])
         tmux_command.extend(self.command)
         try:
             with tmux_cold_start_slot():
                 self._run_tmux(tmux_command)
+                self.resize_for_quota()
                 self._cache_liveness(True)
                 self.lifecycle_metrics["startup_count"] += 1
                 audit.record(
@@ -987,6 +1065,20 @@ class TmuxQuotaSession:
     def capture_recent(self, kind="short"):
         return self.capture(start=f"-{tmux_capture_lines(kind)}")
 
+    def resize_for_quota(self):
+        self._run_tmux(
+            [
+                "resize-window",
+                "-t",
+                self.session_name,
+                "-x",
+                str(tmux_quota_cols()),
+                "-y",
+                str(tmux_quota_rows()),
+            ],
+            check=False,
+        )
+
     def wait_for_ready(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
         startup_seconds = quota_startup_seconds(self.tool_key)
         deadline = time.monotonic() + min(max(startup_seconds, 0.0), max(timeout_seconds, startup_seconds, 0.0))
@@ -1033,6 +1125,7 @@ class TmuxQuotaSession:
             started_at = time.monotonic()
             was_warm = reused_session and self.ready
             with tmux_warm_snapshot_slot():
+                self.resize_for_quota()
                 self._run_tmux(["send-keys", "-t", self.session_name, slash_command, "Enter"])
                 logging.debug(
                     "quota command sent tool=%s backend=tmux session=%s command=%s",

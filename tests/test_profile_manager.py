@@ -1955,14 +1955,51 @@ def test_tmux_quota_session_uses_expected_commands(monkeypatch, tmp_path):
     session.close()
 
     assert captured == screen
-    assert any(call[1:5] == ["new-session", "-d", "-s", session.session_name] for call in calls)
+    assert any("new-session" in call and "-d" in call and session.session_name in call for call in calls)
     new_session_call = next(call for call in calls if "new-session" in call)
-    assert ["-c", str(tmp_path)] == new_session_call[5:7]
+    assert "-x" in new_session_call
+    assert "-y" in new_session_call
+    assert "-c" in new_session_call
+    assert new_session_call[new_session_call.index("-x") + 1] == "120"
+    assert new_session_call[new_session_call.index("-y") + 1] == "80"
+    assert new_session_call[new_session_call.index("-c") + 1] == str(tmp_path)
     assert f"HOME={home}" in new_session_call
+    resize_call = next(call for call in calls if "resize-window" in call)
+    assert resize_call[resize_call.index("-x") + 1] == "120"
+    assert resize_call[resize_call.index("-y") + 1] == "80"
     assert any(call[-2:] == ["/usage", "Enter"] for call in calls)
     assert any("capture-pane" in call and "-S" in call and "-200" in call for call in calls)
     assert any(call[-1:] == ["Escape"] for call in calls)
     assert any(call[1:3] == ["kill-session", "-t"] and call[3] == session.session_name for call in calls)
+
+
+def test_agy_quota_snapshot_ready_rejects_partial_all_models_capture():
+    import cli_profile_manager.quota as quota
+
+    partial = """
+    Account: user@example.com
+    ALL MODELS
+    Gemini 3.5 Flash (Medium)
+    [██████████] 67.00%
+    Gemini 3.5 Flash (High)
+    [██████████] 67.00%
+    Gemini 3.5 Flash (Low)
+    [██████████] 67.00%
+    """
+    complete = partial + """
+    Gemini 3.1 Pro (Low)
+    [██████████] 67.00%
+    Gemini 3.1 Pro (High)
+    [██████████] 67.00%
+    Claude Sonnet 4.6 (Thinking)
+    [██████████] 100.00%
+    Claude Opus 4.6 (Thinking)
+    [██████████] 100.00%
+    """
+
+    assert quota.parse_quota("agy", partial)["state"] == "available"
+    assert quota.quota_snapshot_ready("agy", partial) is False
+    assert quota.quota_snapshot_ready("agy", complete) is True
 
 
 def test_run_persistent_agy_uses_tmux_in_auto(monkeypatch, tmp_path):
