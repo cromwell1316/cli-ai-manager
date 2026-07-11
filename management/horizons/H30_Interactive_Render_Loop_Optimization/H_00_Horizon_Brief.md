@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H30_Interactive_Render_Loop_Optimization/RE
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

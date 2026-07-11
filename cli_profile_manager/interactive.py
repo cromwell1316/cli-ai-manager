@@ -104,6 +104,7 @@ QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
 DEVELOPER_MODE_SETTING_KEY = "developer_mode"
 INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
+INTERACTIVE_QUOTA_RENDER_GENERATION = 0
 INTERACTIVE_SETTINGS_CACHE = None
 QUOTA_FRESH_SECONDS = 300
 QUOTA_STALE_SECONDS = 3600
@@ -162,6 +163,14 @@ INTERACTIVE_QUOTA_SCHEDULER_LOCK = threading.Lock()
 INTERACTIVE_SHUTTING_DOWN = False
 STATUS_RENDERER = TerminalFrameRenderer(cache_key="status")
 STATUS_SCREEN_RENDER_CACHE = {}
+STATUS_ROW_RENDER_CACHE = {}
+STATUS_QUOTA_CELL_RENDER_CACHE = {}
+STATUS_RENDER_CACHE_LIMIT = 512
+
+
+def bump_status_render_generation():
+    global INTERACTIVE_QUOTA_RENDER_GENERATION
+    INTERACTIVE_QUOTA_RENDER_GENERATION += 1
 
 
 def interactive_quota_enabled():
@@ -476,6 +485,7 @@ def store_quota_cache(tool_key, profile_num, entry):
     with INTERACTIVE_QUOTA_LOCK:
         entry.setdefault("machine_state", quota_entry_machine_state(entry))
         INTERACTIVE_QUOTA_CACHE[quota_cache_key(tool_key, profile_num)] = entry
+    bump_status_render_generation()
 
 
 def quota_entry_fresh(entry, now=None):
@@ -588,6 +598,7 @@ def finish_quota_refresh(tool_key, profile_num, quota, now):
             }
             transition_quota_entry(entry, machine_state, tool_key, profile_num, state, now)
         INTERACTIVE_QUOTA_CACHE[key] = entry
+    bump_status_render_generation()
     details = {
         "state": state,
         "attempts": entry.get("attempts"),
@@ -634,6 +645,7 @@ def load_quota_background(tool_key, profile_num):
             if (entry.get("quota") or {}).get("state") == "loading":
                 entry["quota"]["job_state"] = "running"
                 entry["quota"]["pipeline_state"] = "running"
+    bump_status_render_generation()
     _audit().record(
         "quota",
         "refresh_started",
@@ -683,6 +695,7 @@ def ensure_quota_loading(tool_key, profile_num):
             transition_quota_entry(entry, "queued", tool_key, profile_num, "cache_miss", now)
             INTERACTIVE_QUOTA_CACHE[key] = entry
             should_submit = True
+            bump_status_render_generation()
         elif entry.get("job_state") in QUOTA_ACTIVE_JOB_STATES:
             record_quota_job_coalesced()
             return entry
@@ -708,6 +721,7 @@ def ensure_quota_loading(tool_key, profile_num):
             if previous_machine != target_state:
                 transition_quota_entry(entry, target_state, tool_key, profile_num, "refresh_due", now)
             should_submit = True
+            bump_status_render_generation()
         else:
             return entry
     if should_submit:
@@ -785,6 +799,27 @@ def quota_text(status, color=True, width=24):
     if len(text) > width:
         text = f"{text[:max(0, width - 3)]}..."
     return color_quota_text(text, status) if color else text
+
+
+def bounded_cache_get(cache, key):
+    return cache.get(key)
+
+
+def bounded_cache_set(cache, key, value, limit=STATUS_RENDER_CACHE_LIMIT):
+    if len(cache) >= limit:
+        cache.clear()
+    cache[key] = value
+    return value
+
+
+def freeze_render_value(value):
+    if isinstance(value, dict):
+        return tuple((key, freeze_render_value(value[key])) for key in sorted(value))
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_render_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(freeze_render_value(item) for item in value))
+    return value
 
 
 def quota_progress_snapshot(statuses):
@@ -906,6 +941,20 @@ def agy_quota_cells(status, columns):
     return [marker if idx == 0 else "" for idx, _ in enumerate(columns)]
 
 
+def agy_quota_cells_cached(status, columns):
+    quota = status.get("quota") or {}
+    key = (
+        tuple(columns),
+        quota.get("state"),
+        quota.get("job_state") or status.get("job_state"),
+        freeze_render_value(quota.get("limits") or {}),
+    )
+    cached = bounded_cache_get(STATUS_QUOTA_CELL_RENDER_CACHE, key)
+    if cached is not None:
+        return cached
+    return bounded_cache_set(STATUS_QUOTA_CELL_RENDER_CACHE, key, agy_quota_cells(status, columns))
+
+
 def agy_quota_fresh(status, now=None):
     quota = status.get("quota") or {}
     fetched_at = quota.get("fetched_at")
@@ -961,6 +1010,66 @@ def color_email_parts(value):
     return "".join(pieces)
 
 
+def status_row_render_key(tool_key, status, quota_columns, widths, now=None):
+    quota = status.get("quota") or {}
+    now = time.time() if now is None else now
+    fetched_at = quota.get("fetched_at")
+    fresh = None
+    if fetched_at is not None:
+        fresh = now - fetched_at <= interactive_quota_fresh_seconds()
+    return (
+        tool_key,
+        tuple(quota_columns),
+        tuple(sorted(widths.items())),
+        status.get("num"),
+        status.get("email"),
+        status.get("has_token"),
+        status.get("label"),
+        status.get("job_state"),
+        quota.get("state"),
+        quota.get("job_state"),
+        quota.get("pipeline_state"),
+        quota.get("account"),
+        quota.get("fetched_at"),
+        fresh,
+        freeze_render_value(quota.get("limits") or {}),
+        freeze_render_value(quota.get("warnings") or []),
+    )
+
+
+def render_status_row(tool_key, status, quota_columns, widths, now=None):
+    key = status_row_render_key(tool_key, status, quota_columns, widths, now)
+    cached = bounded_cache_get(STATUS_ROW_RENDER_CACHE, key)
+    if cached is not None:
+        return cached
+
+    stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
+    lbl_str = f"({status['label']})" if status["label"] else ""
+    email_color = CLR_CYAN if status["has_token"] else CLR_RESET
+    profile = f"p{status['num']}"
+    display_email = status["email"]
+    quota_account = (status.get("quota") or {}).get("account")
+    if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
+        display_email = quota_account
+    email = color_email_parts(display_email) if status["has_token"] else f"{email_color}{display_email}{CLR_RESET}"
+    label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
+    if tool_key == "agy":
+        quota = " ".join(
+            visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
+            for cell in agy_quota_cells_cached(status, quota_columns)
+        )
+    else:
+        quota = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
+    row = (
+        f"{visible_fit(profile, widths['profile'])} "
+        f"{visible_fit(email, widths['account'])} "
+        f"{visible_fit(stat_str, widths['status'])} "
+        f"{quota} "
+        f"{visible_fit(label, widths['label'])}"
+    )
+    return bounded_cache_set(STATUS_ROW_RENDER_CACHE, key, row)
+
+
 def invalidate_quota_cache(tool_key=None, profile_num=None):
     with INTERACTIVE_QUOTA_LOCK:
         if tool_key is None:
@@ -974,6 +1083,7 @@ def invalidate_quota_cache(tool_key=None, profile_num=None):
         else:
             INTERACTIVE_QUOTA_CACHE.pop(quota_cache_key(tool_key, profile_num), None)
             close_args = [(tool_key, profile_home(tool_key, profile_num))]
+    bump_status_render_generation()
     for close_tool, close_home in close_args:
         close_persistent_quota_sessions(close_tool, close_home)
 
@@ -1003,6 +1113,8 @@ def force_quota_refresh(tool_key=None):
             if previous_machine != target_state:
                 transition_quota_entry(entry, target_state, entry_tool, profile_num, "forced_refresh")
             submissions.append((entry_tool, profile_num))
+        if submissions:
+            bump_status_render_generation()
     for entry_tool, profile_num in submissions:
         future = quota_scheduler().submit(entry_tool, profile_num, priority=0)
         with INTERACTIVE_QUOTA_LOCK:
@@ -1057,6 +1169,8 @@ def schedule_due_quota_refresh(tool_key=None, now=None):
             if previous_machine != target_state:
                 transition_quota_entry(entry, target_state, entry_tool, profile_num, ",".join(reasons), now)
             submissions.append((entry_tool, profile_num, reasons, fetched_at))
+        if submissions:
+            bump_status_render_generation()
     for entry_tool, profile_num, reasons, fetched_at in submissions:
         age = None if fetched_at is None else round(now - fetched_at, 3)
         _audit().record(
@@ -1308,6 +1422,8 @@ def header_lines(title=""):
 
 def reset_status_screen_render():
     STATUS_SCREEN_RENDER_CACHE.clear()
+    STATUS_ROW_RENDER_CACHE.clear()
+    STATUS_QUOTA_CELL_RENDER_CACHE.clear()
     STATUS_RENDERER.reset()
 
 
@@ -1321,15 +1437,45 @@ def paint_terminal_frame(lines, cache_key="status"):
     STATUS_SCREEN_RENDER_CACHE[cache_key] = list(STATUS_RENDERER.previous_lines or [])
 
 
-def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):
-    tool_name = TOOLS[tool_key]["name"]
-    lines = header_lines(f"STATUS: {tool_name.upper()}")
-    lines.append("")
+def status_screen_snapshot_key(tool_key, status_message, statuses, progress_line, countdown, developer_mode, live_logs):
+    return (
+        tool_key,
+        status_message,
+        tuple(status_row_render_key(tool_key, status, (), {}, None) for status in statuses),
+        progress_line,
+        countdown,
+        developer_mode,
+        tuple(live_logs),
+    )
 
+
+def status_screen_fast_key(tool_key, status_message, base_statuses):
     if base_statuses is None:
-        base_statuses = collect_status_snapshot(tool_key)
-    statuses = [status_with_auto_quota_snapshot(tool_key, status) for status in base_statuses]
+        return None
+    now = time.time()
+    active = any_quota_loading(tool_key)
+    developer_mode = interactive_developer_mode_enabled()
+    log_fingerprint = None
+    if developer_mode:
+        try:
+            stat = os.stat(interactive_log_path())
+            log_fingerprint = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            log_fingerprint = None
+    return (
+        tool_key,
+        status_message,
+        id(base_statuses),
+        len(base_statuses),
+        INTERACTIVE_QUOTA_RENDER_GENERATION,
+        int(now * 4) if active else None,
+        quota_refresh_countdown(tool_key, now),
+        developer_mode,
+        log_fingerprint,
+    )
 
+
+def status_screen_layout(tool_key, statuses):
     if tool_key == "agy":
         quota_columns = agy_status_quota_columns(statuses)
         widths = {
@@ -1353,6 +1499,33 @@ def render_status_screen_lines(tool_key, status_message=None, base_statuses=None
         }
         quota_header = f"{'Quota':<{widths['quota']}}"
         total_width = sum(widths.values()) + len(widths) - 1
+    return quota_columns, widths, quota_header, total_width
+
+
+def render_status_screen_frame(tool_key, status_message=None, base_statuses=None):
+    now = time.time()
+    tool_name = TOOLS[tool_key]["name"]
+    lines = header_lines(f"STATUS: {tool_name.upper()}")
+    lines.append("")
+
+    if base_statuses is None:
+        base_statuses = collect_status_snapshot(tool_key)
+    statuses = [status_with_auto_quota_snapshot(tool_key, status) for status in base_statuses]
+    quota_columns, widths, quota_header, total_width = status_screen_layout(tool_key, statuses)
+    progress_line = quota_progress_line(statuses, now)
+    developer_mode = interactive_developer_mode_enabled()
+    log_lines = live_log_lines() if developer_mode else []
+    countdown = quota_refresh_countdown(tool_key, now)
+    snapshot_key = status_screen_snapshot_key(
+        tool_key,
+        status_message,
+        statuses,
+        progress_line,
+        countdown,
+        developer_mode,
+        log_lines,
+    )
+
     lines.append(
         f"{CLR_BOLD}{CLR_WHITE}"
         f"{'Profile':<{widths['profile']}} "
@@ -1365,56 +1538,46 @@ def render_status_screen_lines(tool_key, status_message=None, base_statuses=None
     lines.append("-" * total_width)
 
     for status in statuses:
-        stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
-        lbl_str = f"({status['label']})" if status["label"] else ""
-        email_color = CLR_CYAN if status["has_token"] else CLR_RESET
-        profile = f"p{status['num']}"
-        display_email = status["email"]
-        quota_account = (status.get("quota") or {}).get("account")
-        if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
-            display_email = quota_account
-        email = color_email_parts(display_email) if status["has_token"] else f"{email_color}{display_email}{CLR_RESET}"
-        label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
-        if tool_key == "agy":
-            quota = " ".join(
-                visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
-                for cell in agy_quota_cells(status, quota_columns)
-            )
-        else:
-            quota = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
-        lines.append(
-            f"{visible_fit(profile, widths['profile'])} "
-            f"{visible_fit(email, widths['account'])} "
-            f"{visible_fit(stat_str, widths['status'])} "
-            f"{quota} "
-            f"{visible_fit(label, widths['label'])}"
-        )
+        lines.append(render_status_row(tool_key, status, quota_columns, widths, now))
     lines.append("")
     if status_message:
         lines.append(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
-    progress_line = quota_progress_line(statuses)
     if progress_line:
         lines.append(progress_line)
-    if interactive_developer_mode_enabled():
+    if developer_mode:
         lines.append("")
         lines.append(f"{CLR_BOLD}{CLR_YELLOW}Live logs{CLR_RESET}")
-        for log_line in live_log_lines():
+        for log_line in log_lines:
             lines.append(f"  {CLR_WHITE}{log_line}{CLR_RESET}")
     lines.append(
-        f"Next auto refresh: {CLR_CYAN}{quota_refresh_countdown(tool_key)}{CLR_RESET}. "
+        f"Next auto refresh: {CLR_CYAN}{countdown}{CLR_RESET}. "
         "Press Enter/q to return, r to refresh quota now..."
     )
-    return lines
+    return snapshot_key, lines
+
+
+def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):
+    return render_status_screen_frame(tool_key, status_message, base_statuses)[1]
 
 
 def render_status_screen(tool_key, status_message=None, base_statuses=None):
-    paint_terminal_frame(render_status_screen_lines(tool_key, status_message, base_statuses))
+    fast_key = status_screen_fast_key(tool_key, status_message, base_statuses)
+    if fast_key is not None and STATUS_SCREEN_RENDER_CACHE.get("status_fast_key") == fast_key:
+        return False
+    snapshot_key, lines = render_status_screen_frame(tool_key, status_message, base_statuses)
+    if fast_key is not None:
+        STATUS_SCREEN_RENDER_CACHE["status_fast_key"] = fast_key
+    if STATUS_SCREEN_RENDER_CACHE.get("status_snapshot_key") == snapshot_key:
+        return False
+    paint_terminal_frame(lines)
+    STATUS_SCREEN_RENDER_CACHE["status_snapshot_key"] = snapshot_key
+    return True
 
 
 def view_status(tool_key):
     status_message = None
     base_statuses = collect_status_snapshot(tool_key)
-    STATUS_SCREEN_RENDER_CACHE.pop("status", None)
+    STATUS_SCREEN_RENDER_CACHE.clear()
     _audit().record("interactive", "started", command="status", tool=tool_key, details={"workflow": "view_status"})
     try:
         while True:

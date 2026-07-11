@@ -5,11 +5,11 @@ Source of Truth: management/horizons/H30_Interactive_Render_Loop_Optimization/RE
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
-| Area | Acceptance |
-| --- | --- |
-| Redraw | Unchanged state avoids unnecessary render work |
-| Output | Existing layout and shortcuts remain stable |
-| Quota UI | Progress and stale states still update correctly |
-| Performance | Status redraw benchmark improves or stays within budget |
+| Area | Acceptance | Evidence |
+| --- | --- | --- |
+| Redraw | Unchanged state avoids unnecessary render work | Status fast-key test and TTY unchanged-frame skip |
+| Output | Existing layout and shortcuts remain stable | Interactive/render regression tests |
+| Quota UI | Progress and stale states still update correctly | Quota render generation and progress tests |
+| Performance | Status redraw benchmark improves or stays within budget | `status-redraw` median `0.009ms` |

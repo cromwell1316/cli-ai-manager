@@ -62,6 +62,8 @@ class TerminalFrameRenderer:
             return
 
         size = self.current_size()
+        if not force and self.previous_lines == text_lines and self.previous_size == size:
+            return
         resized = self.previous_size is not None and size != self.previous_size
         output = []
         if not self.cursor_hidden:

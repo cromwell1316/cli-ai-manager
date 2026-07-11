@@ -2234,6 +2234,57 @@ def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
     assert "\033[J" not in stdout.writes[1]
 
 
+def test_interactive_status_render_skips_unchanged_frame(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    painted = []
+    base_statuses = [
+        {
+            "num": 1,
+            "email": "one@example.com",
+            "has_token": False,
+            "token_state": "missing",
+            "label": "",
+        }
+    ]
+
+    interactive.reset_status_screen_render()
+    monkeypatch.setattr(interactive, "interactive_developer_mode_enabled", lambda: False)
+    monkeypatch.setattr(interactive, "interactive_quota_enabled", lambda: False)
+    monkeypatch.setattr(interactive, "paint_terminal_frame", lambda lines: painted.append(lines))
+
+    assert interactive.render_status_screen("agy", base_statuses=base_statuses) is True
+    assert interactive.render_status_screen("agy", base_statuses=base_statuses) is False
+    assert len(painted) == 1
+
+    interactive.reset_status_screen_render()
+
+
+def test_interactive_status_row_cache_reuses_formatted_rows(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    status = {
+        "num": 1,
+        "email": "one@example.com",
+        "has_token": True,
+        "label": "work",
+        "quota": {
+            "state": "available",
+            "job_state": "ready",
+            "limits": {"daily": {"percent": 77}},
+            "fetched_at": interactive.time.time(),
+        },
+    }
+    widths = {"profile": 8, "account": 38, "status": 10, "quota": 5, "label": 14}
+
+    interactive.STATUS_ROW_RENDER_CACHE.clear()
+    first = interactive.render_status_row("agy", status, ["FM"], widths, now=100.0)
+    second = interactive.render_status_row("agy", status, ["FM"], widths, now=100.0)
+
+    assert first == second
+    assert len(interactive.STATUS_ROW_RENDER_CACHE) == 1
+
+
 def test_interactive_menu_lines_mark_selection_and_fit_footer():
     import cli_profile_manager.interactive as interactive
 
