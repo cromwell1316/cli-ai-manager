@@ -100,6 +100,12 @@ def safety_decision(operation, command=None, tool=None, profile=None, target=Non
     return decision
 
 AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO", "GPT"]
+AGY_QUOTA_COLUMN_GROUPS = (
+    ("Flash", ("FM", "FH", "FL")),
+    ("Pro", ("PL", "PH")),
+    ("Claude", ("CS", "CO")),
+    ("GPT", ("GPT",)),
+)
 SETTINGS_METADATA_KEY = "_settings"
 QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
 DEVELOPER_MODE_SETTING_KEY = "developer_mode"
@@ -1073,6 +1079,42 @@ def color_agy_quota_cell(cell, status):
     return f"{color}{cell}{CLR_RESET}"
 
 
+def agy_quota_header_lines(columns, quota_width):
+    column_groups = []
+    used = set()
+    for title, group_columns in AGY_QUOTA_COLUMN_GROUPS:
+        present = [column for column in group_columns if column in columns]
+        if not present:
+            continue
+        used.update(present)
+        span_width = (quota_width * len(present)) + max(0, len(present) - 1)
+        column_groups.append((title, span_width))
+    other_columns = [column for column in columns if column not in used]
+    if other_columns:
+        span_width = (quota_width * len(other_columns)) + max(0, len(other_columns) - 1)
+        column_groups.append(("Other", span_width))
+    group_header = " ".join(visible_fit(title.center(width), width) for title, width in column_groups)
+    column_header = " ".join(visible_fit(column, quota_width) for column in columns)
+    return group_header, column_header
+
+
+def status_has_issue(status):
+    email = str(status.get("email") or "")
+    token_state = status.get("token_state")
+    return (
+        not status.get("has_token")
+        or token_state in ("invalid", "missing", "error")
+        or email.startswith("invalid token:")
+    )
+
+
+def status_profile_text(status):
+    profile = f"p{status['num']}"
+    if not status_has_issue(status):
+        return profile
+    return f"{CLR_RED}{profile}!{CLR_RESET}"
+
+
 def color_email_parts(value):
     text = str(value)
     match = re.fullmatch(r"([^@\s]+)(@[^@\s]+)", text)
@@ -1126,8 +1168,8 @@ def render_status_row(tool_key, status, quota_columns, widths, now=None):
 
     stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
     lbl_str = f"({status['label']})" if status["label"] else ""
-    email_color = CLR_CYAN if status["has_token"] else CLR_RESET
-    profile = f"p{status['num']}"
+    email_color = CLR_CYAN if status["has_token"] else CLR_RED
+    profile = status_profile_text(status)
     display_email = status["email"]
     quota_account = (status.get("quota") or {}).get("account")
     if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
@@ -1591,7 +1633,7 @@ def status_screen_layout(tool_key, statuses, max_width=None):
             "quota": quota_width,
             "label": label_width,
         }
-        quota_header = " ".join(visible_fit(column, widths["quota"]) for column in quota_columns)
+        quota_header = agy_quota_header_lines(quota_columns, widths["quota"])
         total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
         total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
     else:
@@ -1635,15 +1677,36 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
         log_lines,
     )
 
-    lines.append(
-        f"{CLR_BOLD}{CLR_WHITE}"
-        f"{visible_fit('Profile', widths['profile'])} "
-        f"{visible_fit('Active Account / Tier', widths['account'])} "
-        f"{visible_fit('Status', widths['status'])} "
-        f"{quota_header} "
-        f"{visible_fit('Label', widths['label'])}"
-        f"{CLR_RESET}"
-    )
+    if isinstance(quota_header, tuple):
+        quota_group_header, quota_column_header = quota_header
+        lines.append(
+            f"{CLR_BOLD}{CLR_WHITE}"
+            f"{visible_fit('Profile', widths['profile'])} "
+            f"{visible_fit('Active Account / Tier', widths['account'])} "
+            f"{visible_fit('Status', widths['status'])} "
+            f"{quota_group_header} "
+            f"{visible_fit('Label', widths['label'])}"
+            f"{CLR_RESET}"
+        )
+        lines.append(
+            f"{CLR_BOLD}{CLR_WHITE}"
+            f"{visible_fit('', widths['profile'])} "
+            f"{visible_fit('', widths['account'])} "
+            f"{visible_fit('', widths['status'])} "
+            f"{quota_column_header} "
+            f"{visible_fit('', widths['label'])}"
+            f"{CLR_RESET}"
+        )
+    else:
+        lines.append(
+            f"{CLR_BOLD}{CLR_WHITE}"
+            f"{visible_fit('Profile', widths['profile'])} "
+            f"{visible_fit('Active Account / Tier', widths['account'])} "
+            f"{visible_fit('Status', widths['status'])} "
+            f"{quota_header} "
+            f"{visible_fit('Label', widths['label'])}"
+            f"{CLR_RESET}"
+        )
     lines.append("-" * total_width)
 
     for status in statuses:
@@ -1800,7 +1863,7 @@ def launch_account_table(tool_key, statuses):
             "quota": 5,
             "label": 14,
         }
-        quota_header = " ".join(f"{column:<{widths['quota']}}" for column in quota_columns)
+        quota_header = agy_quota_header_lines(quota_columns, widths["quota"])
         total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
         total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
     else:
@@ -1816,15 +1879,40 @@ def launch_account_table(tool_key, statuses):
         total_width = sum(widths.values()) + len(widths) - 1
 
     prefix = "      "
-    header = (
-        f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-        f"{'Profile':<{widths['profile']}} "
-        f"{'Account':<{widths['account']}} "
-        f"{'Status':<{widths['status']}} "
-        f"{quota_header} "
-        f"{'Label':<{widths['label']}}"
-        f"{CLR_RESET}"
-    )
+    if isinstance(quota_header, tuple):
+        quota_group_header, quota_column_header = quota_header
+        headers = [
+            (
+                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
+                f"{'Profile':<{widths['profile']}} "
+                f"{'Account':<{widths['account']}} "
+                f"{'Status':<{widths['status']}} "
+                f"{quota_group_header} "
+                f"{'Label':<{widths['label']}}"
+                f"{CLR_RESET}"
+            ),
+            (
+                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
+                f"{'':<{widths['profile']}} "
+                f"{'':<{widths['account']}} "
+                f"{'':<{widths['status']}} "
+                f"{quota_column_header} "
+                f"{'':<{widths['label']}}"
+                f"{CLR_RESET}"
+            ),
+        ]
+    else:
+        headers = [
+            (
+                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
+                f"{'Profile':<{widths['profile']}} "
+                f"{'Account':<{widths['account']}} "
+                f"{'Status':<{widths['status']}} "
+                f"{quota_header} "
+                f"{'Label':<{widths['label']}}"
+                f"{CLR_RESET}"
+            )
+        ]
     separator = f"{prefix}{'-' * total_width}"
     rows = []
     for status in statuses:
@@ -1834,7 +1922,7 @@ def launch_account_table(tool_key, statuses):
         quota_account = (status.get("quota") or {}).get("account")
         if quota_account and (tool_key == "agy" or display_account in ("logged in", "(no login)")):
             display_account = quota_account
-        account = color_email_parts(display_account) if status["has_token"] else display_account
+        account = color_email_parts(display_account) if status["has_token"] else f"{CLR_RED}{display_account}{CLR_RESET}"
         if tool_key == "agy":
             quota_text_value = " ".join(
                 visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
@@ -1842,7 +1930,7 @@ def launch_account_table(tool_key, statuses):
             )
         else:
             quota_text_value = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
-        profile_text = f"p{status['num']}"
+        profile_text = status_profile_text(status)
         label = f"{CLR_YELLOW}{label_text}{CLR_RESET}" if label_text else ""
         rows.append(
             f"{visible_fit(profile_text, widths['profile'])} "
@@ -1851,7 +1939,7 @@ def launch_account_table(tool_key, statuses):
             f"{quota_text_value} "
             f"{visible_fit(label, widths['label'])}"
         )
-    return [header, separator], rows
+    return headers + [separator], rows
 
 def launch_account(tool_key):
     tool = TOOLS[tool_key]

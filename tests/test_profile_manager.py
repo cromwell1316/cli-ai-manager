@@ -2459,9 +2459,14 @@ def test_agy_status_screen_fits_all_quota_columns_in_terminal(monkeypatch):
 
     lines = interactive.render_status_screen_lines("agy", base_statuses=base_statuses)
     plain_lines = [interactive.ANSI_RE.sub("", line) for line in lines]
-    header = next(line for line in plain_lines if line.startswith("Profile"))
+    rendered = "\n".join(plain_lines)
 
-    assert all(column in header for column in interactive.AGY_DEFAULT_QUOTA_COLUMNS)
+    assert "Flash" in rendered
+    assert "Pro" in rendered
+    assert "Claude" in rendered
+    assert "GPT" in rendered
+    assert all(column in rendered for column in interactive.AGY_DEFAULT_QUOTA_COLUMNS)
+    assert "p12!" in rendered
     assert all(interactive.visible_len(line) <= 100 for line in lines)
 
 
