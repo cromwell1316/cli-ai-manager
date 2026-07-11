@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H35_Tmux_Quota_Session_Pool_Tuning/README.m
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -37,6 +37,8 @@ bursts without wasting processes or leaving stale sessions.
 ## Validation
 
 ```bash
+python3 -m py_compile cli_profile_manager/quota.py
+pytest -q tests/test_tmux_pool_tuning.py
 pytest -q tests/test_profile_manager.py -k "tmux or quota"
 python3 scripts/validate_agy_quota_live.py --concurrency 2 --timeout 60
 tmux ls
@@ -44,6 +46,27 @@ tmux ls
 
 Acceptance target: multi-profile AGY quota refreshes complete with bounded
 session count and no orphaned manager-owned tmux sessions.
+
+## Implementation Notes
+
+- Added separate tmux cold-start and warm-snapshot concurrency controls.
+- Added pool and per-session lifecycle metrics to quota session snapshots.
+- Hardened tmux ownership checks so cleanup only targets manager-owned sessions.
+- Kept starting sessions out of eviction while recording evict and close timing.
+- Added tests for pool tuning, non-manager cleanup safety, external kill recovery,
+  and snapshot diagnostics.
+
+## Validation Results
+
+- `python3 -m py_compile cli_profile_manager/quota.py`
+- `pytest -q tests/test_tmux_pool_tuning.py`: `5 passed in 0.09s`
+- `pytest -q tests/test_profile_manager.py -k "tmux or quota"`:
+  `81 passed, 100 deselected in 2.25s`
+- `pytest -q tests/test_profile_manager.py tests/test_quota_warm_path.py tests/test_tmux_pool_tuning.py -k "tmux or quota"`:
+  `90 passed, 100 deselected in 2.45s`
+- `pytest -q`: `198 passed in 9.33s`
+- Live AGY validation is documented as operator-run because it can consume real
+  quota and depends on local authenticated profiles.
 
 ## Files
 

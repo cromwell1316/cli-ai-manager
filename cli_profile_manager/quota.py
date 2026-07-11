@@ -31,6 +31,8 @@ DEFAULT_TMUX_LIVENESS_CACHE_SECONDS = 1.0
 DEFAULT_TMUX_SHORT_CAPTURE_LINES = 80
 DEFAULT_TMUX_LONG_CAPTURE_LINES = 240
 DEFAULT_TMUX_POLL_INTERVAL_SECONDS = 0.1
+DEFAULT_TMUX_COLD_START_CONCURRENCY = 2
+DEFAULT_TMUX_WARM_SNAPSHOT_CONCURRENCY = 4
 DIRECT_AGY_PROMPT_SUCCESS_MARKER = "__AI_MAN_DIRECT_AGY_PROMPT_SUCCEEDED__"
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
@@ -672,6 +674,20 @@ def tmux_poll_interval_seconds():
         return DEFAULT_TMUX_POLL_INTERVAL_SECONDS
 
 
+def tmux_cold_start_concurrency():
+    try:
+        return max(1, int(os.environ.get("AI_MAN_TMUX_QUOTA_COLD_START_CONCURRENCY", DEFAULT_TMUX_COLD_START_CONCURRENCY)))
+    except ValueError:
+        return DEFAULT_TMUX_COLD_START_CONCURRENCY
+
+
+def tmux_warm_snapshot_concurrency():
+    try:
+        return max(1, int(os.environ.get("AI_MAN_TMUX_QUOTA_WARM_SNAPSHOT_CONCURRENCY", DEFAULT_TMUX_WARM_SNAPSHOT_CONCURRENCY)))
+    except ValueError:
+        return DEFAULT_TMUX_WARM_SNAPSHOT_CONCURRENCY
+
+
 def quota_snapshot_ready(tool_key, screen_text):
     quota = parse_quota(tool_key, screen_text)
     return quota.get("state") not in ("empty_output", "parser_miss")
@@ -824,6 +840,15 @@ class TmuxQuotaSession:
         self.last_alive_check_at = 0.0
         self.last_alive_result = None
         self.last_snapshot_metrics = {}
+        self.lifecycle_metrics = {
+            "startup_count": 0,
+            "snapshot_count": 0,
+            "warm_snapshot_count": 0,
+            "cold_snapshot_count": 0,
+            "close_count": 0,
+            "evict_count": 0,
+            "external_death_count": 0,
+        }
 
     @property
     def backend(self):
@@ -864,32 +889,44 @@ class TmuxQuotaSession:
         if shutil.which(self.command[0]) is None:
             raise QuotaProbeError("missing_cli", f"{self.command[0]} CLI is not installed or not in PATH")
         self.starting = True
+        started_at = time.monotonic()
         home = self.env.get("HOME")
         tmux_command = ["new-session", "-d", "-s", self.session_name, "-c", self.cwd]
         if home:
             tmux_command.extend(["env", f"HOME={home}"])
         tmux_command.extend(self.command)
         try:
-            self._run_tmux(tmux_command)
-            self._cache_liveness(True)
-            audit.record(
-                "quota",
-                "started",
-                tool=self.tool_key,
-                backend="tmux",
-                details={"session": self.session_name, "cwd": self.cwd, "home": home, "command": self.command},
-            )
-            logging.debug(
-                "quota session create tool=%s backend=tmux session=%s cwd=%s home=%s",
-                self.tool_key,
-                self.session_name,
-                self.cwd,
-                home,
-            )
-            self.wait_for_ready(timeout_seconds=timeout_seconds)
+            with tmux_cold_start_slot():
+                self._run_tmux(tmux_command)
+                self._cache_liveness(True)
+                self.lifecycle_metrics["startup_count"] += 1
+                audit.record(
+                    "quota",
+                    "started",
+                    tool=self.tool_key,
+                    backend="tmux",
+                    details={
+                        "session": self.session_name,
+                        "cwd": self.cwd,
+                        "home": home,
+                        "command": self.command,
+                        "cold_start_concurrency": tmux_cold_start_concurrency(),
+                    },
+                )
+                logging.debug(
+                    "quota session create tool=%s backend=tmux session=%s cwd=%s home=%s",
+                    self.tool_key,
+                    self.session_name,
+                    self.cwd,
+                    home,
+                )
+                ready_started_at = time.monotonic()
+                self.wait_for_ready(timeout_seconds=timeout_seconds)
+                self.lifecycle_metrics["last_ready_ms"] = round((time.monotonic() - ready_started_at) * 1000, 3)
         except QuotaProbeError as e:
             if self.tool_key == "agy" and e.state == "startup_pending" and self.is_alive():
                 self.starting = False
+                self.lifecycle_metrics["last_startup_ms"] = round((time.monotonic() - started_at) * 1000, 3)
                 audit.record(
                     "quota",
                     "completed",
@@ -910,7 +947,15 @@ class TmuxQuotaSession:
             raise
         self.ready = True
         self.starting = False
-        audit.record("quota", "completed", tool=self.tool_key, backend="tmux", result="succeeded", details={"session": self.session_name})
+        self.lifecycle_metrics["last_startup_ms"] = round((time.monotonic() - started_at) * 1000, 3)
+        audit.record(
+            "quota",
+            "completed",
+            tool=self.tool_key,
+            backend="tmux",
+            result="succeeded",
+            details={"session": self.session_name, "startup_ms": self.lifecycle_metrics["last_startup_ms"]},
+        )
         logging.debug(
             "quota session ready tool=%s backend=tmux session=%s cwd=%s home=%s",
             self.tool_key,
@@ -920,7 +965,7 @@ class TmuxQuotaSession:
         )
 
     def is_alive(self, use_cache=True):
-        if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
+        if not manager_owned_tmux_session_name(self.session_name):
             return False
         if use_cache and self.last_alive_result is not None:
             cache_age = time.monotonic() - self.last_alive_check_at
@@ -930,7 +975,10 @@ class TmuxQuotaSession:
             completed = self._run_tmux(["has-session", "-t", self.session_name], check=False)
         except QuotaProbeError:
             return self._cache_liveness(False)
-        return self._cache_liveness(completed.returncode == 0)
+        alive = completed.returncode == 0
+        if not alive and self.last_alive_result is True:
+            self.lifecycle_metrics["external_death_count"] += 1
+        return self._cache_liveness(alive)
 
     def capture(self, start="-200"):
         completed = self._run_tmux(["capture-pane", "-pt", self.session_name, "-S", str(start)])
@@ -984,36 +1032,37 @@ class TmuxQuotaSession:
                 raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
             started_at = time.monotonic()
             was_warm = reused_session and self.ready
-            self._run_tmux(["send-keys", "-t", self.session_name, slash_command, "Enter"])
-            logging.debug(
-                "quota command sent tool=%s backend=tmux session=%s command=%s",
-                self.tool_key,
-                self.session_name,
-                slash_command,
-            )
-            post_command_seconds = quota_post_command_seconds(self.tool_key)
-            poll_interval = tmux_poll_interval_seconds()
-            deadline = time.monotonic() + post_command_seconds
-            snapshot = ""
-            ready = False
-            captures = 0
-            while True:
-                snapshot = self.capture_recent("short")
-                captures += 1
-                if quota_snapshot_ready(self.tool_key, snapshot):
-                    ready = True
-                    break
-                if time.monotonic() >= deadline:
-                    break
-                time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
-            capture_kind = "short"
-            if not ready:
-                snapshot = self.capture_recent("long")
-                captures += 1
-                capture_kind = "long"
-            self._run_tmux(["send-keys", "-t", self.session_name, "Escape"], check=False)
-            if not self.is_alive():
-                raise QuotaProbeError("process_exit", "tmux quota session exited during quota probe", snapshot)
+            with tmux_warm_snapshot_slot():
+                self._run_tmux(["send-keys", "-t", self.session_name, slash_command, "Enter"])
+                logging.debug(
+                    "quota command sent tool=%s backend=tmux session=%s command=%s",
+                    self.tool_key,
+                    self.session_name,
+                    slash_command,
+                )
+                post_command_seconds = quota_post_command_seconds(self.tool_key)
+                poll_interval = tmux_poll_interval_seconds()
+                deadline = time.monotonic() + post_command_seconds
+                snapshot = ""
+                ready = False
+                captures = 0
+                while True:
+                    snapshot = self.capture_recent("short")
+                    captures += 1
+                    if quota_snapshot_ready(self.tool_key, snapshot):
+                        ready = True
+                        break
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+                capture_kind = "short"
+                if not ready:
+                    snapshot = self.capture_recent("long")
+                    captures += 1
+                    capture_kind = "long"
+                self._run_tmux(["send-keys", "-t", self.session_name, "Escape"], check=False)
+                if not self.is_alive():
+                    raise QuotaProbeError("process_exit", "tmux quota session exited during quota probe", snapshot)
             self.last_snapshot_metrics = {
                 "warm": was_warm,
                 "latency_ms": round((time.monotonic() - started_at) * 1000, 3),
@@ -1021,7 +1070,14 @@ class TmuxQuotaSession:
                 "captures": captures,
                 "bytes": len(snapshot),
                 "marker_ready": ready,
+                "warm_snapshot_concurrency": tmux_warm_snapshot_concurrency(),
             }
+            self.lifecycle_metrics["snapshot_count"] += 1
+            if was_warm:
+                self.lifecycle_metrics["warm_snapshot_count"] += 1
+            else:
+                self.lifecycle_metrics["cold_snapshot_count"] += 1
+            self.lifecycle_metrics["last_snapshot_ms"] = self.last_snapshot_metrics["latency_ms"]
             audit.record(
                 "quota",
                 "completed",
@@ -1033,16 +1089,19 @@ class TmuxQuotaSession:
             return snapshot
 
     def close(self):
+        started_at = time.monotonic()
         self.ready = False
         self.starting = False
         self._clear_liveness_cache()
-        if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
+        if not manager_owned_tmux_session_name(self.session_name):
             return
         try:
             self._run_tmux(["kill-session", "-t", self.session_name], check=False)
         except QuotaProbeError:
             pass
-        audit.record("quota", "completed", tool=self.tool_key, backend="tmux", result="closed", details={"session": self.session_name})
+        self.lifecycle_metrics["close_count"] += 1
+        self.lifecycle_metrics["last_close_ms"] = round((time.monotonic() - started_at) * 1000, 3)
+        audit.record("quota", "completed", tool=self.tool_key, backend="tmux", result="closed", details={"session": self.session_name, "close_ms": self.lifecycle_metrics["last_close_ms"]})
         logging.debug(
             "quota session close tool=%s backend=tmux session=%s cwd=%s home=%s",
             self.tool_key,
@@ -1208,7 +1267,44 @@ class PersistentQuotaSession:
 PERSISTENT_QUOTA_SESSIONS = {}
 PERSISTENT_QUOTA_PARSER_MISSES = {}
 PERSISTENT_QUOTA_LOCK = threading.Lock()
+TMUX_POOL_LOCK = threading.Lock()
+TMUX_POOL_SEMAPHORES = {}
 INVALIDATING_QUOTA_STATES = {"timeout", "process_exit", "resource_limited"}
+
+
+class PoolSlot:
+    def __init__(self, semaphore):
+        self.semaphore = semaphore
+
+    def __enter__(self):
+        self.semaphore.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.semaphore.release()
+        return False
+
+
+def tmux_pool_semaphore(name, limit):
+    key = (name, int(limit))
+    with TMUX_POOL_LOCK:
+        semaphore = TMUX_POOL_SEMAPHORES.get(key)
+        if semaphore is None:
+            semaphore = threading.BoundedSemaphore(int(limit))
+            TMUX_POOL_SEMAPHORES[key] = semaphore
+        return semaphore
+
+
+def tmux_cold_start_slot():
+    return PoolSlot(tmux_pool_semaphore("tmux_cold_start", tmux_cold_start_concurrency()))
+
+
+def tmux_warm_snapshot_slot():
+    return PoolSlot(tmux_pool_semaphore("tmux_warm_snapshot", tmux_warm_snapshot_concurrency()))
+
+
+def manager_owned_tmux_session_name(session_name):
+    return isinstance(session_name, str) and session_name.startswith(TMUX_QUOTA_SESSION_PREFIX)
 
 
 def persistent_session_ttl_seconds():
@@ -1268,6 +1364,8 @@ def evict_persistent_quota_sessions(now=None):
     with PERSISTENT_QUOTA_LOCK:
         evicted = []
         for key, session in list(PERSISTENT_QUOTA_SESSIONS.items()):
+            if getattr(session, "starting", False):
+                continue
             if not session.is_alive() or now - getattr(session, "last_used_at", now) > ttl:
                 evicted.append(session)
                 del PERSISTENT_QUOTA_SESSIONS[key]
@@ -1286,6 +1384,10 @@ def evict_persistent_quota_sessions(now=None):
                 PERSISTENT_QUOTA_PARSER_MISSES.pop(key, None)
     for session in evicted:
         backend = getattr(session, "backend", "persistent_pty")
+        lifecycle = getattr(session, "lifecycle_metrics", None)
+        if isinstance(lifecycle, dict):
+            lifecycle["evict_count"] = lifecycle.get("evict_count", 0) + 1
+            lifecycle["last_evict_at"] = now
         audit.record("quota", "skipped", tool=getattr(session, "tool_key", None), backend=backend, result="evicted")
         logging.debug(
             "quota session evict tool=%s backend=%s cwd=%s home=%s",
@@ -1301,9 +1403,18 @@ def evict_persistent_quota_sessions(now=None):
 def persistent_quota_sessions_snapshot(tool_key=None):
     with PERSISTENT_QUOTA_LOCK:
         sessions = []
+        by_backend = {}
+        starting_count = 0
+        ready_count = 0
         for key, session in PERSISTENT_QUOTA_SESSIONS.items():
             if tool_key is not None and key[0] != tool_key:
                 continue
+            backend = key[6] if len(key) > 6 else getattr(session, "backend", "persistent_pty")
+            by_backend[backend] = by_backend.get(backend, 0) + 1
+            if getattr(session, "starting", False):
+                starting_count += 1
+            if getattr(session, "ready", False):
+                ready_count += 1
             sessions.append({
                 "tool": key[0],
                 "command": list(key[1]),
@@ -1311,16 +1422,29 @@ def persistent_quota_sessions_snapshot(tool_key=None):
                 "home": key[3],
                 "codex_home": key[4],
                 "claude_config_dir": key[5],
-                "backend": key[6] if len(key) > 6 else getattr(session, "backend", "persistent_pty"),
+                "backend": backend,
                 "session_name": getattr(session, "session_name", None),
+                "manager_owned": manager_owned_tmux_session_name(getattr(session, "session_name", None)) if backend == "tmux" else True,
+                "starting": bool(getattr(session, "starting", False)),
+                "ready": bool(getattr(session, "ready", False)),
                 "alive": session.is_alive(),
                 "parser_misses": PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0),
                 "last_snapshot_metrics": dict(getattr(session, "last_snapshot_metrics", {}) or {}),
+                "lifecycle_metrics": dict(getattr(session, "lifecycle_metrics", {}) or {}),
                 "created_age_seconds": round(time.time() - getattr(session, "created_at", time.time()), 3),
                 "idle_age_seconds": round(time.time() - getattr(session, "last_used_at", time.time()), 3),
             })
     return {
         "count": len(sessions),
+        "pool": {
+            "ttl_seconds": persistent_session_ttl_seconds(),
+            "max_count": persistent_session_max_count(),
+            "tmux_cold_start_concurrency": tmux_cold_start_concurrency(),
+            "tmux_warm_snapshot_concurrency": tmux_warm_snapshot_concurrency(),
+            "by_backend": by_backend,
+            "starting": starting_count,
+            "ready": ready_count,
+        },
         "sessions": sessions,
     }
 

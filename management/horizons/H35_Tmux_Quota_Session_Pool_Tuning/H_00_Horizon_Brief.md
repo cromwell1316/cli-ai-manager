@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H35_Tmux_Quota_Session_Pool_Tuning/README.m
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -20,3 +20,9 @@ do not waste process resources.
 
 Tune tmux session pooling, ownership, concurrency, and eviction with live and
 fake-session validation.
+
+## Result
+
+The tmux quota backend now exposes bounded cold-start and warm-snapshot paths,
+reports pool/lifecycle diagnostics, avoids evicting in-flight startup sessions,
+and refuses to close tmux sessions outside the manager-owned namespace.
