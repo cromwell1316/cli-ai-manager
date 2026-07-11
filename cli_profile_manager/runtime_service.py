@@ -379,6 +379,15 @@ class RuntimeState:
             },
         )
 
+    def refresh_profile_snapshot(self):
+        if self.command_snapshot_cache is None or not self.command_snapshot_cache.is_stale():
+            return
+        self.invalidate(
+            reason="profile_files_changed",
+            domains=["profiles", "credentials", "command_snapshot", "diagnostics"],
+            command="filesystem",
+        )
+
     def record_latency(self, started_at):
         elapsed_ms = round((time.perf_counter() - started_at) * 1000, 3)
         self.last_latency_ms = elapsed_ms
@@ -489,6 +498,7 @@ def handle_payload(payload, state):
             if not eligible_argv(argv):
                 return {"ok": False, "error": {"type": "not_eligible", "message": "command is not service eligible"}}
             state.refresh_external_invalidation()
+            state.refresh_profile_snapshot()
             return state.run_cached(argv)
         return {"ok": False, "error": {"type": "usage_error", "message": "unknown action"}}
     finally:

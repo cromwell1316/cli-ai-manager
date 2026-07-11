@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H28_Profile_Index_And_Filesystem_Snapshot/R
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

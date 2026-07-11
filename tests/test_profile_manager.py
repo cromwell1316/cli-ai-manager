@@ -229,8 +229,8 @@ def test_command_snapshot_reuses_profile_discovery_and_status(monkeypatch, tmp_p
 
     calls = []
 
-    monkeypatch.setattr(operations, "get_occupied_profiles", lambda tool: calls.append(tool) or [1])
-    monkeypatch.setattr(operations, "get_profile_status", lambda tool, n, metadata, account_email_provider=None: {
+    monkeypatch.setattr(operations.ProfileIndex, "_scan_base", lambda self: calls.append(self.tool_key) or setattr(self, "_occupied_profiles", [1]))
+    monkeypatch.setattr(operations, "get_profile_status", lambda tool, n, metadata, account_email_provider=None, profile_fact=None: {
         "num": n,
         "profile": f"p{n}",
         "email": "(no login)",
@@ -249,6 +249,28 @@ def test_command_snapshot_reuses_profile_discovery_and_status(monkeypatch, tmp_p
     assert snapshot.first_free_profile("codex") == 2
     assert snapshot.status("codex", 1) is snapshot.status("codex", 1)
     assert calls == ["codex"]
+
+
+def test_command_snapshot_profile_index_uses_file_facts(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.operations as operations
+
+    auth_path = tmp_path / "codex-homes" / "p1" / "auth.json"
+    write_json(auth_path, {"tokens": {"id_token": make_id_token("user@example.com")}})
+    snapshot = pm.command_snapshot()
+
+    index = snapshot.profile_index("codex")
+    fact = index.fact(1)
+    status = snapshot.status("codex", 1)
+
+    assert fact.credential.path == str(auth_path)
+    assert fact.credential.exists is True
+    assert isinstance(fact.credential.mtime_ns, int)
+    assert status["token_state"] == "valid"
+    assert status["account"] == "user@example.com"
+    assert not hasattr(fact, "content")
+    assert not isinstance(fact.credential, dict)
+    assert isinstance(operations.ProfileIndex("codex").fingerprint(), tuple)
 
 
 def test_command_snapshot_reuses_agy_account_lookup(monkeypatch, tmp_path):
@@ -3747,6 +3769,31 @@ def test_runtime_service_reuses_command_snapshot_until_invalidation(monkeypatch,
     assert third is not first
     assert len(builds) == 2
     assert state.health()["cache"]["snapshot_builds"] == 2
+
+
+def test_runtime_service_invalidates_stale_profile_snapshot(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    (tmp_path / "codex-homes" / "p1").mkdir(parents=True)
+    state = runtime_service.RuntimeState()
+    snapshot = state.command_snapshot()
+
+    assert snapshot.status("codex", 1)["has_token"] is False
+
+    state.response_cache[("list", "codex", "--json")] = {"ok": True}
+    write_json(
+        tmp_path / "codex-homes" / "p1" / "auth.json",
+        {"tokens": {"id_token": make_id_token("fresh@example.com")}},
+    )
+
+    state.refresh_profile_snapshot()
+    refreshed = state.command_snapshot()
+
+    assert refreshed is not snapshot
+    assert refreshed.status("codex", 1)["account"] == "fresh@example.com"
+    assert state.response_cache == {}
+    assert state.last_invalidation["reason"] == "profile_files_changed"
 
 
 def test_runtime_service_stale_cleanup_reports_recovery(monkeypatch, tmp_path):

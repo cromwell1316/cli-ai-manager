@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H28_Profile_Index_And_Filesystem_Snapshot/R
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,10 @@ Build a reusable index for profile discovery and status facts.
 - Credential existence and mtime facts.
 - AGY account lookup cache.
 - Tests for file changes between commands.
+
+## Result
+
+`ProfileIndex` stores profile home, credential/account/token path facts,
+mtime/size fingerprints, occupied profiles, and display profiles. `CommandSnapshot`
+owns indexes per tool, while runtime service invalidates cached snapshots when
+profile fingerprints change.

@@ -71,6 +71,27 @@ class OperationResult:
         }
 
 
+@dataclass(frozen=True)
+class FileFact:
+    path: str
+    exists: bool
+    mtime_ns: int | None = None
+    size: int | None = None
+
+
+@dataclass(frozen=True)
+class ProfileFact:
+    tool_key: str
+    num: int
+    home: str
+    home_fact: FileFact
+    credential: FileFact
+    account: FileFact | None = None
+    agy_log_dir: FileFact | None = None
+    windows_credential: FileFact | None = None
+    agy_cli_token: FileFact | None = None
+
+
 def success(payload=None, message=None, exit_code=EXIT_OK):
     return OperationResult(RESULT_SUCCESS, exit_code, payload or {}, message)
 
@@ -95,24 +116,137 @@ def cancelled(message, payload=None):
     return OperationResult(RESULT_CANCELLED, EXIT_USAGE, payload or {}, str(message), "confirmation_required")
 
 
+def _file_fact(path):
+    path = str(path)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return FileFact(path, False)
+    return FileFact(path, True, stat.st_mtime_ns, stat.st_size)
+
+
+def _profile_num_from_name(name):
+    if name.startswith("p") and name[1:].isdigit():
+        return int(name[1:])
+    return None
+
+
+def _windows_agy_credential_num(name):
+    if name.startswith("cred-p") and name.endswith(".json"):
+        raw = name[6:-5]
+        if raw.isdigit():
+            return int(raw)
+    return None
+
+
+class ProfileIndex:
+    def __init__(self, tool_key):
+        self.tool_key = tool_key
+        self.tool = TOOLS[tool_key]
+        self.base_dir = self.tool["base_dir"]
+        self.base_fact = _file_fact(self.base_dir)
+        self._occupied_profiles = None
+        self._display_profiles = None
+        self._facts = {}
+        self._scan_base()
+
+    def _scan_base(self):
+        if not self.base_fact.exists:
+            os.makedirs(self.base_dir, exist_ok=True)
+            self.base_fact = _file_fact(self.base_dir)
+
+        profiles = set()
+        try:
+            with os.scandir(self.base_dir) as entries:
+                for entry in entries:
+                    num = _profile_num_from_name(entry.name)
+                    if num is not None:
+                        profiles.add(num)
+                        continue
+                    if os.name == "nt" and self.tool_key == "agy":
+                        num = _windows_agy_credential_num(entry.name)
+                        if num is not None:
+                            profiles.add(num)
+        except OSError:
+            profiles = set()
+        self._occupied_profiles = sorted(profiles)
+
+    def occupied_profiles(self):
+        return self._occupied_profiles
+
+    def display_profiles(self):
+        if self._display_profiles is None:
+            profiles = set(self._occupied_profiles)
+            profiles.update(range(1, DISPLAY_SLOT_COUNT + 1))
+            self._display_profiles = sorted(profiles)
+        return self._display_profiles
+
+    def fact(self, n):
+        if n not in self._facts:
+            home = profile_home(self.tool_key, n)
+            cred = credential_path(self.tool_key, n)
+            account_file = self.tool.get("acct_file")
+            account = _file_fact(os.path.join(home, account_file)) if account_file else None
+            self._facts[n] = ProfileFact(
+                tool_key=self.tool_key,
+                num=n,
+                home=home,
+                home_fact=_file_fact(home),
+                credential=_file_fact(cred),
+                account=account,
+                agy_log_dir=_file_fact(os.path.join(home, ".gemini", "antigravity-cli", "log")) if self.tool_key == "agy" else None,
+                windows_credential=_file_fact(agy_windows_credential_path(n, self.base_dir)) if self.tool_key == "agy" else None,
+                agy_cli_token=_file_fact(os.path.join(home, agy_credentials.AGY_CLI_TOKEN_FILE)) if self.tool_key == "agy" else None,
+            )
+        return self._facts[n]
+
+    def fingerprint(self):
+        facts = [self.base_fact]
+        for num in sorted(self._facts):
+            fact = self._facts[num]
+            facts.extend(
+                item
+                for item in (
+                    fact.home_fact,
+                    fact.credential,
+                    fact.account,
+                    fact.agy_log_dir,
+                    fact.windows_credential,
+                    fact.agy_cli_token,
+                )
+                if item is not None
+            )
+        return tuple((fact.path, fact.exists, fact.mtime_ns, fact.size) for fact in facts)
+
+    def is_stale(self):
+        current = ProfileIndex(self.tool_key)
+        for num in self._facts:
+            current.fact(num)
+        return current.fingerprint() != self.fingerprint()
+
+
 class CommandSnapshot:
     def __init__(self, metadata=None):
         self.metadata = load_metadata() if metadata is None else metadata
+        self.index_by_tool = {}
         self.occupied_by_tool = {}
         self.display_by_tool = {}
         self.status_by_profile = {}
         self.account_by_profile = {}
 
+    def profile_index(self, tool_key):
+        if tool_key not in self.index_by_tool:
+            self.index_by_tool[tool_key] = ProfileIndex(tool_key)
+        return self.index_by_tool[tool_key]
+
     def occupied_profiles(self, tool_key):
         if tool_key not in self.occupied_by_tool:
-            self.occupied_by_tool[tool_key] = get_occupied_profiles(tool_key)
+            self.occupied_by_tool[tool_key] = self.profile_index(tool_key).occupied_profiles()
         return self.occupied_by_tool[tool_key]
 
     def display_profiles(self, tool_key):
         if tool_key not in self.display_by_tool:
-            profiles = set(self.occupied_profiles(tool_key))
-            profiles.update(range(1, DISPLAY_SLOT_COUNT + 1))
-            self.display_by_tool[tool_key] = sorted(profiles)
+            self.display_by_tool[tool_key] = self.profile_index(tool_key).display_profiles()
         return self.display_by_tool[tool_key]
 
     def first_free_profile(self, tool_key):
@@ -141,6 +275,7 @@ class CommandSnapshot:
                 self.metadata,
                 occupied_profiles=self.occupied_profiles(tool_key),
                 account_email_provider=lambda home, _tool=tool_key, _n=n: self.account_email(_tool, _n, home),
+                profile_fact=self.profile_index(tool_key).fact(n),
             )
         return self.status_by_profile[key]
 
@@ -155,6 +290,9 @@ class CommandSnapshot:
                 "warnings": ["profile has no token"],
             }
         return status
+
+    def is_stale(self):
+        return any(index.is_stale() for index in self.index_by_tool.values())
 
 
 def command_snapshot(metadata=None):
@@ -233,10 +371,11 @@ def export_wsl_agy_credential(profile_num, win_cred_path):
     )
 
 
-def get_profile_status(tool_key, n, metadata, account_email_provider=None):
+def get_profile_status(tool_key, n, metadata, account_email_provider=None, profile_fact=None):
     tool = TOOLS[tool_key]
-    home = os.path.join(tool["base_dir"], f"p{n}")
-    cred_path = os.path.join(home, tool["cred_file"])
+    home = profile_fact.home if profile_fact is not None else os.path.join(tool["base_dir"], f"p{n}")
+    cred_path = profile_fact.credential.path if profile_fact is not None else os.path.join(home, tool["cred_file"])
+    cred_exists = profile_fact.credential.exists if profile_fact is not None else os.path.exists(cred_path)
     account_lookup = account_email_provider or account_email_from_google_accounts
 
     email = "(no login)"
@@ -248,8 +387,17 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None):
 
     if tool_key == "agy":
         if os.name == "nt":
-            win_cred_path = agy_windows_credential_path(n, tool["base_dir"])
-            if os.path.exists(win_cred_path):
+            win_cred_path = (
+                profile_fact.windows_credential.path
+                if profile_fact is not None and profile_fact.windows_credential is not None
+                else agy_windows_credential_path(n, tool["base_dir"])
+            )
+            win_cred_exists = (
+                profile_fact.windows_credential.exists
+                if profile_fact is not None and profile_fact.windows_credential is not None
+                else os.path.exists(win_cred_path)
+            )
+            if win_cred_exists:
                 try:
                     _, account = decode_windows_agy_credential(win_cred_path)
                     has_token = True
@@ -261,7 +409,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None):
                     credential_source = "windows-backup"
                     warnings.append(str(e))
                     email = f"invalid token: {e}"
-        elif os.path.exists(cred_path):
+        elif cred_exists:
             try:
                 read_wsl_agy_oauth(cred_path)
                 has_token = True
@@ -277,7 +425,14 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None):
         else:
             read_agy_cli_token = getattr(agy_credentials, "read_agy_cli_token", None)
             if read_agy_cli_token is not None:
+                agy_cli_token_exists = (
+                    profile_fact.agy_cli_token.exists
+                    if profile_fact is not None and profile_fact.agy_cli_token is not None
+                    else None
+                )
                 try:
+                    if agy_cli_token_exists is False:
+                        raise FileNotFoundError(profile_fact.agy_cli_token.path)
                     read_agy_cli_token(home)
                     has_token = True
                     token_state = "valid"
@@ -291,7 +446,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None):
                     credential_source = "agy-cli-token"
                     warnings.append(str(e))
                     email = f"invalid token: {e}"
-    elif os.path.exists(cred_path):
+    elif cred_exists:
         has_token = True
         token_state = "present"
         credential_source = "codex-auth" if tool_key == "codex" else "claude-credentials"
@@ -330,9 +485,15 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None):
     }
 
 
-def _status_payload(tool_key, n, metadata, occupied_profiles=None, account_email_provider=None):
+def _status_payload(tool_key, n, metadata, occupied_profiles=None, account_email_provider=None, profile_fact=None):
     occupied_profiles = get_occupied_profiles(tool_key) if occupied_profiles is None else occupied_profiles
-    status = get_profile_status(tool_key, n, metadata, account_email_provider=account_email_provider)
+    status = get_profile_status(
+        tool_key,
+        n,
+        metadata,
+        account_email_provider=account_email_provider,
+        profile_fact=profile_fact,
+    )
     status["exists"] = n in occupied_profiles
     return status
 

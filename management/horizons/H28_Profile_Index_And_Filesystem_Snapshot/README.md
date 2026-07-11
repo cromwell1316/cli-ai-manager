@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H28_Profile_Index_And_Filesystem_Snapshot/R
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -44,6 +44,26 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 
 Acceptance target: fewer repeated `os.listdir`, `exists`, and JSON reads per
 command with unchanged status payloads.
+
+## Implementation Evidence
+
+- Added command-scoped `ProfileIndex` with profile discovery, display slots,
+  credential path facts, account path facts, and filesystem mtime/size
+  fingerprints.
+- Wired `CommandSnapshot` to reuse indexed profile lists, status payloads, AGY
+  account lookups, and file existence facts across list/status/diagnostics.
+- Runtime service now invalidates its command snapshot and response cache when
+  indexed profile file fingerprints become stale between service commands.
+- Raw credential contents are read only during status parsing and are not stored
+  in the profile index.
+- Benchmark after implementation:
+  - `command-config-json` median: `52.019ms`
+  - `command-list-agy-json` median: `7.443ms`
+  - `command-status-agy-json` median: `6.969ms`
+  - `command-diagnostics-agy-json` median: `43.780ms`
+- Targeted H28 validation passed:
+  - `pytest -q tests/test_profile_manager.py -k "snapshot or status or diagnostics"`
+  - `python3 scripts/benchmark_runtime.py --scenario command-execute`
 
 ## Files
 
