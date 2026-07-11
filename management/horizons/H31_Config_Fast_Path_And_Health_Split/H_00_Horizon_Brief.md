@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H31_Config_Fast_Path_And_Health_Split/READM
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -20,3 +20,9 @@ Health checks make config slower and blur command responsibilities.
 
 Keep config resolution pure and move heavier checks into explicit health or
 doctor flows.
+
+## Outcome
+
+`config show` now stays on the fast effective-settings path, while live process
+backend checks are available through the explicit `config health` command and
+diagnostics health payloads.

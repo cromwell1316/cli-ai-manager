@@ -663,6 +663,25 @@ def cmd_config_show(args):
             )
     return EXIT_OK
 
+
+def cmd_config_health(args):
+    result = _operations().config_health_operation()
+    payload = result.payload
+    if args.json:
+        print_json_payload(payload)
+        return EXIT_OK
+    health = payload["health"]
+    state = "ok" if health["ok"] else "warning"
+    print(f"Configuration health: {state}")
+    print(f"Registered settings: {health['registered_settings']}")
+    print(f"Environment overrides: {health['environment_overrides']}")
+    if health["warnings"]:
+        print("Warnings:")
+        for warning in health["warnings"]:
+            print(f"  {warning}")
+    return EXIT_OK
+
+
 def cmd_list(args):
     result = _operations().list_profiles_operation(args.tool, args.quota, args.timeout)
     payload = result.payload
@@ -1546,6 +1565,9 @@ def build_parser():
     config_show_p.add_argument("--sources", action="store_true", help="include setting source information in text output")
     config_show_p.add_argument("--filter", help="show settings matching a key, environment name, category, or description")
     config_show_p.set_defaults(func=cmd_config_show)
+    config_health_p = config_sub.add_parser("health", help="show config health and live runtime checks")
+    config_health_p.add_argument("--json", action="store_true")
+    config_health_p.set_defaults(func=cmd_config_health)
 
     audit_p = sub.add_parser("audit", help="inspect and manage local audit events")
     audit_p.set_defaults(func=cmd_audit, audit_action="status", json=False)

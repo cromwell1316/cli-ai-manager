@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H31_Config_Fast_Path_And_Health_Split/READM
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -43,6 +43,31 @@ pytest -q tests/test_profile_manager.py -k "config"
 
 Acceptance target: reduce `config show --json` latency while keeping effective
 settings and warnings correct.
+
+## Implementation Notes
+
+- `config show` now uses a fast, pure effective-config path.
+- Process limit settings remain in `config show` for JSON compatibility, but
+  live backend resolution is deferred there.
+- `config health` provides the explicit health/deep path with live process
+  backend resolution.
+- Diagnostics continue to receive config health through the explicit health
+  payload.
+- Registry lookup metadata is cached for setting resolution.
+
+## Evidence
+
+```bash
+python3 -m py_compile cli_profile_manager/config.py cli_profile_manager/process_policy.py cli_profile_manager/operations.py cli_profile_manager/cli.py
+pytest -q tests/test_config_fast_path.py
+pytest -q tests/test_profile_manager.py -k "config"
+pytest -q tests/test_profile_manager.py tests/test_config_fast_path.py -k "not test_in_process_command_perf_budgets"
+python3 scripts/benchmark_runtime.py --scenario commands
+```
+
+Results: H31 tests `4 passed`; existing config tests `6 passed, 170 deselected`;
+broad suite `179 passed, 1 deselected`. In this run `config-json` median changed
+from `129.546ms` before H31 to `93.310ms` after H31.
 
 ## Files
 

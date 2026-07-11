@@ -94,7 +94,7 @@ def _tier_int(tier, suffix, default, minimum, maximum, warnings):
     return default
 
 
-def process_policy(tier="launch"):
+def process_policy(tier="launch", resolve_backend=True):
     if tier not in DEFAULTS:
         raise ValueError(f"unknown process policy tier: {tier}")
     defaults = DEFAULTS[tier]
@@ -116,7 +116,7 @@ def process_policy(tier="launch"):
         "prefer_systemd": _bool_env("AI_MAN_PROCESS_SYSTEMD", defaults["prefer_systemd"], warnings),
         "warnings": warnings,
     }
-    policy["backend"] = select_backend(policy, needs_pty=(tier == "quota"))
+    policy["backend"] = select_backend(policy, needs_pty=(tier == "quota")) if resolve_backend else "deferred"
     return policy
 
 

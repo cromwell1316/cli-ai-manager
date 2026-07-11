@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H31_Config_Fast_Path_And_Health_Split/READM
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,12 @@ Separate fast effective config from heavier health inspection.
 - Health/deep payload path.
 - Registry metadata cache.
 - Tests for invalid env warnings.
+
+## Result
+
+- `config show` uses fast `effective_config_payload(..., include_health=False)`.
+- `config health` uses the explicit health path and resolves live process
+  backends.
+- Config diagnostics use the same explicit health payload.
+- Tests cover invalid env warnings, redaction, deferred fast backend, and live
+  health backend resolution.

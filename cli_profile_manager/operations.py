@@ -7,7 +7,7 @@ import shutil
 from typing import Any
 
 from cli_profile_manager import audit, process_policy, runtime_service, sync
-from cli_profile_manager.config import effective_config_payload
+from cli_profile_manager.config import config_health_payload, effective_config_payload
 from cli_profile_manager.credentials import agy as agy_credentials
 from cli_profile_manager.credentials import claude as claude_credentials
 from cli_profile_manager.credentials import codex as codex_credentials
@@ -768,6 +768,11 @@ def sync_profiles_operation(direction, mode, dry_run=False, yes=False):
 
 def config_show_operation(include_sources=False, filter_text=None):
     return success(effective_config_payload(include_sources=include_sources, filter_text=filter_text))
+
+
+def config_health_operation():
+    payload = config_health_payload()
+    return success({"ok": True, **payload})
 
 
 def audit_operation(action, **kwargs):

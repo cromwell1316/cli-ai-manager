@@ -39,7 +39,7 @@ class SettingDefinition:
         return self.env[0] if self.env else self.key
 
 
-CONFIG_REGISTRY = [
+CONFIG_REGISTRY = (
     SettingDefinition("paths.agy_home", ("AI_MAN_AGY_HOME",), "Antigravity profile root", "~/agy-homes", "path", "paths"),
     SettingDefinition("paths.codex_home", ("AI_MAN_CODEX_HOME",), "Codex profile root", "~/codex-homes", "path", "paths"),
     SettingDefinition("paths.claude_home", ("AI_MAN_CLAUDE_HOME",), "Claude profile root", "~/claude-homes", "path", "paths"),
@@ -93,7 +93,7 @@ CONFIG_REGISTRY = [
     SettingDefinition("validation_process.nice", ("AI_MAN_VALIDATION_PROCESS_NICE",), "validation command nice adjustment", 10, "int", "process", minimum=-20, maximum=19),
     SettingDefinition("validation_process.ionice_class", ("AI_MAN_VALIDATION_PROCESS_IONICE_CLASS",), "validation command ionice class", 2, "int", "process", minimum=0, maximum=3),
     SettingDefinition("validation_process.ionice_level", ("AI_MAN_VALIDATION_PROCESS_IONICE_LEVEL",), "validation command ionice level", 7, "int", "process", minimum=0, maximum=7),
-]
+)
 
 
 CONFIG_ENV_VARS = [
@@ -112,8 +112,11 @@ def registry():
     return list(CONFIG_REGISTRY)
 
 
+_DEFINITION_BY_KEY = {definition.key: definition for definition in CONFIG_REGISTRY}
+
+
 def _definition_by_key():
-    return {definition.key: definition for definition in CONFIG_REGISTRY}
+    return _DEFINITION_BY_KEY
 
 
 def _parse_bool(raw, default, name, warnings):
@@ -244,23 +247,47 @@ def _config_health(settings, warnings):
     }
 
 
-def effective_config_payload(include_sources=True, include_internal=False, filter_text=None):
+def _filtered_settings(settings, filter_text=None):
+    if not filter_text:
+        return list(settings)
+    needle = str(filter_text).lower()
+    return [
+        setting for setting in settings
+        if needle in setting["key"].lower()
+        or needle in setting["name"].lower()
+        or needle in setting["category"].lower()
+        or needle in setting["description"].lower()
+    ]
+
+
+def _pure_process_limits(resolve_backend=False):
+    return {
+        "launch": process_policy("launch", resolve_backend=resolve_backend),
+        "quota": process_policy("quota", resolve_backend=resolve_backend),
+        "validation": process_policy("validation", resolve_backend=resolve_backend),
+    }
+
+
+def _pure_sync_roots(by_key):
+    wsl_home = by_key["sync.wsl_home"]["value"]
+    windows_home = by_key["sync.windows_home"]["value"]
+    if windows_home is None:
+        windows_home = by_key["sync.userprofile"]["value"] if os.name == "nt" else "/mnt/c/Users/Oliver"
+    return {
+        "wsl": str(Path(wsl_home)),
+        "windows": str(Path(windows_home)),
+    }
+
+
+def effective_config_payload(include_sources=True, include_internal=False, filter_text=None, include_health=False):
     paths.refresh_from_env()
     metadata.refresh_from_env()
 
-    settings = effective_settings(include_internal=include_internal)
-    if filter_text:
-        needle = str(filter_text).lower()
-        settings = [
-            setting for setting in settings
-            if needle in setting["key"].lower()
-            or needle in setting["name"].lower()
-            or needle in setting["category"].lower()
-            or needle in setting["description"].lower()
-        ]
-    by_key = _settings_by_key(effective_settings(include_internal=True))
+    all_settings = effective_settings(include_internal=True)
+    public_settings = [setting for setting in all_settings if not setting["internal"]]
+    settings = _filtered_settings(all_settings if include_internal else public_settings, filter_text)
+    by_key = _settings_by_key(all_settings)
     visible_by_key = _settings_by_key(settings)
-    wsl_base, windows_base = paths.resolve_sync_bases("wsl")
 
     quota = {
         "interactive_enabled": by_key["interactive.quota_enabled"]["value"],
@@ -280,24 +307,23 @@ def effective_config_payload(include_sources=True, include_internal=False, filte
             "claude": redact_sensitive(os.environ.get("AI_MAN_CLAUDE_QUOTA_COMMAND", "/usage")),
         },
     }
-    process_limits = {
-        "launch": process_policy("launch"),
-        "quota": process_policy("quota"),
-        "validation": process_policy("validation"),
-    }
-    warnings = _warnings(effective_settings(include_internal=True))
+    process_limits = _pure_process_limits(resolve_backend=include_health)
+    warnings = _warnings(all_settings)
     for policy in process_limits.values():
         warnings.extend(policy.get("warnings", []))
 
-    health = _config_health(effective_settings(include_internal=True), warnings)
+    health = _config_health(all_settings, warnings)
+    health["mode"] = "health" if include_health else "fast"
+    health["live_checks"] = bool(include_health)
     payload = {
         "ok": True,
-        "profile_roots": {tool: config["base_dir"] for tool, config in paths.TOOLS.items()},
-        "metadata_dir": metadata.METADATA_DIR,
-        "sync_roots": {
-            "wsl": str(Path(wsl_base)),
-            "windows": str(Path(windows_base)),
+        "profile_roots": {
+            "agy": by_key["paths.agy_home"]["value"],
+            "codex": by_key["paths.codex_home"]["value"],
+            "claude": by_key["paths.claude_home"]["value"],
         },
+        "metadata_dir": by_key["paths.metadata_dir"]["value"],
+        "sync_roots": _pure_sync_roots(by_key),
         "quota": quota,
         "process_limits": process_limits,
         "environment": [_env_item(setting) for setting in settings if setting["aliases"]],
@@ -313,8 +339,10 @@ def effective_config_payload(include_sources=True, include_internal=False, filte
 
 
 def config_health_payload():
-    payload = effective_config_payload(include_sources=True, include_internal=True)
+    payload = effective_config_payload(include_sources=True, include_internal=True, include_health=True)
     return {
         "health": payload["config_health"],
         "settings": payload["settings_by_key"],
+        "process_limits": payload["process_limits"],
+        "sync_roots": payload["sync_roots"],
     }
