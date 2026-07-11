@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H43_Config_Show_Payload_Construction_Optimi
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,3 +26,11 @@ preserving the exact JSON schema.
 
 Config JSON output remains stable, and command execution time improves in both
 in-process and cold subprocess measurements.
+
+## Result
+
+Plain `config show --json` now avoids importing live process policy code and
+constructs the config payload with fewer intermediate passes. The live health
+boundary remains unchanged for `config health` and deep diagnostics. Schema
+regression tests lock the top-level payload keys, setting field keys, source
+stripping behavior, and fast-path import boundary.

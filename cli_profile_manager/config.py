@@ -1,10 +1,7 @@
 import os
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
 
 from . import metadata, paths
-from .process_policy import process_policy
 
 
 TOKEN_LIKE_RE = re.compile(
@@ -12,6 +9,72 @@ TOKEN_LIKE_RE = re.compile(
 )
 BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
+PROCESS_POLICY_DEFAULTS = {
+    "launch": {
+        "enabled": True,
+        "memory_mb": 4096,
+        "cpu_percent": 300,
+        "max_processes": 256,
+        "nice": 5,
+        "ionice_class": 2,
+        "ionice_level": 6,
+        "prefer_systemd": True,
+    },
+    "quota": {
+        "enabled": True,
+        "memory_mb": 6144,
+        "cpu_percent": 150,
+        "max_processes": 4096,
+        "nice": 10,
+        "ionice_class": 2,
+        "ionice_level": 7,
+        "prefer_systemd": False,
+    },
+    "validation": {
+        "enabled": True,
+        "memory_mb": 2048,
+        "cpu_percent": 200,
+        "max_processes": 128,
+        "nice": 10,
+        "ionice_class": 2,
+        "ionice_level": 7,
+        "prefer_systemd": False,
+    },
+}
+PROCESS_POLICY_FIELD_KEYS = {
+    "memory_mb": "MEMORY_MB",
+    "cpu_percent": "CPU_PERCENT",
+    "max_processes": "MAX_PROCESSES",
+    "nice": "NICE",
+    "ionice_class": "IONICE_CLASS",
+    "ionice_level": "IONICE_LEVEL",
+}
+PROCESS_POLICY_SETTING_KEYS = {
+    "launch": {
+        "memory_mb": "process.memory_mb",
+        "cpu_percent": "process.cpu_percent",
+        "max_processes": "process.max_processes",
+        "nice": "process.nice",
+        "ionice_class": "process.ionice_class",
+        "ionice_level": "process.ionice_level",
+    },
+    "quota": {
+        "memory_mb": "quota_process.memory_mb",
+        "cpu_percent": "quota_process.cpu_percent",
+        "max_processes": "quota_process.max_processes",
+        "nice": "quota_process.nice",
+        "ionice_class": "quota_process.ionice_class",
+        "ionice_level": "quota_process.ionice_level",
+    },
+    "validation": {
+        "memory_mb": "validation_process.memory_mb",
+        "cpu_percent": "validation_process.cpu_percent",
+        "max_processes": "validation_process.max_processes",
+        "nice": "validation_process.nice",
+        "ionice_class": "validation_process.ionice_class",
+        "ionice_level": "validation_process.ionice_level",
+    },
+}
 
 
 def redact_sensitive(value):
@@ -20,19 +83,46 @@ def redact_sensitive(value):
     return TOKEN_LIKE_RE.sub("[redacted-token]", value)
 
 
-@dataclass(frozen=True)
 class SettingDefinition:
-    key: str
-    env: tuple
-    description: str
-    default: object
-    value_type: str = "string"
-    category: str = "general"
-    minimum: object = None
-    maximum: object = None
-    redact: bool = False
-    internal: bool = False
-    deprecated_aliases: tuple = field(default_factory=tuple)
+    __slots__ = (
+        "key",
+        "env",
+        "description",
+        "default",
+        "value_type",
+        "category",
+        "minimum",
+        "maximum",
+        "redact",
+        "internal",
+        "deprecated_aliases",
+    )
+
+    def __init__(
+        self,
+        key,
+        env,
+        description,
+        default,
+        value_type="string",
+        category="general",
+        minimum=None,
+        maximum=None,
+        redact=False,
+        internal=False,
+        deprecated_aliases=(),
+    ):
+        self.key = key
+        self.env = env
+        self.description = description
+        self.default = default
+        self.value_type = value_type
+        self.category = category
+        self.minimum = minimum
+        self.maximum = maximum
+        self.redact = redact
+        self.internal = internal
+        self.deprecated_aliases = deprecated_aliases
 
     @property
     def name(self):
@@ -260,7 +350,60 @@ def _filtered_settings(settings, filter_text=None):
     ]
 
 
+def _process_setting_value(setting_key, default, source_name, environ, warnings):
+    definition = _definition_by_key()[setting_key]
+    raw = environ.get(source_name)
+    if definition.value_type == "bool":
+        return _parse_bool(raw, default, source_name, warnings)
+    return _parse_number(raw, default, definition.value_type, definition.minimum, definition.maximum, source_name, warnings)
+
+
+def _process_policy_fast(tier, environ=None):
+    environ = os.environ if environ is None else environ
+    defaults = PROCESS_POLICY_DEFAULTS[tier]
+    warnings = []
+    enabled = defaults["enabled"]
+    if "AI_MAN_PROCESS_LIMITS" in environ:
+        enabled = _process_setting_value("process.enabled", enabled, "AI_MAN_PROCESS_LIMITS", environ, warnings)
+    if tier == "quota" and "AI_MAN_QUOTA_PROCESS_LIMITS" in environ:
+        enabled = _process_setting_value("quota_process.enabled", enabled, "AI_MAN_QUOTA_PROCESS_LIMITS", environ, warnings)
+    elif tier == "validation" and "AI_MAN_VALIDATION_PROCESS_LIMITS" in environ:
+        enabled = _process_setting_value("validation_process.enabled", enabled, "AI_MAN_VALIDATION_PROCESS_LIMITS", environ, warnings)
+
+    policy = {
+        "tier": tier,
+        "enabled": enabled,
+    }
+    for field, suffix in PROCESS_POLICY_FIELD_KEYS.items():
+        setting_key = PROCESS_POLICY_SETTING_KEYS[tier][field]
+        primary = f"AI_MAN_PROCESS_{suffix}" if tier == "launch" else f"AI_MAN_{tier.upper()}_PROCESS_{suffix}"
+        generic = f"AI_MAN_PROCESS_{suffix}"
+        if primary in environ:
+            value = _process_setting_value(setting_key, defaults[field], primary, environ, warnings)
+        elif tier != "launch" and generic in environ:
+            value = _process_setting_value(f"process.{field}", defaults[field], generic, environ, warnings)
+        else:
+            value = defaults[field]
+        policy[field] = value
+    if "AI_MAN_PROCESS_SYSTEMD" in environ:
+        prefer_systemd = _process_setting_value("process.prefer_systemd", defaults["prefer_systemd"], "AI_MAN_PROCESS_SYSTEMD", environ, warnings)
+    else:
+        prefer_systemd = defaults["prefer_systemd"]
+    policy["prefer_systemd"] = prefer_systemd
+    policy["warnings"] = warnings
+    policy["backend"] = "deferred"
+    return policy
+
+
 def _pure_process_limits(resolve_backend=False):
+    if not resolve_backend:
+        return {
+            "launch": _process_policy_fast("launch"),
+            "quota": _process_policy_fast("quota"),
+            "validation": _process_policy_fast("validation"),
+        }
+    from .process_policy import process_policy
+
     return {
         "launch": process_policy("launch", resolve_backend=resolve_backend),
         "quota": process_policy("quota", resolve_backend=resolve_backend),
@@ -274,8 +417,8 @@ def _pure_sync_roots(by_key):
     if windows_home is None:
         windows_home = by_key["sync.userprofile"]["value"] if os.name == "nt" else "/mnt/c/Users/Oliver"
     return {
-        "wsl": str(Path(wsl_home)),
-        "windows": str(Path(windows_home)),
+        "wsl": str(wsl_home),
+        "windows": str(windows_home),
     }
 
 
@@ -283,10 +426,20 @@ def effective_config_payload(include_sources=True, include_internal=False, filte
     paths.refresh_from_env()
     metadata.refresh_from_env()
 
-    all_settings = effective_settings(include_internal=True)
-    public_settings = [setting for setting in all_settings if not setting["internal"]]
-    settings = _filtered_settings(all_settings if include_internal else public_settings, filter_text)
-    by_key = _settings_by_key(all_settings)
+    all_settings = []
+    public_settings = []
+    by_key = {}
+    warnings = []
+    for definition in CONFIG_REGISTRY:
+        setting = resolve_setting(definition)
+        all_settings.append(setting)
+        by_key[setting["key"]] = setting
+        warnings.extend(setting.get("warnings", []))
+        if not setting["internal"]:
+            public_settings.append(setting)
+
+    base_settings = all_settings if include_internal else public_settings
+    settings = _filtered_settings(base_settings, filter_text) if filter_text else base_settings
     visible_by_key = _settings_by_key(settings)
 
     quota = {
@@ -308,7 +461,6 @@ def effective_config_payload(include_sources=True, include_internal=False, filte
         },
     }
     process_limits = _pure_process_limits(resolve_backend=include_health)
-    warnings = _warnings(all_settings)
     for policy in process_limits.values():
         warnings.extend(policy.get("warnings", []))
 

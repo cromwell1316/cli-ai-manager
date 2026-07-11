@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H43_Config_Show_Payload_Construction_Optimi
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,22 @@ Slim config payload construction without changing output fields or values.
 - Preserve key names, nesting, and value semantics.
 - Keep health checks opt-in for health and deep diagnostics paths.
 - Avoid broad config model refactors.
+
+## Implementation
+
+- `SettingDefinition` is now a small slots-based class instead of a dataclass.
+- Plain `config show` process-limit payloads use a fast local builder that
+  matches `process_policy(..., resolve_backend=False)` sampled behavior and
+  keeps backend as `deferred`.
+- `config health` still imports `process_policy` and resolves live backends.
+- `effective_config_payload` now resolves settings, warnings, and key maps in a
+  single pass.
+- `sync_roots` string construction no longer imports `pathlib` for already
+  parsed path values.
+
+## Tests
+
+- Added schema regression for payload key order, setting field order,
+  `settings_by_key`, and `include_sources=False` stripping behavior.
+- Added subprocess import-boundary regression proving `config show --json`
+  does not import `cli_profile_manager.process_policy`.

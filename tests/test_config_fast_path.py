@@ -151,6 +151,88 @@ def test_config_show_json_stays_fast_and_redacted(monkeypatch, tmp_path):
     assert any("AI_MAN_INTERACTIVE_QUOTA_TIMEOUT" in warning for warning in payload["warnings"])
 
 
+def test_config_show_json_does_not_import_live_process_policy(tmp_path):
+    code = r"""
+import contextlib
+import io
+import json
+import sys
+import profile_manager
+
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    rc = profile_manager.main(["config", "show", "--json"])
+if rc != 0:
+    raise SystemExit(rc)
+
+print(json.dumps({
+    "process_policy_imported": "cli_profile_manager.process_policy" in sys.modules,
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(ROOT),
+        env=config_env(tmp_path),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload == {"process_policy_imported": False}
+
+
+def test_effective_config_payload_schema_is_stable(monkeypatch, tmp_path):
+    from cli_profile_manager import config
+
+    monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
+    monkeypatch.setenv("AI_MAN_CODEX_HOME", str(tmp_path / "codex-homes"))
+    monkeypatch.setenv("AI_MAN_CLAUDE_HOME", str(tmp_path / "claude-homes"))
+    monkeypatch.setenv("AI_MAN_METADATA_DIR", str(tmp_path / "metadata"))
+    monkeypatch.setenv("AI_MAN_WSL_HOME", str(tmp_path / "wsl"))
+    monkeypatch.setenv("AI_MAN_WINDOWS_HOME", str(tmp_path / "windows"))
+
+    payload = config.effective_config_payload(include_sources=True)
+    assert list(payload.keys()) == [
+        "ok",
+        "profile_roots",
+        "metadata_dir",
+        "sync_roots",
+        "quota",
+        "process_limits",
+        "environment",
+        "settings",
+        "settings_by_key",
+        "config_health",
+        "warnings",
+    ]
+    assert payload["settings_by_key"] == {setting["key"]: setting for setting in payload["settings"]}
+    first_setting = payload["settings"][0]
+    assert list(first_setting.keys()) == [
+        "key",
+        "name",
+        "category",
+        "description",
+        "type",
+        "default",
+        "value",
+        "raw_value",
+        "source",
+        "source_name",
+        "aliases",
+        "deprecated_aliases",
+        "redacted",
+        "internal",
+        "warnings",
+    ]
+
+    slim_payload = config.effective_config_payload(include_sources=False)
+    slim_setting = slim_payload["settings_by_key"]["paths.agy_home"]
+    assert "source" in slim_setting
+    assert "source" not in slim_payload["settings"][0]
+    assert "aliases" not in slim_payload["settings"][0]
+
+
 def test_config_health_command_json_exposes_health_split(tmp_path):
     completed = subprocess.run(
         [sys.executable, str(ROOT / "profile_manager.py"), "config", "health", "--json"],
