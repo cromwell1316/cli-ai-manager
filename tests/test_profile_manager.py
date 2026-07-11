@@ -2261,6 +2261,48 @@ def test_interactive_status_render_skips_unchanged_frame(monkeypatch):
     interactive.reset_status_screen_render()
 
 
+def test_agy_status_screen_fits_all_quota_columns_in_terminal(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    base_statuses = [
+        {
+            "num": 1,
+            "email": "nikitosz1357@gmail.com",
+            "has_token": True,
+            "token_state": "valid",
+            "label": "ai-manager",
+        },
+        {
+            "num": 12,
+            "email": "invalid token: Antigravity CLI token is missing token field",
+            "has_token": False,
+            "token_state": "invalid",
+            "label": "very-long-profile-label",
+        },
+    ]
+
+    monkeypatch.setattr(interactive, "interactive_developer_mode_enabled", lambda: False)
+    monkeypatch.setattr(interactive, "interactive_quota_enabled", lambda: False)
+    monkeypatch.setattr(interactive, "status_screen_width", lambda: 100)
+    monkeypatch.setattr(
+        interactive,
+        "agy_status_quota_columns",
+        lambda statuses: list(interactive.AGY_DEFAULT_QUOTA_COLUMNS),
+    )
+    monkeypatch.setattr(
+        interactive,
+        "agy_quota_cells_cached",
+        lambda status, columns: ["100%" for _ in columns],
+    )
+
+    lines = interactive.render_status_screen_lines("agy", base_statuses=base_statuses)
+    plain_lines = [interactive.ANSI_RE.sub("", line) for line in lines]
+    header = next(line for line in plain_lines if line.startswith("Profile"))
+
+    assert all(column in header for column in interactive.AGY_DEFAULT_QUOTA_COLUMNS)
+    assert all(interactive.visible_len(line) <= 100 for line in lines)
+
+
 def test_interactive_status_row_cache_reuses_formatted_rows(monkeypatch):
     import cli_profile_manager.interactive as interactive
 

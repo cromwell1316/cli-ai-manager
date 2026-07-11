@@ -56,6 +56,7 @@ from .quota import close_persistent_quota_sessions
 from .terminal_rendering import (
     ANSI_RE,
     TerminalFrameRenderer,
+    terminal_size,
     visible_fit,
     visible_len,
     visible_ljust,
@@ -1518,16 +1519,31 @@ def paint_terminal_frame(lines, cache_key="status"):
     STATUS_SCREEN_RENDER_CACHE[cache_key] = list(STATUS_RENDERER.previous_lines or [])
 
 
-def status_screen_snapshot_key(tool_key, status_message, statuses, progress_line, countdown, developer_mode, live_logs):
+def status_screen_snapshot_key(
+    tool_key,
+    status_message,
+    statuses,
+    layout_key,
+    progress_line,
+    countdown,
+    developer_mode,
+    live_logs,
+):
     return (
         tool_key,
         status_message,
+        layout_key,
         tuple(status_row_render_key(tool_key, status, (), {}, None) for status in statuses),
         progress_line,
         countdown,
         developer_mode,
         tuple(live_logs),
     )
+
+
+def status_screen_width():
+    columns, _ = terminal_size(fallback=(120, 24))
+    return max(60, columns)
 
 
 def status_screen_fast_key(tool_key, status_message, base_statuses):
@@ -1547,20 +1563,35 @@ def status_screen_fast_key(tool_key, status_message, base_statuses):
         quota_refresh_countdown(tool_key, now),
         developer_mode,
         log_fingerprint,
+        status_screen_width(),
     )
 
 
-def status_screen_layout(tool_key, statuses):
+def status_screen_layout(tool_key, statuses, max_width=None):
+    max_width = max_width or status_screen_width()
     if tool_key == "agy":
         quota_columns = agy_status_quota_columns(statuses)
+        quota_width = 4
+        profile_width = 7
+        status_width = 8
+        label_width = 12
+        quota_block_width = (quota_width * len(quota_columns)) + max(0, len(quota_columns) - 1)
+        fixed_width = profile_width + status_width + label_width + quota_block_width + 4
+        account_width = min(38, max(18, max_width - fixed_width))
+        if fixed_width + account_width > max_width:
+            label_width = max(0, label_width - ((fixed_width + account_width) - max_width))
+            fixed_width = profile_width + status_width + label_width + quota_block_width + 4
+            account_width = max(18, max_width - fixed_width)
+        if fixed_width + account_width > max_width:
+            account_width = max(7, max_width - fixed_width)
         widths = {
-            "profile": 8,
-            "account": 38,
-            "status": 10,
-            "quota": 5,
-            "label": 14,
+            "profile": profile_width,
+            "account": account_width,
+            "status": status_width,
+            "quota": quota_width,
+            "label": label_width,
         }
-        quota_header = " ".join(f"{column:<{widths['quota']}}" for column in quota_columns)
+        quota_header = " ".join(visible_fit(column, widths["quota"]) for column in quota_columns)
         total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
         total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
     else:
@@ -1586,7 +1617,9 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
     if base_statuses is None:
         base_statuses = collect_status_snapshot(tool_key)
     statuses = [status_with_auto_quota_snapshot(tool_key, status) for status in base_statuses]
-    quota_columns, widths, quota_header, total_width = status_screen_layout(tool_key, statuses)
+    screen_width = status_screen_width()
+    quota_columns, widths, quota_header, total_width = status_screen_layout(tool_key, statuses, screen_width)
+    layout_key = (screen_width, tuple(quota_columns), tuple(sorted(widths.items())), total_width)
     progress_line = quota_progress_line(statuses, now)
     developer_mode = interactive_developer_mode_enabled()
     log_lines = live_log_lines() if developer_mode else []
@@ -1595,6 +1628,7 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
         tool_key,
         status_message,
         statuses,
+        layout_key,
         progress_line,
         countdown,
         developer_mode,
@@ -1603,11 +1637,11 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
 
     lines.append(
         f"{CLR_BOLD}{CLR_WHITE}"
-        f"{'Profile':<{widths['profile']}} "
-        f"{'Active Account / Tier':<{widths['account']}} "
-        f"{'Status':<{widths['status']}} "
+        f"{visible_fit('Profile', widths['profile'])} "
+        f"{visible_fit('Active Account / Tier', widths['account'])} "
+        f"{visible_fit('Status', widths['status'])} "
         f"{quota_header} "
-        f"{'Label':<{widths['label']}}"
+        f"{visible_fit('Label', widths['label'])}"
         f"{CLR_RESET}"
     )
     lines.append("-" * total_width)
