@@ -466,14 +466,17 @@ def classify_agy_probe_error(state, text):
         classified = None
     if classified:
         return classified
+    not_signed_in = re.search(r"\bcurrently not signed in\b", text, re.I)
     sign_in_stalled = (
-        re.search(r"\bcurrently not signed in\b", text, re.I)
+        not_signed_in
         and re.search(r"\bsigning in\b", text, re.I)
     )
     if state == "startup_pending" and sign_in_stalled:
         return "startup_pending", "AGY CLI is still signing in; keeping the session warm"
     if state == "timeout" and sign_in_stalled:
         return "auth_required", "AGY CLI could not complete sign-in for this profile; /usage was not sent"
+    if state in ("startup_pending", "timeout") and not_signed_in:
+        return "auth_required", "AGY CLI is not signed in for this profile; /usage was not sent"
     if state == "startup_pending":
         return "startup_pending", "AGY CLI is still starting; keeping the session warm"
     return None
@@ -610,6 +613,8 @@ def wait_for_agy_readiness(fd, output, startup_seconds, idle_seconds):
         if agy_cli_ready(current) or agy_prompt_ready(current):
             return current
     current = output_text(output)
+    if re.search(r"\bcurrently not signed in\b", current, re.I) and not re.search(r"\bsigning in\b", current, re.I):
+        raise QuotaProbeError("auth_required", "AGY CLI is not signed in for this profile", current)
     if AGY_STARTUP_PENDING_PATTERN.search(current):
         raise QuotaProbeError("startup_pending", "AGY CLI is still starting", current)
     raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", current)
@@ -1095,6 +1100,8 @@ class TmuxQuotaSession:
                 return last_snapshot
             time.sleep(0.1)
         if self.tool_key == "agy" and AGY_STARTUP_PENDING_PATTERN.search(last_snapshot):
+            if re.search(r"\bcurrently not signed in\b", last_snapshot, re.I) and not re.search(r"\bsigning in\b", last_snapshot, re.I):
+                raise QuotaProbeError("auth_required", "AGY CLI is not signed in for this profile", last_snapshot)
             raise QuotaProbeError("startup_pending", "AGY CLI is still starting", last_snapshot)
         raise QuotaProbeError("timeout", "timeout waiting for AGY CLI readiness", last_snapshot)
 
@@ -1362,7 +1369,7 @@ PERSISTENT_QUOTA_PARSER_MISSES = {}
 PERSISTENT_QUOTA_LOCK = threading.Lock()
 TMUX_POOL_LOCK = threading.Lock()
 TMUX_POOL_SEMAPHORES = {}
-INVALIDATING_QUOTA_STATES = {"timeout", "process_exit", "resource_limited"}
+INVALIDATING_QUOTA_STATES = {"auth_required", "timeout", "process_exit", "resource_limited"}
 
 
 class PoolSlot:

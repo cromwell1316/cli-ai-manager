@@ -855,6 +855,22 @@ def test_quota_payload_refines_agy_sign_in_startup_pending_from_raw_output():
     assert payload["quota"]["warnings"] == ["AGY CLI is still signing in; keeping the session warm"]
 
 
+def test_quota_payload_refines_agy_idle_login_prompt_to_auth_required():
+    from cli_profile_manager.quota import QuotaProbeError, quota_payload
+
+    def fake_runner(tool_key, command, env, cwd, timeout_seconds=20):
+        raise QuotaProbeError(
+            "startup_pending",
+            "AGY CLI is still starting",
+            "Welcome to the Antigravity CLI. You are currently not signed in.\nSelect login method:",
+        )
+
+    payload = quota_payload("agy", "p1", ["agy"], {}, ".", runner=fake_runner)
+
+    assert payload["quota"]["state"] == "auth_required"
+    assert payload["quota"]["warnings"] == ["AGY CLI is not signed in for this profile; /usage was not sent"]
+
+
 def test_agy_quota_startup_seconds_uses_specific_override(monkeypatch):
     import cli_profile_manager.quota as quota
 
@@ -899,7 +915,7 @@ def test_agy_quota_uses_profile_pty_command(monkeypatch, tmp_path):
 
     assert payload["quota"]["state"] == "available"
     assert captured["command"] == ["agy"]
-    assert captured["cwd"] == str(tmp_path)
+    assert captured["cwd"] == captured["env"]["HOME"]
     assert captured["runner"] is fake_runner
     assert captured["env"]["HOME"].endswith(os.path.join("agy-homes", "p2"))
 
@@ -1762,6 +1778,45 @@ def test_persistent_quota_runner_keeps_agy_startup_pending_session(monkeypatch, 
     assert created[0].closed is False
     assert quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path / "p1")) == "Daily limit 55% remaining"
     assert len(created) == 1
+    quota.close_persistent_quota_sessions()
+
+
+def test_persistent_quota_runner_invalidates_agy_auth_required_session(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+
+    monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
+    created = []
+
+    class FakeSession:
+        def __init__(self, tool_key, command, env, cwd):
+            self.closed = False
+            created.append(self)
+
+        def snapshot(self, timeout_seconds=quota.DEFAULT_TIMEOUT_SECONDS, idle_seconds=quota.DEFAULT_IDLE_SECONDS):
+            if len(created) == 1:
+                raise quota.QuotaProbeError(
+                    "auth_required",
+                    "AGY CLI is not signed in for this profile",
+                    "Welcome to the Antigravity CLI. You are currently not signed in.",
+                )
+            return "Daily limit 55% remaining"
+
+        def is_alive(self):
+            return not self.closed
+
+        def close(self):
+            self.closed = True
+
+    quota.close_persistent_quota_sessions()
+    monkeypatch.setattr(quota, "PersistentQuotaSession", FakeSession)
+    env = {"HOME": str(tmp_path / "p1")}
+
+    with pytest.raises(quota.QuotaProbeError):
+        quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path / "p1"))
+
+    assert created[0].closed is True
+    assert quota.run_persistent_cli_quota_snapshot("agy", ["agy"], env, str(tmp_path / "p1")) == "Daily limit 55% remaining"
+    assert len(created) == 2
     quota.close_persistent_quota_sessions()
 
 
