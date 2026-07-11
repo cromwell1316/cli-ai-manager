@@ -1809,6 +1809,37 @@ def print_header(title=""):
         print(line)
 
 
+def pilot_splash_lines():
+    return [
+        f"{CLR_BOLD}{CLR_CYAN}██████╗ ██╗██╗      ██████╗ ████████╗{CLR_GREEN}     ██████╗██╗     ██╗{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_CYAN}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝{CLR_GREEN}    ██╔════╝██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_BLUE}██████╔╝██║██║     ██║   ██║   ██║   {CLR_GREEN}    ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_BLUE}██╔═══╝ ██║██║     ██║   ██║   ██║   {CLR_WHITE}    ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_WHITE}██║     ██║███████╗╚██████╔╝   ██║   {CLR_WHITE}    ╚██████╗███████╗██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_WHITE}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝   {CLR_WHITE}     ╚═════╝╚══════╝╚═╝{CLR_RESET}",
+        "",
+        f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
+        f"{CLR_CYAN}● AGY{CLR_RESET}   {CLR_GREEN}● Codex{CLR_RESET}   {CLR_MAGENTA}● Claude{CLR_RESET}",
+        "",
+        f"{CLR_BOLD}{CLR_CYAN}Enter{CLR_RESET}{CLR_WHITE} to continue{CLR_RESET}",
+    ]
+
+
+def show_startup_splash():
+    renderer = TerminalFrameRenderer(cache_key="splash")
+    try:
+        renderer.paint(pilot_splash_lines())
+        while True:
+            key = get_key()
+            if key == "enter":
+                break
+            if key == "ctrl+c":
+                sys.exit(0)
+    finally:
+        renderer.clear()
+        renderer.reset()
+
+
 def render_menu_lines(options, title="", selected_idx=0, pre_lines=None):
     lines = header_lines(title)
     lines.append("")
@@ -2462,16 +2493,47 @@ def parse_duration_seconds(value):
     return seconds
 
 
-def settings_menu_lines():
+def settings_menu_action_lines(selected_idx=0):
+    dev_mode = "on" if interactive_developer_mode_enabled() else "off"
+    actions = [
+        ("[1] Change quota refresh", ""),
+        ("[2] Developer mode", dev_mode),
+        ("[x] Back", ""),
+    ]
+    lines = []
+    for idx, (label, value) in enumerate(actions):
+        marker = ">" if idx == selected_idx else " "
+        value_text = f"    {value}" if value else ""
+        line = f"  {marker} {label:<22}{value_text}"
+        if idx == selected_idx:
+            line = f"{CLR_BOLD}{CLR_CYAN}{line}{CLR_RESET}"
+        else:
+            line = f"{CLR_WHITE}{line}{CLR_RESET}"
+        lines.append(line)
+    return lines
+
+
+def settings_menu_lines(selected_idx=0):
     current = interactive_quota_fresh_seconds()
     source = "environment" if "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in os.environ else "saved/default"
     dev_mode = "on" if interactive_developer_mode_enabled() else "off"
+    dev_indicator = f"{CLR_GREEN}● on{CLR_RESET}" if dev_mode == "on" else f"{CLR_WHITE}○ off{CLR_RESET}"
+    dev_note = "live logs enabled" if dev_mode == "on" else "live logs hidden"
     return [
-        f"      Quota refresh interval: {CLR_CYAN}{format_duration(current)}{CLR_RESET} ({current:g}s, {source})",
-        f"      Env: AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
-        f"      Developer mode: {CLR_CYAN}{dev_mode}{CLR_RESET} (shows live logs on status screens)",
-        f"      Env: AI_MAN_DEVELOPER_MODE",
+        f"{CLR_BOLD}{CLR_WHITE}SETTINGS{CLR_RESET}",
         "",
+        f"{CLR_BOLD}{CLR_WHITE}Runtime{CLR_RESET}",
+        f"  Quota refresh        {CLR_CYAN}{format_duration(current):<4}{CLR_RESET} ({current:g}s)       {source}",
+        f"  Developer mode       {dev_indicator:<16} {dev_note}",
+        "",
+        f"{CLR_BOLD}{CLR_WHITE}Environment{CLR_RESET}",
+        f"  Quota refresh env    AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        f"  Developer mode env   AI_MAN_DEVELOPER_MODE",
+        "",
+        f"{CLR_BOLD}{CLR_WHITE}Actions{CLR_RESET}",
+        *settings_menu_action_lines(selected_idx),
+        "",
+        f"{CLR_WHITE}Enter select · ↑/↓ move · Esc/q back{CLR_RESET}",
     ]
 
 
@@ -2506,19 +2568,44 @@ def toggle_developer_mode():
 
 
 def settings_menu():
-    options = [
-        "[1] Quota refresh interval",
-        "[2] Toggle developer mode",
-        "[x] Back to main menu",
-    ]
+    selected_idx = 0
+    renderer = TerminalFrameRenderer(cache_key="settings")
+    _audit().record("interactive", "started", details={"workflow": "settings"})
     while True:
-        sel = run_menu(options, "SETTINGS", shortcuts={"x": 2}, pre_lines=settings_menu_lines())
+        renderer.paint(settings_menu_lines(selected_idx))
+        key = get_key()
+        if key == "up":
+            selected_idx = (selected_idx - 1) % 3
+            continue
+        if key == "down":
+            selected_idx = (selected_idx + 1) % 3
+            continue
+        if key in ("1", "2"):
+            sel = int(key) - 1
+        elif key in ("x", "X"):
+            sel = 2
+        elif key == "enter":
+            sel = selected_idx
+        elif key in ("esc", "q"):
+            sel = -1
+        elif key == "ctrl+c":
+            _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "settings"})
+            sys.exit(0)
+        else:
+            continue
         if sel == 0:
+            renderer.clear()
+            renderer.reset()
             edit_quota_refresh_interval()
         elif sel == 1:
+            renderer.clear()
+            renderer.reset()
             toggle_developer_mode()
         elif sel in (2, -1):
+            _audit().record("interactive", "completed", result="succeeded", details={"workflow": "settings", "selected": sel})
             break
+    renderer.clear()
+    renderer.reset()
 
 
 def run_interactive_main():
@@ -2527,6 +2614,7 @@ def run_interactive_main():
     INTERACTIVE_SHUTTING_DOWN = False
     previous_handlers = install_interactive_signal_handlers()
     try:
+        show_startup_splash()
         while True:
             options = [
                 "[1] Antigravity CLI (agy)",

@@ -2551,7 +2551,8 @@ def test_interactive_settings_menu_lines_show_quota_refresh(monkeypatch, tmp_pat
 
     rendered = "\n".join(interactive.settings_menu_lines())
 
-    assert "Quota refresh interval" in rendered
+    assert "Quota refresh" in rendered
+    assert "Change quota refresh" in rendered
     assert "15m" in rendered
     assert "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in rendered
     assert "Developer mode" in rendered
@@ -2671,21 +2672,65 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     scheduler = FakeScheduler()
     closed = []
     restored = []
+    splash = []
 
     monkeypatch.setattr(interactive, "INTERACTIVE_QUOTA_SCHEDULER", scheduler)
     monkeypatch.setattr(interactive, "INTERACTIVE_SHUTTING_DOWN", False)
     monkeypatch.setattr(interactive, "install_interactive_signal_handlers", lambda: {"handlers": True})
     monkeypatch.setattr(interactive, "restore_interactive_signal_handlers", lambda handlers: restored.append(handlers))
     monkeypatch.setattr(interactive, "close_persistent_quota_sessions", lambda: closed.append(True))
+    monkeypatch.setattr(interactive, "show_startup_splash", lambda: splash.append(True))
     monkeypatch.setattr(interactive, "run_menu", lambda *args, **kwargs: 5)
     monkeypatch.setattr(interactive, "clear_screen", lambda: None)
 
     assert interactive.run_interactive_main() == interactive.EXIT_OK
 
+    assert splash == [True]
     assert scheduler.calls == [(False, 2.0), ("wait", 2.0)]
     assert closed == [True]
     assert restored == [{"handlers": True}]
     assert interactive.INTERACTIVE_QUOTA_SCHEDULER is None
+
+
+def test_pilot_splash_lines_brand_startup():
+    import cli_profile_manager.interactive as interactive
+
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in interactive.pilot_splash_lines())
+
+    assert "██████" in rendered
+    assert "AI profile control deck" in rendered
+    assert "AGY" in rendered
+    assert "Codex" in rendered
+    assert "Claude" in rendered
+    assert "Enter to continue" in rendered
+
+
+def test_show_startup_splash_waits_for_enter(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    events = []
+
+    class FakeRenderer:
+        def __init__(self, cache_key=None):
+            events.append(("init", cache_key))
+
+        def paint(self, lines):
+            events.append(("paint", len(lines)))
+
+        def clear(self):
+            events.append(("clear", None))
+
+        def reset(self):
+            events.append(("reset", None))
+
+    monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
+    monkeypatch.setattr(interactive, "get_key", lambda: events.append(("key", None)) or "enter")
+
+    interactive.show_startup_splash()
+
+    assert ("key", None) in events
+    assert events[0] == ("init", "splash")
+    assert events[-2:] == [("clear", None), ("reset", None)]
 
 
 def test_launch_account_table_renders_agy_quota_columns():
