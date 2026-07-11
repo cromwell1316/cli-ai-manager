@@ -62,6 +62,11 @@ from .terminal_rendering import (
     visible_ljust,
 )
 
+CLR_SKY = "\033[38;5;45m"
+CLR_AZURE = "\033[38;5;39m"
+CLR_ROYAL = "\033[38;5;33m"
+CLR_VIOLET = "\033[38;5;99m"
+CLR_MINT = "\033[38;5;48m"
 CLR_ORANGE = "\033[38;5;208m"
 
 
@@ -1815,17 +1820,17 @@ def pilot_splash_lines():
     return [
         "",
         "",
-        f"{CLR_BOLD}{CLR_CYAN}██████╗ ██╗██╗      ██████╗ ████████╗{CLR_GREEN}     ██████╗██╗     ██╗{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_CYAN}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝{CLR_GREEN}    ██╔════╝██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BLUE}██████╔╝██║██║     ██║   ██║   ██║   {CLR_GREEN}    ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BLUE}██╔═══╝ ██║██║     ██║   ██║   ██║   {CLR_WHITE}    ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_WHITE}██║     ██║███████╗╚██████╔╝   ██║   {CLR_WHITE}    ╚██████╗███████╗██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_SKY}██████╗ ██╗██╗      ██████╗ ████████╗{CLR_MINT}     ██████╗██╗     ██╗{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_AZURE}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝{CLR_GREEN}    ██╔════╝██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_ROYAL}██████╔╝██║██║     ██║   ██║   ██║   {CLR_GREEN}    ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_BLUE}██╔═══╝ ██║██║     ██║   ██║   ██║   {CLR_MINT}    ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_VIOLET}██║     ██║███████╗╚██████╔╝   ██║   {CLR_SKY}    ╚██████╗███████╗██║{CLR_RESET}",
         f"{CLR_BOLD}{CLR_WHITE}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝   {CLR_WHITE}     ╚═════╝╚══════╝╚═╝{CLR_RESET}",
         "",
         f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
         f"{CLR_CYAN}● AGY{CLR_RESET}   {CLR_GREEN}● Codex{CLR_RESET}   {CLR_ORANGE}● Claude{CLR_RESET}",
         "",
-        f"{CLR_BOLD}{CLR_CYAN}Enter{CLR_RESET}{CLR_WHITE} to continue{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_CYAN}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_BOLD}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
         "",
         "",
     ]
@@ -1839,7 +1844,7 @@ def show_startup_splash():
             key = get_key()
             if key == "enter":
                 break
-            if key == "ctrl+c":
+            if key in ("q", "esc", "ctrl+c"):
                 sys.exit(0)
     finally:
         renderer.clear()

@@ -2707,6 +2707,7 @@ def test_pilot_splash_lines_brand_startup():
     assert "Claude" in rendered
     assert interactive.CLR_ORANGE in next(line for line in lines if "Claude" in line)
     assert "Enter to continue" in rendered
+    assert "q/Esc to exit" in rendered
 
 
 def test_show_startup_splash_waits_for_enter(monkeypatch):
@@ -2735,6 +2736,29 @@ def test_show_startup_splash_waits_for_enter(monkeypatch):
     assert ("key", None) in events
     assert events[0] == ("init", "splash")
     assert events[-2:] == [("clear", None), ("reset", None)]
+
+
+def test_show_startup_splash_allows_exit(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    class FakeRenderer:
+        def __init__(self, cache_key=None):
+            pass
+
+        def paint(self, lines):
+            pass
+
+        def clear(self):
+            pass
+
+        def reset(self):
+            pass
+
+    monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
+    monkeypatch.setattr(interactive, "get_key", lambda: "q")
+
+    with pytest.raises(SystemExit):
+        interactive.show_startup_splash()
 
 
 def test_launch_account_table_renders_agy_quota_columns():
