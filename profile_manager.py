@@ -6,7 +6,9 @@ from importlib import reload
 
 from cli_profile_manager import cli as _cli
 
-reload(_cli)
+if getattr(_cli, "_PROFILE_MANAGER_COMPAT_LOADED", False):
+    reload(_cli)
+_cli._PROFILE_MANAGER_COMPAT_LOADED = True
 from cli_profile_manager.cli import *  # noqa: E402,F401,F403 - compatibility surface
 from cli_profile_manager.cli import main  # noqa: E402
 

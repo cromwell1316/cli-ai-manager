@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H26_Startup_And_Import_Slimming/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

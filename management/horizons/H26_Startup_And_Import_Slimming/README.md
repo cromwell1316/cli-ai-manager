@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H26_Startup_And_Import_Slimming/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -45,6 +45,24 @@ pytest -q tests/test_profile_manager.py::test_in_process_command_perf_budgets
 
 Acceptance target: lower cold `help`, `config show --json`, and `list agy
 --json` latency without regressing in-process command budgets.
+
+## Implementation Evidence
+
+- Removed the unconditional cold `reload(cli)` in `profile_manager.py`; repeated
+  in-process compatibility reloads still refresh the CLI module.
+- Skipped command audit initialization for parser help paths so `--help` avoids
+  audit setup before `argparse` exits.
+- Kept audit enabled for passthrough help arguments such as
+  `launch agy p1 -- -h`.
+- Benchmark after implementation:
+  - `help` median: `44.380ms`
+  - `list-agy-json` median: `90.501ms`
+  - `diagnostics-agy-json` median: `143.070ms`
+  - `config-json` median: `130.612ms`
+- Targeted H26 tests passed:
+  - `test_help_and_config_show_do_not_import_quota_module`
+  - `test_parser_help_detection_ignores_launch_passthrough_help`
+  - `test_in_process_command_perf_budgets`
 
 ## Files
 

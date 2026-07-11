@@ -118,6 +118,15 @@ print(json.dumps({
     }
 
 
+def test_parser_help_detection_ignores_launch_passthrough_help(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+
+    assert pm.is_parser_help_request(["--help"]) is True
+    assert pm.is_parser_help_request(["launch", "agy", "p1", "--help"]) is True
+    assert pm.is_parser_help_request(["launch", "agy", "p1", "--", "-h"]) is False
+    assert pm.is_parser_help_request(["launch", "agy", "p1", "--", "--help"]) is False
+
+
 def test_in_process_command_perf_budgets(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     agy_token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"

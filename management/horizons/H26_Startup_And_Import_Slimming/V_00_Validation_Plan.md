@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H26_Startup_And_Import_Slimming/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: implemented.
 
 ## Automated Validation
 
@@ -19,3 +19,20 @@ pytest -q tests/test_profile_manager.py::test_help_and_config_show_do_not_import
 
 - Import profile before/after.
 - Startup benchmark before/after.
+
+## Recorded Results
+
+After implementation:
+
+```text
+help                   median=  44.380ms
+list-agy-json          median=  90.501ms
+diagnostics-agy-json   median= 143.070ms
+config-json            median= 130.612ms
+```
+
+Targeted tests:
+
+```text
+3 passed in 1.13s
+```

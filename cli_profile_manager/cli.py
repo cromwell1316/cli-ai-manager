@@ -1631,17 +1631,27 @@ def normalize_launch_argv(argv):
 
     return ["launch"] + launch_flags + [tool, profile] + tail
 
+
+def is_parser_help_request(argv):
+    try:
+        passthrough_index = argv.index("--")
+    except ValueError:
+        passthrough_index = len(argv)
+    return any(item in ("-h", "--help") for item in argv[:passthrough_index])
+
+
 def run_cli(argv):
     argv = normalize_launch_argv(argv)
     if should_use_service(argv):
         result = try_run_service_command(argv)
         if result is not None:
             return result
+    audit_enabled = not is_parser_help_request(argv)
     audit_started = None
     audit_parent_token = None
     audit_corr_token = None
     audit_context = audit_context_from_argv(argv)
-    if audit_context["command"]:
+    if audit_enabled and audit_context["command"]:
         audit_started = _audit().make_event("command", "started", **audit_context, details={"argv": argv})
         _audit().write_event(audit_started)
         audit_corr_token = _audit().CURRENT_CORRELATION_ID.set(audit_started["correlation_id"])
