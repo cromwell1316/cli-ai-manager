@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H33_Benchmark_Budgets_And_Regression_Guardr
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -44,6 +44,31 @@ pytest -q tests/test_profile_manager.py::test_in_process_command_perf_budgets
 
 Acceptance target: performance changes are measurable, reviewable, and guarded
 by stable local tests.
+
+## Implementation Notes
+
+- Benchmark JSON now uses schema version 2 and includes Python runtime metadata.
+- `scripts/benchmark_runtime.py` can compare current results with a baseline via
+  `--compare`, using relative and absolute tolerances.
+- `--write-baseline` writes reviewable machine-readable benchmark output.
+- The default local baseline lives at
+  `management/benchmark_baselines/local_default.json`.
+- Added repeatable fake-token surfaces for profile index and cold/warm quota
+  mock paths.
+- Import timing now reports `module_count` separately from elapsed time.
+
+## Evidence
+
+```bash
+python3 -m py_compile scripts/benchmark_runtime.py
+pytest -q tests/test_benchmark_guardrails.py
+pytest -q tests/test_profile_manager.py::test_in_process_command_perf_budgets
+python3 scripts/benchmark_runtime.py --json --iterations 2
+python3 scripts/benchmark_runtime.py --scenario all --iterations 5 --json --compare management/benchmark_baselines/local_default.json
+```
+
+Results: guardrail tests `4 passed`; perf budget test `1 passed`; full
+benchmark comparison `ok: true` with `16` named sections and no regressions.
 
 ## Files
 
