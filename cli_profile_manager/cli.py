@@ -1466,6 +1466,40 @@ def cmd_diagnostics(args):
     print(f"persistent sessions: {sessions['count']}")
     return EXIT_OK
 
+
+COMMAND_HANDLERS = {
+    "audit": cmd_audit,
+    "clear": cmd_clear,
+    "config_health": cmd_config_health,
+    "config_show": cmd_config_show,
+    "diagnostics": cmd_diagnostics,
+    "export": cmd_export,
+    "import": cmd_import,
+    "label": cmd_label,
+    "launch": cmd_launch,
+    "list": cmd_list,
+    "login": cmd_login,
+    "quota": cmd_quota,
+    "service": cmd_service,
+    "status": cmd_status,
+    "sync": cmd_sync,
+}
+
+
+def set_command_handler(parser, name, **defaults):
+    parser.set_defaults(command_handler=name, **defaults)
+    return parser
+
+
+def dispatch_parsed_args(args):
+    handler_name = getattr(args, "command_handler", None)
+    handler = COMMAND_HANDLERS.get(handler_name)
+    if handler is None:
+        print_error(f"unknown command handler: {handler_name}")
+        return EXIT_USAGE
+    return handler(args)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="ai-man",
@@ -1478,7 +1512,7 @@ def build_parser():
     list_p.add_argument("--json", action="store_true")
     list_p.add_argument("--quota", action="store_true", help="probe each profile CLI through a PTY and include quota")
     list_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout per profile in seconds")
-    list_p.set_defaults(func=cmd_list)
+    set_command_handler(list_p, "list")
 
     status_p = sub.add_parser("status", help="show one profile status")
     status_p.add_argument("tool", choices=TOOLS.keys())
@@ -1486,14 +1520,14 @@ def build_parser():
     status_p.add_argument("--json", action="store_true")
     status_p.add_argument("--quota", action="store_true", help="probe the profile CLI through a PTY and include quota")
     status_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout in seconds")
-    status_p.set_defaults(func=cmd_status)
+    set_command_handler(status_p, "status")
 
     quota_p = sub.add_parser("quota", help="probe one profile quota through its native CLI")
     quota_p.add_argument("tool", choices=TOOLS.keys())
     quota_p.add_argument("profile")
     quota_p.add_argument("--json", action="store_true")
     quota_p.add_argument("--timeout", type=float, default=20, help="quota probe timeout in seconds")
-    quota_p.set_defaults(func=cmd_quota)
+    set_command_handler(quota_p, "quota")
 
     launch_p = sub.add_parser("launch", help="launch a CLI under an existing profile")
     launch_p.add_argument("tool", choices=TOOLS.keys())
@@ -1502,12 +1536,12 @@ def build_parser():
     launch_p.add_argument("--dry-run", action="store_true", help="show launch plan without running the tool")
     launch_p.add_argument("--json", action="store_true")
     launch_p.add_argument("--platform", choices=("auto", "wsl", "windows"), default="auto")
-    launch_p.set_defaults(func=cmd_launch)
+    set_command_handler(launch_p, "launch")
 
     login_p = sub.add_parser("login", aliases=["add"], help="run native CLI login flow")
     login_p.add_argument("tool", choices=TOOLS.keys())
     login_p.add_argument("profile", nargs="?")
-    login_p.set_defaults(func=cmd_login)
+    set_command_handler(login_p, "login")
 
     import_p = sub.add_parser("import", help="import a credential file")
     import_p.add_argument("tool", choices=TOOLS.keys())
@@ -1515,7 +1549,7 @@ def build_parser():
     import_p.add_argument("profile", nargs="?")
     import_p.add_argument("--dry-run", action="store_true")
     import_p.add_argument("--json", action="store_true")
-    import_p.set_defaults(func=cmd_import)
+    set_command_handler(import_p, "import")
 
     export_p = sub.add_parser("export", help="export a profile credential")
     export_p.add_argument("tool", choices=TOOLS.keys())
@@ -1523,20 +1557,20 @@ def build_parser():
     export_p.add_argument("--to")
     export_p.add_argument("--dry-run", action="store_true")
     export_p.add_argument("--json", action="store_true")
-    export_p.set_defaults(func=cmd_export)
+    set_command_handler(export_p, "export")
 
     label_p = sub.add_parser("label", help="set or clear a profile label")
     label_p.add_argument("tool", choices=TOOLS.keys())
     label_p.add_argument("profile")
     label_p.add_argument("label")
-    label_p.set_defaults(func=cmd_label)
+    set_command_handler(label_p, "label")
 
     clear_p = sub.add_parser("clear", help="delete a profile directory")
     clear_p.add_argument("tool", choices=TOOLS.keys())
     clear_p.add_argument("profile")
     clear_p.add_argument("--yes", action="store_true", help="confirm profile deletion")
     clear_p.add_argument("--json", action="store_true")
-    clear_p.set_defaults(func=cmd_clear)
+    set_command_handler(clear_p, "clear")
 
     sync_p = sub.add_parser("sync", help="sync profile directories between WSL and Windows")
     sync_p.add_argument("--from", dest="source", choices=("wsl", "windows"), default="wsl")
@@ -1544,7 +1578,7 @@ def build_parser():
     sync_p.add_argument("--dry-run", action="store_true")
     sync_p.add_argument("--yes", action="store_true", help="confirm hard sync")
     sync_p.add_argument("--json", action="store_true")
-    sync_p.set_defaults(func=cmd_sync)
+    set_command_handler(sync_p, "sync")
 
     diagnostics_p = sub.add_parser(
         "diagnostics",
@@ -1555,26 +1589,26 @@ def build_parser():
     diagnostics_p.add_argument("--json", action="store_true")
     diagnostics_p.add_argument("--show-accounts", action="store_true", help="include full account identifiers")
     diagnostics_p.add_argument("--deep", action="store_true", help="include expensive runtime probes")
-    diagnostics_p.set_defaults(func=cmd_diagnostics)
+    set_command_handler(diagnostics_p, "diagnostics")
 
     config_p = sub.add_parser("config", help="inspect effective runtime configuration")
-    config_p.set_defaults(func=cmd_config_show, json=False)
+    set_command_handler(config_p, "config_show", json=False)
     config_sub = config_p.add_subparsers(dest="config_command")
     config_show_p = config_sub.add_parser("show", help="show effective paths, quota settings, and env overrides")
     config_show_p.add_argument("--json", action="store_true")
     config_show_p.add_argument("--sources", action="store_true", help="include setting source information in text output")
     config_show_p.add_argument("--filter", help="show settings matching a key, environment name, category, or description")
-    config_show_p.set_defaults(func=cmd_config_show)
+    set_command_handler(config_show_p, "config_show")
     config_health_p = config_sub.add_parser("health", help="show config health and live runtime checks")
     config_health_p.add_argument("--json", action="store_true")
-    config_health_p.set_defaults(func=cmd_config_health)
+    set_command_handler(config_health_p, "config_health")
 
     audit_p = sub.add_parser("audit", help="inspect and manage local audit events")
-    audit_p.set_defaults(func=cmd_audit, audit_action="status", json=False)
+    set_command_handler(audit_p, "audit", audit_action="status", json=False)
     audit_sub = audit_p.add_subparsers(dest="audit_action")
     audit_status_p = audit_sub.add_parser("status")
     audit_status_p.add_argument("--json", action="store_true")
-    audit_status_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_status_p, "audit")
     audit_list_p = audit_sub.add_parser("list")
     audit_list_p.add_argument("--json", action="store_true")
     audit_list_p.add_argument("--limit", type=int, default=50)
@@ -1586,33 +1620,33 @@ def build_parser():
     audit_list_p.add_argument("--correlation-id")
     audit_list_p.add_argument("--since", help="inclusive ISO-8601 lower timestamp bound")
     audit_list_p.add_argument("--until", help="inclusive ISO-8601 upper timestamp bound")
-    audit_list_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_list_p, "audit")
     audit_show_p = audit_sub.add_parser("show")
     audit_show_p.add_argument("identifier")
     audit_show_p.add_argument("--json", action="store_true")
-    audit_show_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_show_p, "audit")
     audit_export_p = audit_sub.add_parser("export")
     audit_export_p.add_argument("--format", choices=("jsonl", "json"), default="jsonl")
-    audit_export_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_export_p, "audit")
     audit_purge_p = audit_sub.add_parser("purge")
     audit_purge_p.add_argument("--yes", action="store_true")
     audit_purge_p.add_argument("--json", action="store_true")
-    audit_purge_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_purge_p, "audit")
     audit_compact_p = audit_sub.add_parser("compact")
     audit_compact_p.add_argument("--days", type=int)
     audit_compact_p.add_argument("--max-bytes", type=int)
     audit_compact_p.add_argument("--json", action="store_true")
-    audit_compact_p.set_defaults(func=cmd_audit)
+    set_command_handler(audit_compact_p, "audit")
 
     service_p = sub.add_parser("service", help="manage optional long-lived local runtime")
-    service_p.set_defaults(func=cmd_service, service_action="status", json=False)
+    set_command_handler(service_p, "service", service_action="status", json=False)
     service_sub = service_p.add_subparsers(dest="service_action")
     for action in ("start", "stop", "restart", "status"):
         action_p = service_sub.add_parser(action)
         action_p.add_argument("--json", action="store_true")
-        action_p.set_defaults(func=cmd_service)
+        set_command_handler(action_p, "service")
     run_p = service_sub.add_parser("run", help=argparse.SUPPRESS)
-    run_p.set_defaults(func=cmd_service, json=False)
+    set_command_handler(run_p, "service", json=False)
 
     return parser
 
@@ -1685,7 +1719,7 @@ def run_cli(argv):
     if getattr(args, "args", None) and args.args[:1] == ["--"]:
         args.args = args.args[1:]
     try:
-        result = args.func(args)
+        result = dispatch_parsed_args(args)
     except SystemExit as e:
         if audit_started:
             _audit().complete_span(audit_started, result="failed", exit_code=e.code, error_class="SystemExit")

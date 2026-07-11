@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H36_Command_Parser_And_Dispatch_Simplificat
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -45,6 +45,24 @@ pytest -q tests/test_profile_manager.py -k "command or parser or cli"
 
 Acceptance target: simpler dispatch with equal behavior and lower parse/dispatch
 overhead.
+
+## Implementation Evidence
+
+- Added a compact `COMMAND_HANDLERS` dispatch table and `command_handler`
+  parser defaults.
+- Replaced direct argparse function-object dispatch with `dispatch_parsed_args`.
+- Preserved public grammar, aliases, exit codes, and structured operation
+  result handling.
+- Kept heavy command implementation behind the existing lazy module helpers.
+- Validation:
+  - `pytest -q tests/test_profile_manager.py -k "command or parser or cli"`:
+    `34 passed, 149 deselected in 2.23s`
+  - `python3 scripts/benchmark_runtime.py --scenario parse-args`:
+    `parse-args median=8.641ms`
+  - `python3 scripts/benchmark_runtime.py --scenario command-execute`:
+    `config=8.719ms`, `list=6.931ms`, `status=7.781ms`,
+    `diagnostics=44.793ms`
+  - `pytest -q`: `200 passed in 7.67s`
 
 ## Files
 

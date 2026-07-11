@@ -3753,6 +3753,43 @@ def test_launch_flags_after_profile_are_normalized_before_tool_args(monkeypatch,
     ]
 
 
+def test_command_parser_uses_compact_handler_table(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+
+    assert "list" in pm.COMMAND_HANDLERS
+    assert "config_show" in pm.COMMAND_HANDLERS
+    assert "diagnostics" in pm.COMMAND_HANDLERS
+
+    parser = pm.build_parser()
+    cases = {
+        ("list", "agy", "--json"): "list",
+        ("status", "codex", "p1", "--json"): "status",
+        ("diagnostics", "agy", "--json"): "diagnostics",
+        ("doctor", "agy", "--json"): "diagnostics",
+        ("config", "show", "--json"): "config_show",
+        ("config", "health", "--json"): "config_health",
+        ("audit", "status", "--json"): "audit",
+        ("service", "status", "--json"): "service",
+    }
+
+    for argv, handler in cases.items():
+        args = parser.parse_args(list(argv))
+        assert args.command_handler == handler
+        assert not hasattr(args, "func")
+
+
+def test_dispatch_parsed_args_uses_handler_table(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+
+    called = []
+    monkeypatch.setitem(pm.COMMAND_HANDLERS, "fake", lambda args: called.append(args.value) or 17)
+
+    args = types.SimpleNamespace(command_handler="fake", value="ok")
+
+    assert pm.dispatch_parsed_args(args) == 17
+    assert called == ["ok"]
+
+
 def test_runtime_service_paths_are_user_only(monkeypatch, tmp_path):
     load_pm(monkeypatch, tmp_path)
     from cli_profile_manager import runtime_service

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H36_Command_Parser_And_Dispatch_Simplificat
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -20,3 +20,9 @@ Extra indirection increases startup complexity and makes optimization harder.
 
 Simplify parser and dispatch internals while preserving all public commands and
 structured operation results.
+
+## Result
+
+Commands now resolve through an explicit handler table instead of storing
+function objects directly in argparse defaults. Public command grammar remains
+unchanged.

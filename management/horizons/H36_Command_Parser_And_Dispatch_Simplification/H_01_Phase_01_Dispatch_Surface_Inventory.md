@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H36_Command_Parser_And_Dispatch_Simplificat
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,9 @@ Inventory parser, dispatch, wrapper, and operation boundaries.
 - Duplicate wrapper list.
 - Heavy command boundary list.
 - Behavior equivalence requirements.
+
+## Result
+
+The dispatch surface is represented by `COMMAND_HANDLERS`. Parser defaults now
+store stable handler names, while compatibility wrappers and lazy helper module
+boundaries remain available for public API callers.
