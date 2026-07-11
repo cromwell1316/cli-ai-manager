@@ -27,6 +27,10 @@ DEFAULT_KEY_DELAY_SECONDS = 0.04
 DEFAULT_AGY_KEY_DELAY_SECONDS = 0.0
 DEFAULT_AGY_STARTUP_SECONDS = 30.0
 DEFAULT_AGY_POST_COMMAND_SECONDS = 8.0
+DEFAULT_TMUX_LIVENESS_CACHE_SECONDS = 1.0
+DEFAULT_TMUX_SHORT_CAPTURE_LINES = 80
+DEFAULT_TMUX_LONG_CAPTURE_LINES = 240
+DEFAULT_TMUX_POLL_INTERVAL_SECONDS = 0.1
 DIRECT_AGY_PROMPT_SUCCESS_MARKER = "__AI_MAN_DIRECT_AGY_PROMPT_SUCCEEDED__"
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
@@ -637,6 +641,42 @@ def quota_key_delay_seconds(tool_key):
     return max(0.0, float(os.environ.get("AI_MAN_QUOTA_KEY_DELAY_SECONDS", default)))
 
 
+def quota_post_command_seconds(tool_key):
+    default = DEFAULT_AGY_POST_COMMAND_SECONDS if tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
+    try:
+        return max(0.0, float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", default)))
+    except ValueError:
+        return default
+
+
+def tmux_liveness_cache_seconds():
+    try:
+        return max(0.0, float(os.environ.get("AI_MAN_TMUX_QUOTA_LIVENESS_CACHE_SECONDS", DEFAULT_TMUX_LIVENESS_CACHE_SECONDS)))
+    except ValueError:
+        return DEFAULT_TMUX_LIVENESS_CACHE_SECONDS
+
+
+def tmux_capture_lines(kind):
+    env_name = "AI_MAN_TMUX_QUOTA_LONG_CAPTURE_LINES" if kind == "long" else "AI_MAN_TMUX_QUOTA_SHORT_CAPTURE_LINES"
+    default = DEFAULT_TMUX_LONG_CAPTURE_LINES if kind == "long" else DEFAULT_TMUX_SHORT_CAPTURE_LINES
+    try:
+        return max(20, int(os.environ.get(env_name, default)))
+    except ValueError:
+        return default
+
+
+def tmux_poll_interval_seconds():
+    try:
+        return max(0.01, float(os.environ.get("AI_MAN_TMUX_QUOTA_POLL_INTERVAL_SECONDS", DEFAULT_TMUX_POLL_INTERVAL_SECONDS)))
+    except ValueError:
+        return DEFAULT_TMUX_POLL_INTERVAL_SECONDS
+
+
+def quota_snapshot_ready(tool_key, screen_text):
+    quota = parse_quota(tool_key, screen_text)
+    return quota.get("state") not in ("empty_output", "parser_miss")
+
+
 def terminate_process(proc, master_fd, output):
     if proc.poll() is not None:
         return
@@ -781,6 +821,9 @@ class TmuxQuotaSession:
         self.last_used_at = self.created_at
         self.ready = False
         self.starting = False
+        self.last_alive_check_at = 0.0
+        self.last_alive_result = None
+        self.last_snapshot_metrics = {}
 
     @property
     def backend(self):
@@ -803,8 +846,19 @@ class TmuxQuotaSession:
             raise QuotaProbeError("timeout", "timeout waiting for tmux quota backend", raw_output) from e
         output = "".join(part for part in (completed.stdout, completed.stderr) if part)
         if check and completed.returncode != 0:
+            if re.search(r"\b(can't find session|no server running|session not found)\b", output, re.I):
+                raise QuotaProbeError("process_exit", "tmux quota session is not running", output)
             raise QuotaProbeError("tmux_failure", f"tmux command failed with code {completed.returncode}", output)
         return completed
+
+    def _cache_liveness(self, alive):
+        self.last_alive_check_at = time.monotonic()
+        self.last_alive_result = bool(alive)
+        return bool(alive)
+
+    def _clear_liveness_cache(self):
+        self.last_alive_check_at = 0.0
+        self.last_alive_result = None
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         if shutil.which(self.command[0]) is None:
@@ -817,6 +871,7 @@ class TmuxQuotaSession:
         tmux_command.extend(self.command)
         try:
             self._run_tmux(tmux_command)
+            self._cache_liveness(True)
             audit.record(
                 "quota",
                 "started",
@@ -864,25 +919,32 @@ class TmuxQuotaSession:
             home,
         )
 
-    def is_alive(self):
+    def is_alive(self, use_cache=True):
         if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
             return False
+        if use_cache and self.last_alive_result is not None:
+            cache_age = time.monotonic() - self.last_alive_check_at
+            if cache_age <= tmux_liveness_cache_seconds():
+                return self.last_alive_result
         try:
             completed = self._run_tmux(["has-session", "-t", self.session_name], check=False)
         except QuotaProbeError:
-            return False
-        return completed.returncode == 0
+            return self._cache_liveness(False)
+        return self._cache_liveness(completed.returncode == 0)
 
     def capture(self, start="-200"):
         completed = self._run_tmux(["capture-pane", "-pt", self.session_name, "-S", str(start)])
         return completed.stdout or ""
+
+    def capture_recent(self, kind="short"):
+        return self.capture(start=f"-{tmux_capture_lines(kind)}")
 
     def wait_for_ready(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
         startup_seconds = quota_startup_seconds(self.tool_key)
         deadline = time.monotonic() + min(max(startup_seconds, 0.0), max(timeout_seconds, startup_seconds, 0.0))
         last_snapshot = ""
         while time.monotonic() <= deadline:
-            if not self.is_alive():
+            if not self.is_alive(use_cache=False):
                 raise QuotaProbeError("process_exit", "tmux quota session exited during startup", last_snapshot)
             last_snapshot = self.capture()
             classified = classify_agy_failure(last_snapshot, fatal_only=True) if self.tool_key == "agy" else None
@@ -899,9 +961,11 @@ class TmuxQuotaSession:
     def snapshot(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
         with self.lock:
             self.last_used_at = time.time()
+            reused_session = True
             if not self.is_alive():
                 self.close()
                 self.start(timeout_seconds=timeout_seconds, idle_seconds=idle_seconds)
+                reused_session = False
             elif not self.ready:
                 audit.record("quota", "retried", tool=self.tool_key, backend="tmux", details={"reuse": True, "session": self.session_name})
                 self.wait_for_ready(timeout_seconds=timeout_seconds)
@@ -918,6 +982,8 @@ class TmuxQuotaSession:
             slash_command = quota_command_for(self.tool_key)
             if not slash_command:
                 raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
+            started_at = time.monotonic()
+            was_warm = reused_session and self.ready
             self._run_tmux(["send-keys", "-t", self.session_name, slash_command, "Enter"])
             logging.debug(
                 "quota command sent tool=%s backend=tmux session=%s command=%s",
@@ -925,18 +991,51 @@ class TmuxQuotaSession:
                 self.session_name,
                 slash_command,
             )
-            post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
-            post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
-            time.sleep(max(0.0, post_command_seconds))
-            snapshot = self.capture()
+            post_command_seconds = quota_post_command_seconds(self.tool_key)
+            poll_interval = tmux_poll_interval_seconds()
+            deadline = time.monotonic() + post_command_seconds
+            snapshot = ""
+            ready = False
+            captures = 0
+            while True:
+                snapshot = self.capture_recent("short")
+                captures += 1
+                if quota_snapshot_ready(self.tool_key, snapshot):
+                    ready = True
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+            capture_kind = "short"
+            if not ready:
+                snapshot = self.capture_recent("long")
+                captures += 1
+                capture_kind = "long"
             self._run_tmux(["send-keys", "-t", self.session_name, "Escape"], check=False)
             if not self.is_alive():
                 raise QuotaProbeError("process_exit", "tmux quota session exited during quota probe", snapshot)
+            self.last_snapshot_metrics = {
+                "warm": was_warm,
+                "latency_ms": round((time.monotonic() - started_at) * 1000, 3),
+                "capture_kind": capture_kind,
+                "captures": captures,
+                "bytes": len(snapshot),
+                "marker_ready": ready,
+            }
+            audit.record(
+                "quota",
+                "completed",
+                tool=self.tool_key,
+                backend="tmux",
+                result="warm_snapshot" if was_warm else "cold_snapshot",
+                details={"session": self.session_name, **self.last_snapshot_metrics},
+            )
             return snapshot
 
     def close(self):
         self.ready = False
         self.starting = False
+        self._clear_liveness_cache()
         if not self.session_name.startswith(TMUX_QUOTA_SESSION_PREFIX):
             return
         try:
@@ -1076,8 +1175,7 @@ class PersistentQuotaSession:
                 raise QuotaProbeError("unsupported", f"quota command is not configured for {self.tool_key}")
             output = []
             send_interactive_command(self.master_fd, slash_command, quota_key_delay_seconds(self.tool_key))
-            post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if self.tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
-            post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
+            post_command_seconds = quota_post_command_seconds(self.tool_key)
             wait_after_command(self.master_fd, output, max(0.0, post_command_seconds))
             snapshot = wait_for_idle(self.master_fd, output, idle_seconds, timeout_seconds)
             if not self.is_alive():
@@ -1217,6 +1315,7 @@ def persistent_quota_sessions_snapshot(tool_key=None):
                 "session_name": getattr(session, "session_name", None),
                 "alive": session.is_alive(),
                 "parser_misses": PERSISTENT_QUOTA_PARSER_MISSES.get(key, 0),
+                "last_snapshot_metrics": dict(getattr(session, "last_snapshot_metrics", {}) or {}),
                 "created_age_seconds": round(time.time() - getattr(session, "created_at", time.time()), 3),
                 "idle_age_seconds": round(time.time() - getattr(session, "last_used_at", time.time()), 3),
             })
@@ -1313,8 +1412,7 @@ def run_cli_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_
         if not slash_command:
             raise QuotaProbeError("unsupported", f"quota command is not configured for {tool_key}")
         send_interactive_command(master_fd, slash_command, quota_key_delay_seconds(tool_key))
-        post_command_default = DEFAULT_AGY_POST_COMMAND_SECONDS if tool_key == "agy" else DEFAULT_POST_COMMAND_SECONDS
-        post_command_seconds = float(os.environ.get("AI_MAN_QUOTA_POST_COMMAND_SECONDS", post_command_default))
+        post_command_seconds = quota_post_command_seconds(tool_key)
         wait_after_command(master_fd, output, max(0.0, post_command_seconds))
         snapshot = wait_for_idle(master_fd, output, idle_seconds, timeout_seconds)
         audit.record("quota", "completed", tool=tool_key, backend="pty", result="succeeded", details={"bytes": len(snapshot)})

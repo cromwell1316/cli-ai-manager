@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H29_Quota_Warm_Path_Optimization/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -20,3 +20,9 @@ checks, and large captures.
 
 Measure cold and warm quota separately, then optimize only the warm path while
 preserving recovery semantics.
+
+## Outcome
+
+Warm tmux quota snapshots now use short marker-driven captures, short-lived
+liveness caching, and long-capture fallback on parser miss while keeping the
+existing parser-miss recovery contract.
