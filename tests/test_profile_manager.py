@@ -2695,13 +2695,17 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
 def test_pilot_splash_lines_brand_startup():
     import cli_profile_manager.interactive as interactive
 
-    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in interactive.pilot_splash_lines())
+    lines = interactive.pilot_splash_lines()
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
 
+    assert lines[:2] == ["", ""]
+    assert lines[-2:] == ["", ""]
     assert "██████" in rendered
     assert "AI profile control deck" in rendered
     assert "AGY" in rendered
     assert "Codex" in rendered
     assert "Claude" in rendered
+    assert interactive.CLR_ORANGE in next(line for line in lines if "Claude" in line)
     assert "Enter to continue" in rendered
 
 

@@ -62,6 +62,8 @@ from .terminal_rendering import (
     visible_ljust,
 )
 
+CLR_ORANGE = "\033[38;5;208m"
+
 
 def _audit():
     from . import audit
@@ -1811,6 +1813,8 @@ def print_header(title=""):
 
 def pilot_splash_lines():
     return [
+        "",
+        "",
         f"{CLR_BOLD}{CLR_CYAN}██████╗ ██╗██╗      ██████╗ ████████╗{CLR_GREEN}     ██████╗██╗     ██╗{CLR_RESET}",
         f"{CLR_BOLD}{CLR_CYAN}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝{CLR_GREEN}    ██╔════╝██║     ██║{CLR_RESET}",
         f"{CLR_BOLD}{CLR_BLUE}██████╔╝██║██║     ██║   ██║   ██║   {CLR_GREEN}    ██║     ██║     ██║{CLR_RESET}",
@@ -1819,9 +1823,11 @@ def pilot_splash_lines():
         f"{CLR_BOLD}{CLR_WHITE}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝   {CLR_WHITE}     ╚═════╝╚══════╝╚═╝{CLR_RESET}",
         "",
         f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
-        f"{CLR_CYAN}● AGY{CLR_RESET}   {CLR_GREEN}● Codex{CLR_RESET}   {CLR_MAGENTA}● Claude{CLR_RESET}",
+        f"{CLR_CYAN}● AGY{CLR_RESET}   {CLR_GREEN}● Codex{CLR_RESET}   {CLR_ORANGE}● Claude{CLR_RESET}",
         "",
         f"{CLR_BOLD}{CLR_CYAN}Enter{CLR_RESET}{CLR_WHITE} to continue{CLR_RESET}",
+        "",
+        "",
     ]
 
 
