@@ -25,14 +25,14 @@ pytest -q tests/test_profile_manager.py::test_help_and_config_show_do_not_import
 After implementation:
 
 ```text
-help                   median=  44.380ms
-list-agy-json          median=  90.501ms
-diagnostics-agy-json   median= 143.070ms
-config-json            median= 130.612ms
+help                   median=  37.031ms
+list-agy-json          median=  72.514ms
+diagnostics-agy-json   median= 143.655ms
+config-json            median= 123.660ms
 ```
 
 Targeted tests:
 
 ```text
-3 passed in 1.13s
+3 passed in 0.64s
 ```

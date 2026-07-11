@@ -55,10 +55,10 @@ Acceptance target: lower cold `help`, `config show --json`, and `list agy
 - Kept audit enabled for passthrough help arguments such as
   `launch agy p1 -- -h`.
 - Benchmark after implementation:
-  - `help` median: `44.380ms`
-  - `list-agy-json` median: `90.501ms`
-  - `diagnostics-agy-json` median: `143.070ms`
-  - `config-json` median: `130.612ms`
+  - `help` median: `37.031ms`
+  - `list-agy-json` median: `72.514ms`
+  - `diagnostics-agy-json` median: `143.655ms`
+  - `config-json` median: `123.660ms`
 - Targeted H26 tests passed:
   - `test_help_and_config_show_do_not_import_quota_module`
   - `test_parser_help_detection_ignores_launch_passthrough_help`
