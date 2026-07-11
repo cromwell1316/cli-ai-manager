@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H27_Runtime_Service_Acceleration/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -20,3 +20,10 @@ fallback behavior and invalidation correct.
 
 Accelerate read-only commands through cached state and explicit mutation-driven
 invalidation.
+
+## Outcome
+
+The runtime service now keeps an in-process response cache and a reusable
+generation-scoped command snapshot for stable read-only commands, clears both on
+mutation-driven invalidation, and exposes cache and latency metrics through
+service health.

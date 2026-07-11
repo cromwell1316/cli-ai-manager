@@ -22,6 +22,7 @@ PID_NAME = "service.pid"
 LOG_NAME = "service.log"
 LAST_INVALIDATION_NAME = "last_invalidation.json"
 READ_ONLY_COMMANDS = {"config", "diagnostics", "list", "status"}
+RESPONSE_CACHE_COMMANDS = {"config", "list", "status"}
 MUTATING_COMMANDS = {"audit", "clear", "export", "import", "label", "login", "sync"}
 INELIGIBLE_COMMANDS = sorted(MUTATING_COMMANDS | {"launch", "quota", "service"})
 RUNTIME_STATE_OWNERSHIP = {
@@ -236,6 +237,14 @@ def eligible_argv(argv):
     return True
 
 
+def response_cache_key(argv):
+    if not eligible_argv(argv):
+        return None
+    if argv[0] not in RESPONSE_CACHE_COMMANDS:
+        return None
+    return tuple(argv)
+
+
 def mutates_runtime_state(argv):
     return mutation_invalidation(argv) is not None
 
@@ -280,12 +289,16 @@ def request(payload, timeout_seconds=DEFAULT_CLIENT_TIMEOUT_SECONDS):
     return response
 
 
-def execute_argv(argv):
+def execute_argv(argv, state=None):
     from . import cli
+    from . import operations
 
     stdout = io.StringIO()
     stderr = io.StringIO()
     old_service = os.environ.get("AI_MAN_SERVICE")
+    old_command_snapshot = operations.command_snapshot
+    if state is not None:
+        operations.command_snapshot = state.command_snapshot
     os.environ["AI_MAN_SERVICE"] = "0"
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -297,6 +310,7 @@ def execute_argv(argv):
             "stderr": stderr.getvalue(),
         }
     finally:
+        operations.command_snapshot = old_command_snapshot
         if old_service is None:
             os.environ.pop("AI_MAN_SERVICE", None)
         else:
@@ -309,9 +323,22 @@ class RuntimeState:
         self.generation = 0
         self.requests = 0
         self.last_invalidation = _read_last_invalidation()
+        self.response_cache = {}
+        self.command_snapshot_cache = None
+        self.command_snapshot_generation = None
+        self.command_snapshot_builds = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.cache_invalidations = 0
+        self.total_latency_ms = 0.0
+        self.last_latency_ms = None
 
     def invalidate(self, reason=None, domains=None, command=None):
         self.generation += 1
+        self.response_cache.clear()
+        self.command_snapshot_cache = None
+        self.command_snapshot_generation = None
+        self.cache_invalidations += 1
         self.last_invalidation = invalidation_payload(reason, domains, command, self.generation)
         _write_last_invalidation(self.last_invalidation)
         audit.record(
@@ -328,6 +355,83 @@ class RuntimeState:
             },
         )
 
+    def refresh_external_invalidation(self):
+        payload = _read_last_invalidation()
+        if not payload or payload == self.last_invalidation:
+            return
+        self.generation += 1
+        self.response_cache.clear()
+        self.command_snapshot_cache = None
+        self.command_snapshot_generation = None
+        self.cache_invalidations += 1
+        self.last_invalidation = payload
+        audit.record(
+            "runtime_service",
+            "completed",
+            command="service",
+            result="invalidated",
+            details={
+                "action": "external_invalidation",
+                "generation": self.generation,
+                "reason": payload.get("reason"),
+                "domains": payload.get("domains"),
+                "source_command": payload.get("command"),
+            },
+        )
+
+    def record_latency(self, started_at):
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 3)
+        self.last_latency_ms = elapsed_ms
+        self.total_latency_ms += elapsed_ms
+
+    def cache_payload(self):
+        hit_total = self.cache_hits + self.cache_misses
+        hit_rate = round(self.cache_hits / hit_total, 4) if hit_total else 0.0
+        avg_latency_ms = round(self.total_latency_ms / self.requests, 3) if self.requests else 0.0
+        return {
+            "generation": self.generation,
+            "entries": len(self.response_cache),
+            "cacheable_commands": sorted(RESPONSE_CACHE_COMMANDS),
+            "hits": self.cache_hits,
+            "misses": self.cache_misses,
+            "hit_rate": hit_rate,
+            "invalidations": self.cache_invalidations,
+            "snapshot_cached": self.command_snapshot_cache is not None,
+            "snapshot_builds": self.command_snapshot_builds,
+            "last_latency_ms": self.last_latency_ms,
+            "avg_latency_ms": avg_latency_ms,
+        }
+
+    def command_snapshot(self, metadata=None):
+        from . import operations
+
+        if metadata is not None:
+            return operations.CommandSnapshot(metadata)
+        if self.command_snapshot_cache is None or self.command_snapshot_generation != self.generation:
+            self.command_snapshot_cache = operations.CommandSnapshot()
+            self.command_snapshot_generation = self.generation
+            self.command_snapshot_builds += 1
+        return self.command_snapshot_cache
+
+    def run_cached(self, argv):
+        key = response_cache_key(argv)
+        if key is not None:
+            cached = self.response_cache.get(key)
+            if cached is not None:
+                self.cache_hits += 1
+                result = json.loads(json.dumps(cached))
+                result["cache"] = {"hit": True, **self.cache_payload()}
+                return result
+            self.cache_misses += 1
+
+        result = execute_argv(argv, state=self)
+        result["generation"] = self.generation
+        if key is not None and result.get("ok") and result.get("returncode") == 0:
+            self.response_cache[key] = json.loads(json.dumps(result))
+        if key is not None:
+            result["cache"] = {"hit": False, **self.cache_payload()}
+        return result
+
     def health(self):
         return {
             "ok": True,
@@ -337,6 +441,7 @@ class RuntimeState:
             "generation": self.generation,
             "requests": self.requests,
             "last_invalidation": self.last_invalidation,
+            "cache": self.cache_payload(),
             "contract": runtime_contract_payload(),
         }
 
@@ -354,37 +459,40 @@ def _validate_peer(sock):
 
 
 def handle_payload(payload, state):
+    started_at = time.perf_counter()
     state.requests += 1
-    audit.record("runtime_service", "attempted", command="service", details={"action": payload.get("action"), "request_count": state.requests})
-    if payload.get("version") != PROTOCOL_VERSION:
-        return {"ok": False, "error": {"type": "protocol_error", "message": "unsupported protocol version"}}
-    action = payload.get("action")
-    if action == "health":
-        return state.health()
-    if action == "invalidate":
-        domains = payload.get("domains") or []
-        if not isinstance(domains, list) or not all(isinstance(item, str) for item in domains):
-            return {"ok": False, "error": {"type": "usage_error", "message": "domains must be a string list"}}
-        reason = payload.get("reason")
-        command = payload.get("command")
-        state.invalidate(
-            reason=reason if isinstance(reason, str) else None,
-            domains=domains,
-            command=command if isinstance(command, str) else None,
-        )
-        return {"ok": True, "generation": state.generation, "last_invalidation": state.last_invalidation}
-    if action == "shutdown":
-        return {"ok": True, "shutdown": True}
-    if action == "run":
-        argv = payload.get("argv")
-        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
-            return {"ok": False, "error": {"type": "usage_error", "message": "argv must be a string list"}}
-        if not eligible_argv(argv):
-            return {"ok": False, "error": {"type": "not_eligible", "message": "command is not service eligible"}}
-        result = execute_argv(argv)
-        result["generation"] = state.generation
-        return result
-    return {"ok": False, "error": {"type": "usage_error", "message": "unknown action"}}
+    try:
+        audit.record("runtime_service", "attempted", command="service", details={"action": payload.get("action"), "request_count": state.requests})
+        if payload.get("version") != PROTOCOL_VERSION:
+            return {"ok": False, "error": {"type": "protocol_error", "message": "unsupported protocol version"}}
+        action = payload.get("action")
+        if action == "health":
+            return state.health()
+        if action == "invalidate":
+            domains = payload.get("domains") or []
+            if not isinstance(domains, list) or not all(isinstance(item, str) for item in domains):
+                return {"ok": False, "error": {"type": "usage_error", "message": "domains must be a string list"}}
+            reason = payload.get("reason")
+            command = payload.get("command")
+            state.invalidate(
+                reason=reason if isinstance(reason, str) else None,
+                domains=domains,
+                command=command if isinstance(command, str) else None,
+            )
+            return {"ok": True, "generation": state.generation, "last_invalidation": state.last_invalidation}
+        if action == "shutdown":
+            return {"ok": True, "shutdown": True}
+        if action == "run":
+            argv = payload.get("argv")
+            if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+                return {"ok": False, "error": {"type": "usage_error", "message": "argv must be a string list"}}
+            if not eligible_argv(argv):
+                return {"ok": False, "error": {"type": "not_eligible", "message": "command is not service eligible"}}
+            state.refresh_external_invalidation()
+            return state.run_cached(argv)
+        return {"ok": False, "error": {"type": "usage_error", "message": "unknown action"}}
+    finally:
+        state.record_latency(started_at)
 
 
 def serve_forever():

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H27_Runtime_Service_Acceleration/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -46,6 +46,34 @@ pytest -q tests/test_profile_manager.py -k "service"
 
 Acceptance target: service-backed read-only commands avoid repeated cold-start
 work and remain output-equivalent to one-shot commands.
+
+## Implementation Notes
+
+- Runtime service caches successful read-only `config`, `list`, and `status`
+  responses by argv inside the live service process.
+- Runtime service reuses one generation-scoped `CommandSnapshot` for service
+  read-only execution, amortizing metadata, profile discovery, account parsing,
+  and status assembly.
+- Cache entries are scoped to the current service generation and are cleared by
+  explicit mutation invalidation or externally observed invalidation files.
+- Health output now reports cache entries, hit/miss counts, invalidations,
+  hit rate, and request latency metrics.
+- `diagnostics` remains service-eligible but is not response-cached, so generated
+  timestamps and dynamic diagnostic state stay fresh.
+
+## Evidence
+
+```bash
+python3 -m py_compile cli_profile_manager/runtime_service.py cli_profile_manager/cli.py
+pytest -q tests/test_profile_manager.py -k "runtime_service or service"
+pytest -q tests/test_profile_manager.py -k "not test_in_process_command_perf_budgets"
+```
+
+Result: service/runtime `16 passed, 156 deselected`; broad suite `171 passed, 1 deselected`.
+
+Manual socket validation confirmed health cache metrics after repeated
+service-backed `list agy --json`: `entries=1`, `hits=1`, `misses=1`,
+`snapshot_cached=true`, `snapshot_builds=1`.
 
 ## Files
 

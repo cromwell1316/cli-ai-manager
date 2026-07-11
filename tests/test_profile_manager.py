@@ -3665,6 +3665,90 @@ def test_runtime_service_invalidation_is_idempotent_and_diagnostic(monkeypatch, 
     assert status["last_invalidation"]["reason"] == "label"
 
 
+def test_runtime_service_caches_read_only_runs_and_invalidates(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import runtime_service
+
+    calls = []
+
+    def fake_execute(argv, state=None):
+        calls.append(list(argv))
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": json.dumps({"call": len(calls)}) + "\n",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(runtime_service, "execute_argv", fake_execute)
+    state = runtime_service.RuntimeState()
+    payload = {
+        "version": runtime_service.PROTOCOL_VERSION,
+        "action": "run",
+        "argv": ["list", "agy", "--json"],
+    }
+
+    first = runtime_service.handle_payload(payload, state)
+    second = runtime_service.handle_payload(payload, state)
+    health = state.health()
+
+    assert first["cache"]["hit"] is False
+    assert second["cache"]["hit"] is True
+    assert second["stdout"] == first["stdout"]
+    assert calls == [["list", "agy", "--json"]]
+    assert health["cache"]["entries"] == 1
+    assert health["cache"]["hits"] == 1
+    assert health["cache"]["misses"] == 1
+    assert health["cache"]["last_latency_ms"] is not None
+
+    runtime_service.handle_payload(
+        {
+            "version": runtime_service.PROTOCOL_VERSION,
+            "action": "invalidate",
+            "reason": "label",
+            "domains": ["metadata", "command_snapshot"],
+            "command": "label",
+        },
+        state,
+    )
+    third = runtime_service.handle_payload(payload, state)
+
+    assert third["cache"]["hit"] is False
+    assert len(calls) == 2
+    assert state.health()["cache"]["invalidations"] == 1
+
+
+def test_runtime_service_reuses_command_snapshot_until_invalidation(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations, runtime_service
+
+    builds = []
+    real_snapshot = operations.CommandSnapshot
+
+    class CountingSnapshot(real_snapshot):
+        def __init__(self, metadata=None):
+            builds.append(metadata)
+            super().__init__(metadata)
+
+    monkeypatch.setattr(operations, "CommandSnapshot", CountingSnapshot)
+    state = runtime_service.RuntimeState()
+
+    first = state.command_snapshot()
+    second = state.command_snapshot()
+
+    assert first is second
+    assert len(builds) == 1
+    assert state.health()["cache"]["snapshot_cached"] is True
+    assert state.health()["cache"]["snapshot_builds"] == 1
+
+    state.invalidate(reason="label", domains=["metadata"], command="label")
+    third = state.command_snapshot()
+
+    assert third is not first
+    assert len(builds) == 2
+    assert state.health()["cache"]["snapshot_builds"] == 2
+
+
 def test_runtime_service_stale_cleanup_reports_recovery(monkeypatch, tmp_path):
     load_pm(monkeypatch, tmp_path)
     from cli_profile_manager import runtime_service

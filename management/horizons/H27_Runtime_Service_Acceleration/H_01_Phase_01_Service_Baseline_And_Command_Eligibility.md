@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H27_Runtime_Service_Acceleration/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,12 @@ Measure service-backed commands and confirm which commands are safe to serve.
 - Eligible command matrix.
 - Mutation invalidation review.
 - Service fallback behavior inventory.
+
+## Result
+
+- Service eligibility remains limited to read-only commands.
+- `list` and `status` with `--quota` remain excluded from service fast paths.
+- Mutating commands continue to notify the runtime service after successful
+  mutations.
+- Service-backed command output is covered by equivalence tests against one-shot
+  execution.
