@@ -106,6 +106,16 @@ AGY_QUOTA_COLUMN_GROUPS = (
     ("Claude", ("CS", "CO")),
     ("GPT", ("GPT",)),
 )
+AGY_QUOTA_COLUMN_LABELS = {
+    "FM": "Mdl",
+    "FH": "Hgt",
+    "FL": "Low",
+    "PL": "Low",
+    "PH": "Hgt",
+    "CS": "Sonnet",
+    "CO": "Opus",
+    "GPT": "GPT",
+}
 SETTINGS_METADATA_KEY = "_settings"
 QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
 DEVELOPER_MODE_SETTING_KEY = "developer_mode"
@@ -1094,7 +1104,7 @@ def agy_quota_header_lines(columns, quota_width):
         span_width = (quota_width * len(other_columns)) + max(0, len(other_columns) - 1)
         column_groups.append(("Other", span_width))
     group_header = " ".join(visible_fit(title.center(width), width) for title, width in column_groups)
-    column_header = " ".join(visible_fit(column, quota_width) for column in columns)
+    column_header = " ".join(visible_fit(AGY_QUOTA_COLUMN_LABELS.get(column, column), quota_width) for column in columns)
     return group_header, column_header
 
 
@@ -1613,7 +1623,7 @@ def status_screen_layout(tool_key, statuses, max_width=None):
     max_width = max_width or status_screen_width()
     if tool_key == "agy":
         quota_columns = agy_status_quota_columns(statuses)
-        quota_width = 4
+        quota_width = 6
         profile_width = 7
         status_width = 8
         label_width = 12
@@ -1860,7 +1870,7 @@ def launch_account_table(tool_key, statuses):
             "profile": 6,
             "account": 30,
             "status": 10,
-            "quota": 5,
+            "quota": 6,
             "label": 14,
         }
         quota_header = agy_quota_header_lines(quota_columns, widths["quota"])

@@ -2465,7 +2465,11 @@ def test_agy_status_screen_fits_all_quota_columns_in_terminal(monkeypatch):
     assert "Pro" in rendered
     assert "Claude" in rendered
     assert "GPT" in rendered
-    assert all(column in rendered for column in interactive.AGY_DEFAULT_QUOTA_COLUMNS)
+    assert "Mdl" in rendered
+    assert "Hgt" in rendered
+    assert "Low" in rendered
+    assert "Sonnet" in rendered
+    assert "Opus" in rendered
     assert "p12!" in rendered
     assert all(interactive.visible_len(line) <= 100 for line in lines)
 
@@ -2715,9 +2719,9 @@ def test_launch_account_table_renders_agy_quota_columns():
     rendered = "\n".join(pre_lines + rows)
 
     assert "Profile" in rendered
-    assert "FM" in rendered
-    assert "FH" in rendered
-    assert "CS" in rendered
+    assert "Mdl" in rendered
+    assert "Hgt" in rendered
+    assert "Sonnet" in rendered
     assert "12%" in rendered
     assert "34%" in rendered
     assert "100%" in rendered
