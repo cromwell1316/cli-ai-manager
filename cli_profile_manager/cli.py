@@ -32,6 +32,7 @@ from cli_profile_manager.paths import (
     refresh_from_env as core_refresh_paths_from_env,
     resolve_sync_bases as core_resolve_sync_bases,
 )
+from cli_profile_manager.executable_lookup import executable_path
 
 core_refresh_paths_from_env()
 core_refresh_metadata_from_env()
@@ -773,7 +774,7 @@ def run_cli_tool(tool_key, n, extra_args=None):
         )
         return completed.returncode
 
-    if _shutil().which(tool["cmd"]) is None:
+    if executable_path(tool["cmd"]) is None:
         _audit().record(
             "subprocess",
             "failed",

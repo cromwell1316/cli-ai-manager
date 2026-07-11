@@ -942,7 +942,7 @@ def test_agy_quota_backend_selection_auto_prefers_tmux(monkeypatch):
     import cli_profile_manager.quota as quota
 
     monkeypatch.delenv("AI_MAN_AGY_QUOTA_BACKEND", raising=False)
-    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
 
     assert quota.resolve_quota_backend("agy") == "tmux"
     assert quota.resolve_quota_backend("codex") == "persistent_pty"
@@ -952,7 +952,7 @@ def test_agy_quota_backend_selection_auto_falls_back_to_pty(monkeypatch):
     import cli_profile_manager.quota as quota
 
     monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "auto")
-    monkeypatch.setattr(quota.shutil, "which", lambda name: None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: None)
 
     assert quota.resolve_quota_backend("agy") == "persistent_pty"
 
@@ -961,7 +961,7 @@ def test_agy_quota_backend_selection_forced_pty(monkeypatch):
     import cli_profile_manager.quota as quota
 
     monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "pty")
-    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(quota, "executable_path", lambda name: "/usr/bin/tmux")
 
     assert quota.resolve_quota_backend("agy") == "persistent_pty"
 
@@ -970,7 +970,7 @@ def test_agy_quota_backend_selection_forced_tmux_missing(monkeypatch):
     import cli_profile_manager.quota as quota
 
     monkeypatch.setenv("AI_MAN_AGY_QUOTA_BACKEND", "tmux")
-    monkeypatch.setattr(quota.shutil, "which", lambda name: None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: None)
 
     with pytest.raises(quota.QuotaProbeError) as exc_info:
         quota.resolve_quota_backend("agy")
@@ -2004,7 +2004,7 @@ def test_tmux_quota_session_uses_expected_commands(monkeypatch, tmp_path):
             return types.SimpleNamespace(returncode=0, stdout=screen, stderr="")
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(quota.shutil, "which", fake_which)
+    monkeypatch.setattr(quota, "executable_path", fake_which)
     monkeypatch.setattr(quota.subprocess, "run", fake_run)
     monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0")
 
@@ -2094,7 +2094,7 @@ def test_run_persistent_agy_uses_tmux_in_auto(monkeypatch, tmp_path):
 
     quota.close_persistent_quota_sessions()
     monkeypatch.delenv("AI_MAN_AGY_QUOTA_BACKEND", raising=False)
-    monkeypatch.setattr(quota.shutil, "which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
     monkeypatch.setattr(quota, "TmuxQuotaSession", FakeTmuxSession)
 
     payload = quota.run_persistent_cli_quota_snapshot("agy", ["agy"], {"HOME": str(tmp_path / "p1")}, str(tmp_path))
@@ -3398,7 +3398,7 @@ def test_process_policy_systemd_probe_cache_hits_and_resets(monkeypatch):
 
     process_policy.reset_process_policy_cache()
     monkeypatch.setattr(process_policy.os, "name", "posix", raising=False)
-    monkeypatch.setattr(process_policy.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
+    monkeypatch.setattr(process_policy, "executable_path", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
     monkeypatch.setattr(process_policy.subprocess, "run", fake_run)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
@@ -3426,7 +3426,7 @@ def test_process_policy_systemd_probe_cache_key_tracks_environment(monkeypatch):
 
     process_policy.reset_process_policy_cache()
     monkeypatch.setattr(process_policy.os, "name", "posix", raising=False)
-    monkeypatch.setattr(process_policy.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
+    monkeypatch.setattr(process_policy, "executable_path", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
     monkeypatch.setattr(process_policy.subprocess, "run", fake_run)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
@@ -3463,7 +3463,7 @@ def test_run_cli_tool_uses_process_policy_wrapper(monkeypatch, tmp_path):
             return FakeCompleted()
 
     monkeypatch.setattr(cli, "_process_policy", lambda: FakePolicy)
-    monkeypatch.setattr(cli._shutil(), "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cli, "executable_path", lambda name: f"/bin/{name}")
     monkeypatch.setattr(cli, "_subprocess", lambda: FakeSubprocess)
 
     rc = pm.run_cli_tool("codex", 1, ["--help"])
@@ -3495,7 +3495,7 @@ def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
         return FakeProc()
 
     monkeypatch.setitem(sys.modules, "pty", types.SimpleNamespace(openpty=lambda: (10, 11)))
-    monkeypatch.setattr(quota.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"/bin/{name}")
     monkeypatch.setattr(quota.fcntl, "ioctl", lambda *args: None)
     monkeypatch.setattr(quota.os, "close", lambda fd: None)
     monkeypatch.setattr(quota, "prepare_popen", fake_prepare)

@@ -3,7 +3,6 @@ import atexit
 import hashlib
 import re
 import select
-import shutil
 import signal
 import subprocess
 import fcntl
@@ -15,6 +14,7 @@ import time
 
 from .process_policy import prepare_popen
 from . import audit
+from .executable_lookup import executable_path
 
 
 DEFAULT_COLS = 120
@@ -813,7 +813,7 @@ def start_quota_pty_process(tool_key, command, env, cwd, backend):
         import pty
     except ImportError as e:
         raise QuotaProbeError("unsupported", "PTY support is not available") from e
-    if shutil.which(command[0]) is None:
+    if executable_path(command[0]) is None:
         raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
 
     master_fd, slave_fd = pty.openpty()
@@ -866,7 +866,7 @@ def agy_quota_backend_configured():
 
 
 def tmux_path():
-    return shutil.which("tmux")
+    return executable_path("tmux")
 
 
 def resolve_quota_backend(tool_key):
@@ -957,7 +957,7 @@ class TmuxQuotaSession:
         self.last_alive_result = None
 
     def start(self, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-        if shutil.which(self.command[0]) is None:
+        if executable_path(self.command[0]) is None:
             raise QuotaProbeError("missing_cli", f"{self.command[0]} CLI is not installed or not in PATH")
         self.starting = True
         started_at = time.monotonic()
@@ -1720,7 +1720,7 @@ def parse_quota(tool_key, screen_text):
 
 
 def run_direct_cli_prompt_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
-    if shutil.which(command[0]) is None:
+    if executable_path(command[0]) is None:
         raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
     try:
         completed = subprocess.run(

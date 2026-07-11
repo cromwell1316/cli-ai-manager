@@ -1,9 +1,9 @@
 import hashlib
 import os
 import re
-import shutil
 import time
 
+from .executable_lookup import executable_path
 from .paths import DISPLAY_SLOT_COUNT, TOOLS, get_display_profiles, get_occupied_profiles, profile_home
 from .quota import (
     QuotaProbeError,
@@ -127,7 +127,7 @@ def tool_diagnostics(
                 "warnings": redact_sensitive(status.get("warnings", []), show_accounts),
             })
         profiles.append(profile)
-    cli_path = shutil.which(tool["cmd"])
+    cli_path = executable_path(tool["cmd"])
     return {
         "name": tool["name"],
         "command": tool["cmd"],

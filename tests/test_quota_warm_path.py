@@ -30,7 +30,7 @@ def test_tmux_quota_warm_path_polls_short_capture_until_markers(monkeypatch, tmp
         sleeps.append(seconds)
         real_sleep(seconds)
 
-    monkeypatch.setattr(quota.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("tmux", "agy") else None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"/usr/bin/{name}" if name in ("tmux", "agy") else None)
     monkeypatch.setattr(quota.subprocess, "run", fake_run)
     monkeypatch.setattr(quota.time, "sleep", fake_sleep)
     monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "1")
@@ -66,7 +66,7 @@ def test_tmux_quota_warm_path_uses_long_capture_on_parser_miss(monkeypatch, tmp_
             return types.SimpleNamespace(returncode=0, stdout="Antigravity CLI 1.1.1\n>\n", stderr="")
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(quota.shutil, "which", lambda name: f"/usr/bin/{name}" if name in ("tmux", "agy") else None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"/usr/bin/{name}" if name in ("tmux", "agy") else None)
     monkeypatch.setattr(quota.subprocess, "run", fake_run)
     monkeypatch.setenv("AI_MAN_QUOTA_POST_COMMAND_SECONDS", "0")
 
@@ -92,7 +92,7 @@ def test_tmux_liveness_cache_reuses_recent_has_session_result(monkeypatch, tmp_p
         calls.append(args)
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(quota.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "tmux" else None)
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"/usr/bin/{name}" if name == "tmux" else None)
     monkeypatch.setattr(quota.subprocess, "run", fake_run)
     monkeypatch.setenv("AI_MAN_TMUX_QUOTA_LIVENESS_CACHE_SECONDS", "10")
 

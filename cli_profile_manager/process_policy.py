@@ -1,6 +1,7 @@
 import os
-import shutil
 import subprocess
+
+from .executable_lookup import executable_path
 
 
 DEFAULTS = {
@@ -140,7 +141,7 @@ def process_policy(tier="launch", resolve_backend=True):
 def _systemd_user_scope_available_uncached():
     if os.name == "nt":
         return False
-    if shutil.which("systemd-run") is None:
+    if executable_path("systemd-run") is None:
         return False
     if os.environ.get("XDG_RUNTIME_DIR") is None:
         return False
@@ -224,7 +225,7 @@ def preexec_for_policy(policy):
 
 
 def ionice_command(command, policy):
-    if not policy.get("enabled") or os.name == "nt" or shutil.which("ionice") is None:
+    if not policy.get("enabled") or os.name == "nt" or executable_path("ionice") is None:
         return list(command)
     ionice_class = int(policy.get("ionice_class", 0))
     if ionice_class <= 0:
