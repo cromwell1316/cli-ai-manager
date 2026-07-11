@@ -39,10 +39,27 @@ DEFAULTS = {
 
 BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
+SYSTEMD_USER_SCOPE_PROBE_COMMAND = ("systemd-run", "--user", "--scope", "--quiet", "true")
+SYSTEMD_USER_SCOPE_CACHE = {}
 
 
 class ProcessPolicyError(RuntimeError):
     pass
+
+
+def reset_process_policy_cache():
+    SYSTEMD_USER_SCOPE_CACHE.clear()
+
+
+def systemd_user_scope_cache_key(environ=None):
+    environ = os.environ if environ is None else environ
+    return (
+        os.name,
+        SYSTEMD_USER_SCOPE_PROBE_COMMAND,
+        environ.get("PATH"),
+        environ.get("XDG_RUNTIME_DIR"),
+        environ.get("AI_MAN_PROCESS_SYSTEMD"),
+    )
 
 
 def _bool_env(name, default, warnings):
@@ -120,7 +137,7 @@ def process_policy(tier="launch", resolve_backend=True):
     return policy
 
 
-def systemd_user_scope_available():
+def _systemd_user_scope_available_uncached():
     if os.name == "nt":
         return False
     if shutil.which("systemd-run") is None:
@@ -138,6 +155,13 @@ def systemd_user_scope_available():
     except Exception:
         return False
     return completed.returncode == 0
+
+
+def systemd_user_scope_available():
+    key = systemd_user_scope_cache_key()
+    if key not in SYSTEMD_USER_SCOPE_CACHE:
+        SYSTEMD_USER_SCOPE_CACHE[key] = _systemd_user_scope_available_uncached()
+    return SYSTEMD_USER_SCOPE_CACHE[key]
 
 
 def select_backend(policy, needs_pty=False):

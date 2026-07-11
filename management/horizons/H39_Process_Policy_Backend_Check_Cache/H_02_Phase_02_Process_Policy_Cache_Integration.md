@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,10 @@ Integrate the cache into process policy checks with minimal behavior surface.
 - Keep configured backend precedence unchanged.
 - Preserve return values and error handling.
 - Ensure monkeypatched subprocess calls in tests remain deterministic.
+
+## Completion Notes
+
+- `systemd_user_scope_available()` now uses the process-local cache.
+- Existing backend selection and fallback behavior are unchanged.
+- Tests cover identical-input cache hits, reset behavior, and environment
+  invalidation.

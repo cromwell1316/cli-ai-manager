@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -43,6 +43,12 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 
 Acceptance target: repeated health/config checks in one process perform at most
 one identical systemd capability probe per cache key.
+
+Completed evidence:
+
+- Added process-local systemd user-scope probe cache with environment-sensitive
+  key and reset hook.
+- Added cache hit, reset, and environment invalidation unit coverage.
 
 ## Files
 

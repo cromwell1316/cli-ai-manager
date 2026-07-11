@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Area | Acceptance | Evidence |
 | --- | --- | --- |
@@ -13,3 +13,6 @@ Status: planned.
 | Invalidation | `PATH` or runtime environment changes produce a miss | Cache key unit test |
 | Behavior | Backend fallback semantics remain unchanged | Process policy tests |
 | Performance | Repeated config and diagnostics calls get cheaper | Runtime benchmark output |
+
+Completion: all acceptance rows are covered by the implementation and validation
+commands listed in `V_00_Validation_Plan.md`.

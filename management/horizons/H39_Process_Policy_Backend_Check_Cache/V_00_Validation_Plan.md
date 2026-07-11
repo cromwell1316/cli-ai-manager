@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Automated Validation
 
@@ -19,3 +19,8 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 - Cache hit and invalidation tests.
 - Fallback behavior tests for unavailable systemd.
 - Config and diagnostics benchmark medians.
+
+Completion evidence:
+
+- `pytest -q tests/test_profile_manager.py -k "process or config or diagnostics"`
+- `python3 scripts/benchmark_runtime.py --scenario command-execute`

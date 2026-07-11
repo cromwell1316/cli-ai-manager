@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 

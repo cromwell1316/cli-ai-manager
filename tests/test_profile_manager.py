@@ -3387,6 +3387,60 @@ def test_process_policy_fallback_prepares_preexec(monkeypatch):
     assert callable(preexec_fn) or policy["backend"] == "priority-only"
 
 
+def test_process_policy_systemd_probe_cache_hits_and_resets(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    calls = []
+
+    def fake_run(args, stdout=None, stderr=None, timeout=None, check=False):
+        calls.append(args)
+        return types.SimpleNamespace(returncode=0)
+
+    process_policy.reset_process_policy_cache()
+    monkeypatch.setattr(process_policy.os, "name", "posix", raising=False)
+    monkeypatch.setattr(process_policy.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
+    monkeypatch.setattr(process_policy.subprocess, "run", fake_run)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setenv("AI_MAN_PROCESS_SYSTEMD", "1")
+
+    assert process_policy.systemd_user_scope_available() is True
+    assert process_policy.systemd_user_scope_available() is True
+    assert len(calls) == 1
+
+    process_policy.reset_process_policy_cache()
+
+    assert process_policy.systemd_user_scope_available() is True
+    assert len(calls) == 2
+    process_policy.reset_process_policy_cache()
+
+
+def test_process_policy_systemd_probe_cache_key_tracks_environment(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    calls = []
+
+    def fake_run(args, stdout=None, stderr=None, timeout=None, check=False):
+        calls.append(args)
+        return types.SimpleNamespace(returncode=0)
+
+    process_policy.reset_process_policy_cache()
+    monkeypatch.setattr(process_policy.os, "name", "posix", raising=False)
+    monkeypatch.setattr(process_policy.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "systemd-run" else None)
+    monkeypatch.setattr(process_policy.subprocess, "run", fake_run)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+
+    assert process_policy.systemd_user_scope_available() is True
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/2000")
+    assert process_policy.systemd_user_scope_available() is True
+    monkeypatch.setenv("PATH", "/custom/bin:/usr/bin")
+    assert process_policy.systemd_user_scope_available() is True
+
+    assert len(calls) == 3
+    process_policy.reset_process_policy_cache()
+
+
 def test_run_cli_tool_uses_process_policy_wrapper(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.cli as cli

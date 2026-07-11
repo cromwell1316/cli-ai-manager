@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H39_Process_Policy_Backend_Check_Cache/READ
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,10 @@ Define safe cache inputs and the reset contract for tests.
 - Do not persist cache entries to disk.
 - Prefer small immutable key tuples.
 - Keep failures cached only when they are tied to the same key.
+
+## Completion Notes
+
+- Cache lifetime is process-local only.
+- `reset_process_policy_cache()` clears cached capability checks for tests.
+- Cache key includes OS name, probe command, `PATH`, `XDG_RUNTIME_DIR`, and
+  `AI_MAN_PROCESS_SYSTEMD`.
