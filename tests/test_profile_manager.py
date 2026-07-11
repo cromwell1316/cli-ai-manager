@@ -2470,7 +2470,8 @@ def test_agy_status_screen_fits_all_quota_columns_in_terminal(monkeypatch):
     assert "Low" in rendered
     assert "Sonnet" in rendered
     assert "Opus" in rendered
-    assert "p12!" in rendered
+    assert "p12" in rendered
+    assert "p12!" not in rendered
     assert all(interactive.visible_len(line) <= 100 for line in lines)
 
 

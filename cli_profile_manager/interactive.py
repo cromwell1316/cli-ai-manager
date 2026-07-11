@@ -114,7 +114,7 @@ AGY_QUOTA_COLUMN_LABELS = {
     "PH": "Hgt",
     "CS": "Sonnet",
     "CO": "Opus",
-    "GPT": "GPT",
+    "GPT": "",
 }
 SETTINGS_METADATA_KEY = "_settings"
 QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
@@ -1122,7 +1122,7 @@ def status_profile_text(status):
     profile = f"p{status['num']}"
     if not status_has_issue(status):
         return profile
-    return f"{CLR_RED}{profile}!{CLR_RESET}"
+    return f"{CLR_RED}{profile}{CLR_RESET}"
 
 
 def color_email_parts(value):
