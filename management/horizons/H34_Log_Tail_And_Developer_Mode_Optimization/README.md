@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H34_Log_Tail_And_Developer_Mode_Optimizatio
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -41,6 +41,21 @@ python3 scripts/benchmark_runtime.py --scenario status-redraw
 ```
 
 Acceptance target: developer mode does not materially increase redraw time.
+
+## Implementation Evidence
+
+- Added a bounded live log tail cache keyed by path, device, inode, size, and
+  offset.
+- `live_log_lines` now reads only appended bytes after the cached offset and
+  keeps pre-filtered diagnostic lines for rendering.
+- Missing logs, truncation, and rotation reset the cache safely.
+- Developer-mode render fast keys use the shared log file fingerprint, so
+  unchanged logs avoid tail reads during redraw.
+- Benchmark:
+  - `status-redraw` median: `0.009ms`
+- Targeted validation passed:
+  - `pytest -q tests/test_profile_manager.py -k "developer or log or interactive"`
+  - `python3 scripts/benchmark_runtime.py --scenario status-redraw`
 
 ## Files
 

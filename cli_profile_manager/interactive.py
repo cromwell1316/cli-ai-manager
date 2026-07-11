@@ -106,6 +106,10 @@ INTERACTIVE_QUOTA_CACHE = {}
 INTERACTIVE_QUOTA_LOCK = threading.Lock()
 INTERACTIVE_QUOTA_RENDER_GENERATION = 0
 INTERACTIVE_SETTINGS_CACHE = None
+LOG_TAIL_CACHE = {}
+LOG_TAIL_MAX_BYTES = 256 * 1024
+LOG_TAIL_MAX_LINES = 400
+LOG_TAIL_PATTERN = re.compile(r"\b(error|fail|failed|timeout|exception|resource_exhausted|account_ineligible|missing_cli|quota|agy\d*)\b", re.I)
 QUOTA_FRESH_SECONDS = 300
 QUOTA_STALE_SECONDS = 3600
 QUOTA_RETRY_BACKOFF_SECONDS = (10, 30, 60)
@@ -244,19 +248,95 @@ def interactive_log_path():
     return os.path.join(os.path.dirname(os.path.dirname(__file__)), "ai-man.log")
 
 
-def live_log_lines(limit=8, width=118):
-    path = interactive_log_path()
+def log_file_fingerprint(path=None):
+    path = interactive_log_path() if path is None else path
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()[-400:]
-    except FileNotFoundError:
-        return [f"log file not found: {path}"]
-    patterns = re.compile(r"\b(error|fail|failed|timeout|exception|resource_exhausted|account_ineligible|missing_cli|quota|agy\d*)\b", re.I)
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (
+        getattr(stat, "st_dev", None),
+        getattr(stat, "st_ino", None),
+        stat.st_mtime_ns,
+        stat.st_size,
+    )
+
+
+def reset_live_log_cache(path=None):
+    if path is None:
+        LOG_TAIL_CACHE.clear()
+    else:
+        LOG_TAIL_CACHE.pop(str(path), None)
+
+
+def _read_log_tail(path, size):
+    with open(path, "rb") as fh:
+        if size > LOG_TAIL_MAX_BYTES:
+            fh.seek(max(0, size - LOG_TAIL_MAX_BYTES))
+        data = fh.read(LOG_TAIL_MAX_BYTES)
+    text = data.decode("utf-8", errors="replace")
+    return text.splitlines()[-LOG_TAIL_MAX_LINES:]
+
+
+def _selected_log_lines(lines, width):
     selected = []
     for line in lines:
         cleaned = line.strip()
-        if cleaned and patterns.search(cleaned):
+        if cleaned and LOG_TAIL_PATTERN.search(cleaned):
             selected.append(visible_fit(cleaned, width))
+    return selected
+
+
+def live_log_lines(limit=8, width=118):
+    path = interactive_log_path()
+    fingerprint = log_file_fingerprint(path)
+    if fingerprint is None:
+        reset_live_log_cache(path)
+        return [f"log file not found: {path}"]
+    dev, inode, _mtime_ns, size = fingerprint
+    cache = LOG_TAIL_CACHE.get(path)
+    if (
+        cache is None
+        or cache.get("dev") != dev
+        or cache.get("inode") != inode
+        or size < cache.get("offset", 0)
+    ):
+        lines = _read_log_tail(path, size)
+        selected = _selected_log_lines(lines, width)[-LOG_TAIL_MAX_LINES:]
+        LOG_TAIL_CACHE[path] = {
+            "dev": dev,
+            "inode": inode,
+            "offset": size,
+            "partial": "",
+            "selected": selected,
+        }
+        return selected[-limit:]
+    if size == cache.get("offset"):
+        return list(cache.get("selected", [])[-limit:])
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(cache.get("offset", 0))
+            data = fh.read(max(0, size - cache.get("offset", 0)))
+    except OSError:
+        reset_live_log_cache(path)
+        return [f"log file not found: {path}"]
+
+    text = cache.get("partial", "") + data.decode("utf-8", errors="replace")
+    if text.endswith(("\n", "\r")):
+        lines = text.splitlines()
+        partial = ""
+    else:
+        parts = text.splitlines()
+        lines = parts[:-1]
+        partial = parts[-1] if parts else text
+    selected = list(cache.get("selected", []))
+    selected.extend(_selected_log_lines(lines, width))
+    cache.update({
+        "offset": size,
+        "partial": partial,
+        "selected": selected[-LOG_TAIL_MAX_LINES:],
+    })
     return selected[-limit:]
 
 
@@ -1424,6 +1504,7 @@ def reset_status_screen_render():
     STATUS_SCREEN_RENDER_CACHE.clear()
     STATUS_ROW_RENDER_CACHE.clear()
     STATUS_QUOTA_CELL_RENDER_CACHE.clear()
+    reset_live_log_cache()
     STATUS_RENDERER.reset()
 
 
@@ -1455,13 +1536,7 @@ def status_screen_fast_key(tool_key, status_message, base_statuses):
     now = time.time()
     active = any_quota_loading(tool_key)
     developer_mode = interactive_developer_mode_enabled()
-    log_fingerprint = None
-    if developer_mode:
-        try:
-            stat = os.stat(interactive_log_path())
-            log_fingerprint = (stat.st_mtime_ns, stat.st_size)
-        except OSError:
-            log_fingerprint = None
+    log_fingerprint = log_file_fingerprint() if developer_mode else None
     return (
         tool_key,
         status_message,

@@ -2374,6 +2374,73 @@ def test_interactive_status_screen_shows_live_logs_in_developer_mode(monkeypatch
     assert "network failed" in rendered
 
 
+def test_live_log_lines_cache_handles_missing_growing_and_truncated_logs(monkeypatch, tmp_path):
+    import cli_profile_manager.interactive as interactive
+
+    log_path = tmp_path / "ai-man.log"
+    monkeypatch.setattr(interactive, "interactive_log_path", lambda: str(log_path))
+    interactive.reset_live_log_cache()
+
+    assert "log file not found" in interactive.live_log_lines()[0]
+
+    log_path.write_text("debug noise\nERROR first failure\n", encoding="utf-8")
+    first = interactive.live_log_lines()
+    assert any("first failure" in line for line in first)
+    assert len(interactive.LOG_TAIL_CACHE[str(log_path)]["selected"]) == 1
+
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("INFO quota refresh finished\n")
+    second = interactive.live_log_lines()
+    assert any("first failure" in line for line in second)
+    assert any("quota refresh" in line for line in second)
+    assert len(interactive.LOG_TAIL_CACHE[str(log_path)]["selected"]) == 2
+
+    log_path.write_text("ERROR after rotation\n", encoding="utf-8")
+    rotated = interactive.live_log_lines()
+    assert any("after rotation" in line for line in rotated)
+    assert not any("first failure" in line for line in rotated)
+
+
+def test_live_log_lines_uses_incremental_reads(monkeypatch, tmp_path):
+    import cli_profile_manager.interactive as interactive
+
+    log_path = tmp_path / "ai-man.log"
+    log_path.write_text("ERROR first failure\n", encoding="utf-8")
+    monkeypatch.setattr(interactive, "interactive_log_path", lambda: str(log_path))
+    interactive.reset_live_log_cache()
+
+    interactive.live_log_lines()
+    offset = interactive.LOG_TAIL_CACHE[str(log_path)]["offset"]
+
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("ERROR second failure\n")
+    interactive.live_log_lines()
+
+    assert offset == len("ERROR first failure\n".encode("utf-8"))
+    assert interactive.LOG_TAIL_CACHE[str(log_path)]["offset"] == log_path.stat().st_size
+    assert len(interactive.LOG_TAIL_CACHE[str(log_path)]["selected"]) == 2
+
+
+def test_live_log_lines_buffers_partial_appends(monkeypatch, tmp_path):
+    import cli_profile_manager.interactive as interactive
+
+    log_path = tmp_path / "ai-man.log"
+    log_path.write_text("ERROR first failure\n", encoding="utf-8")
+    monkeypatch.setattr(interactive, "interactive_log_path", lambda: str(log_path))
+    interactive.reset_live_log_cache()
+
+    interactive.live_log_lines()
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("ERROR partial")
+    partial = interactive.live_log_lines()
+    assert not any("partial" in line for line in partial)
+
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(" completed\n")
+    completed = interactive.live_log_lines()
+    assert any("partial completed" in line for line in completed)
+
+
 def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     import cli_profile_manager.interactive as interactive
 

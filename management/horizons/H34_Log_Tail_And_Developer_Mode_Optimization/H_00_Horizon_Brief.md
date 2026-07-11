@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H34_Log_Tail_And_Developer_Mode_Optimizatio
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

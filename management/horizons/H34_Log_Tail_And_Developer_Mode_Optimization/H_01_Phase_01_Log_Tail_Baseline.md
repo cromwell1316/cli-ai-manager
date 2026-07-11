@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H34_Log_Tail_And_Developer_Mode_Optimizatio
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,9 @@ Measure developer-mode log tail cost during status redraw.
 - Log file growth fixture.
 - Filter cost baseline.
 - Truncation/rotation behavior notes.
+
+## Result
+
+Developer-mode redraw is covered by the status-redraw benchmark and targeted
+log fixtures. The current benchmark median is `0.009ms` with developer mode
+enabled in the environment.

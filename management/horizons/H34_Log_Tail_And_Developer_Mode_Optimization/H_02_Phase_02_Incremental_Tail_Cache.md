@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H34_Log_Tail_And_Developer_Mode_Optimizatio
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,9 @@ Add a small tail cache keyed by file identity and offset.
 - Rotation/truncation detection.
 - Pre-filtered diagnostic lines.
 - Tests for missing and growing log files.
+
+## Result
+
+`live_log_lines` maintains a bounded cache of pre-filtered diagnostic lines,
+updates from the previous byte offset when the log grows, and rebuilds the tail
+when the file is missing, truncated, or rotated.
