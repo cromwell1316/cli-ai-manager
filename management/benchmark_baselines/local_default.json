@@ -8,82 +8,82 @@
     {
       "name": "python-startup",
       "runs": 20,
-      "median_ms": 60.0
+      "median_ms": 20.0
     },
     {
       "name": "import-profile-manager",
       "runs": 20,
-      "median_ms": 90.0
+      "median_ms": 50.0
     },
     {
       "name": "parse-args",
       "runs": 20,
-      "median_ms": 25.0
+      "median_ms": 12.0
     },
     {
       "name": "command-config-json",
       "runs": 20,
-      "median_ms": 40.0
+      "median_ms": 8.0
     },
     {
       "name": "command-list-agy-json",
       "runs": 20,
-      "median_ms": 40.0
+      "median_ms": 8.0
     },
     {
       "name": "command-status-agy-json",
       "runs": 20,
-      "median_ms": 40.0
+      "median_ms": 3.0
     },
     {
       "name": "command-diagnostics-agy-json",
       "runs": 20,
-      "median_ms": 90.0
+      "median_ms": 20.0
     },
     {
       "name": "profile-index",
       "runs": 20,
-      "median_ms": 15.0
+      "median_ms": 4.0
     },
     {
       "name": "help",
       "runs": 20,
-      "median_ms": 120.0
+      "median_ms": 70.0
     },
     {
       "name": "list-agy-json",
       "runs": 20,
-      "median_ms": 180.0
+      "median_ms": 150.0
     },
     {
       "name": "diagnostics-agy-json",
       "runs": 20,
-      "median_ms": 260.0
+      "median_ms": 130.0
     },
     {
       "name": "config-json",
       "runs": 20,
-      "median_ms": 160.0
+      "median_ms": 75.0
     },
     {
       "name": "status-redraw",
       "runs": 20,
-      "median_ms": 5.0
+      "median_ms": 1.0
     },
     {
       "name": "quota-parser",
       "runs": 20,
-      "median_ms": 5.0
+      "median_ms": 1.0
     },
     {
       "name": "quota-cold-mock",
       "runs": 20,
-      "median_ms": 8.0
+      "median_ms": 1.5
     },
     {
       "name": "quota-warm-mock",
       "runs": 20,
-      "median_ms": 5.0
+      "median_ms": 1.0
     }
   ]
 }

@@ -205,10 +205,10 @@ def test_in_process_command_perf_budgets(monkeypatch, tmp_path):
         "diagnostics agy --json": ["diagnostics", "agy", "--json"],
     }
     budgets_ms = {
-        "config show --json": 60.0,
-        "list agy --json": 100.0,
-        "status agy p1 --json": 80.0,
-        "diagnostics agy --json": 180.0,
+        "config show --json": 12.0,
+        "list agy --json": 12.0,
+        "status agy p1 --json": 6.0,
+        "diagnostics agy --json": 35.0,
     }
     failures = []
 

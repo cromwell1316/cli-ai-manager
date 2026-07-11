@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H44_Performance_Baseline_Refresh_And_Budget
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -42,6 +42,16 @@ pytest -q
 
 Acceptance target: benchmark guardrails reflect the optimized steady state and
 continue to catch meaningful regressions.
+
+## Completion Notes
+
+- Captured two `all` benchmark runs with `--iterations 20` on Python 3.11.9.
+- Tightened `management/benchmark_baselines/local_default.json` for all measured
+  sections, using rounded conservative medians instead of single-run minima.
+- Tightened in-process command budgets while keeping headroom for local host
+  noise.
+- Left cold subprocess command budgets looser than in-process budgets because
+  they include interpreter startup, import cost, and filesystem variance.
 
 ## Files
 

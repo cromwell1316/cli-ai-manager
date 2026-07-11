@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H44_Performance_Baseline_Refresh_And_Budget
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,3 +26,9 @@ with clear headroom.
 
 Performance guardrails become stricter where evidence supports it and remain
 practical for normal development runs.
+
+## Result
+
+The local default benchmark baseline now reflects the post-H38/H40/H41/H42/H43
+steady state with materially lower medians. Guardrails remain conservative for
+cold subprocess paths and stricter for stable in-process paths.
