@@ -67,6 +67,65 @@ def test_config_health_payload_resolves_live_process_backend(monkeypatch, tmp_pa
     assert payload["process_limits"]["quota"]["backend"] == "live-test-backend"
 
 
+def test_fast_diagnostics_does_not_resolve_live_process_backend(monkeypatch, tmp_path):
+    from cli_profile_manager import diagnostics, process_policy
+
+    monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
+    monkeypatch.setenv("AI_MAN_CODEX_HOME", str(tmp_path / "codex-homes"))
+    monkeypatch.setenv("AI_MAN_CLAUDE_HOME", str(tmp_path / "claude-homes"))
+    monkeypatch.setenv("AI_MAN_METADATA_DIR", str(tmp_path / "metadata"))
+    monkeypatch.setenv("AI_MAN_WSL_HOME", str(tmp_path / "wsl"))
+    monkeypatch.setenv("AI_MAN_WINDOWS_HOME", str(tmp_path / "windows"))
+
+    def fail_select_backend(*args, **kwargs):
+        raise AssertionError("fast diagnostics must not resolve live process backend")
+
+    monkeypatch.setattr(process_policy, "select_backend", fail_select_backend)
+
+    payload = diagnostics.diagnostics_payload(
+        "agy",
+        status_provider=lambda tool, num: None,
+        profile_index_provider=lambda tool: {
+            "occupied_profiles": [],
+            "display_profiles": [1],
+        },
+        mode="fast",
+    )
+
+    assert payload["mode"] == "fast"
+    assert payload["config_health"]["mode"] == "fast"
+    assert payload["config_health"]["live_checks"] is False
+    assert payload["process_limits"]["systemd_user_scope_check"] == "skipped_fast_diagnostics"
+    assert payload["process_limits"]["policies"]["launch"]["backend"] == "systemd-run-check-skipped"
+
+
+def test_deep_diagnostics_keeps_live_config_health(monkeypatch, tmp_path):
+    from cli_profile_manager import diagnostics, process_policy
+
+    monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
+    monkeypatch.setenv("AI_MAN_CODEX_HOME", str(tmp_path / "codex-homes"))
+    monkeypatch.setenv("AI_MAN_CLAUDE_HOME", str(tmp_path / "claude-homes"))
+    monkeypatch.setenv("AI_MAN_METADATA_DIR", str(tmp_path / "metadata"))
+    monkeypatch.setenv("AI_MAN_WSL_HOME", str(tmp_path / "wsl"))
+    monkeypatch.setenv("AI_MAN_WINDOWS_HOME", str(tmp_path / "windows"))
+    monkeypatch.setattr(process_policy, "select_backend", lambda policy, needs_pty=False: "live-test-backend")
+
+    payload = diagnostics.diagnostics_payload(
+        "agy",
+        status_provider=lambda tool, num: None,
+        profile_index_provider=lambda tool: {
+            "occupied_profiles": [],
+            "display_profiles": [1],
+        },
+        mode="deep",
+    )
+
+    assert payload["mode"] == "deep"
+    assert payload["config_health"]["mode"] == "health"
+    assert payload["config_health"]["live_checks"] is True
+    assert payload["process_limits"]["policies"]["launch"]["backend"] == "live-test-backend"
+
+
 def test_config_show_json_stays_fast_and_redacted(monkeypatch, tmp_path):
     env = config_env(tmp_path)
     env.update({

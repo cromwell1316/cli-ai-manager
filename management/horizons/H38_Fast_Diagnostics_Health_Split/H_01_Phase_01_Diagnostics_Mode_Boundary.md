@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H38_Fast_Diagnostics_Health_Split/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,9 @@ Define the exact payload boundary between fast diagnostics and deep diagnostics.
 - Keep field names stable where possible.
 - Treat process backend probing as a deep diagnostics concern.
 - Do not change user-visible command names or flags.
+
+## Result
+
+The diagnostics payload still exposes `config_health` and `effective_config` in
+both modes. Fast mode sources them from non-live effective config data; deep
+mode sources them from the live health payload.

@@ -263,22 +263,29 @@ def diagnostics_payload(
 ):
     from .runtime_service import service_status
     from .safety import command_inventory
-    from .config import config_health_payload
 
     if _invalid_mode(mode):
         raise ValueError(f"unknown diagnostics mode: {mode}")
 
     selected_tools = [tool_key] if tool_key else list(TOOLS)
-    config_health = config_health_payload()
     if mode == "deep":
+        from .config import config_health_payload
         from .audit import diagnostics_payload as audit_diagnostics
         from .interactive import quota_runtime_snapshot
         from .process_policy import diagnostics_payload as process_policy_diagnostics
 
+        config_health = config_health_payload()
         audit_payload = audit_diagnostics()
         process_limits = process_policy_diagnostics()
         quota_runtime = quota_runtime_snapshot(tool_key)
     else:
+        from .config import effective_config_payload
+
+        config_payload = effective_config_payload(include_sources=True, include_internal=True, include_health=False)
+        config_health = {
+            "health": config_payload["config_health"],
+            "settings": config_payload["settings_by_key"],
+        }
         audit_payload = fast_audit_diagnostics()
         process_limits = fast_process_policy_diagnostics()
         quota_runtime = fast_quota_runtime_snapshot(tool_key)

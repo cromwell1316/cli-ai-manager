@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H38_Fast_Diagnostics_Health_Split/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -42,6 +42,16 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 
 Acceptance target: fast diagnostics avoids live process backend checks while
 deep diagnostics still reports full health data.
+
+## Implementation Result
+
+- Fast diagnostics now builds configuration data through the non-live effective
+  config path.
+- Deep diagnostics keeps the full live config health path.
+- Regression tests cover both the fast no-probe contract and the deep health
+  contract.
+- Runtime benchmark evidence was captured with `command-diagnostics-agy-json`
+  median at 65.947ms in the validation run.
 
 ## Files
 
