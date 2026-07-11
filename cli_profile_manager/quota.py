@@ -247,7 +247,7 @@ def parse_fraction_value(line):
 
 
 def add_agy_line_limit(quota, line, fallback_index=1):
-    if not re.search(r"\b(quota|limit|usage|remaining|left|available|used|refresh|reset|messages?|tasks?|requests?|tokens?|daily|today|local|cloud|gemini|claude|gpt)\b", line, re.I):
+    if not re.search(r"\b(quota|limit|usage|remaining|left|available|used|refresh|reset|messages?|tasks?|requests?|tokens?|daily|today|local|cloud|gemini|claude|chatgpt|gpt|openai)\b", line, re.I):
         return False
     key, label = generic_quota_key_and_label(line, fallback_index)
     if key is None:
@@ -290,7 +290,7 @@ def codex_status_limit_line(line):
 def agy_model_name_from_line(line):
     if "quota pools" in line.lower() or "," in line or len(line) > 72:
         return None
-    match = re.search(r"\b(?:Gemini|Claude|GPT)\s+[A-Za-z0-9 .()/-]+", line)
+    match = re.search(r"\b(?:Gemini|Claude|ChatGPT|GPT|OpenAI)\s+[A-Za-z0-9 .()/-]+", line)
     if not match:
         return None
     return match.group(0).strip()
@@ -713,8 +713,8 @@ def agy_model_quota_label(model):
         label = "P"
     elif "claude" in model_l:
         label = "C"
-    elif "gpt" in model_l:
-        label = "G"
+    elif "chatgpt" in model_l or "gpt" in model_l or "openai" in model_l:
+        return "GPT"
     else:
         return None
 

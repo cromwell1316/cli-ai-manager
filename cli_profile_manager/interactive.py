@@ -99,7 +99,7 @@ def safety_decision(operation, command=None, tool=None, profile=None, target=Non
     _safety().audit_decision(_audit(), decision)
     return decision
 
-AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
+AGY_DEFAULT_QUOTA_COLUMNS = ["FM", "FH", "FL", "PL", "PH", "CS", "CO", "GPT"]
 SETTINGS_METADATA_KEY = "_settings"
 QUOTA_REFRESH_SETTING_KEY = "quota_refresh_seconds"
 DEVELOPER_MODE_SETTING_KEY = "developer_mode"

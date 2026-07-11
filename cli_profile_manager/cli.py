@@ -525,8 +525,8 @@ def agy_quota_label(model):
         label = "P"
     elif "claude" in model_l:
         label = "C"
-    elif "gpt" in model_l:
-        label = "G"
+    elif "chatgpt" in model_l or "gpt" in model_l or "openai" in model_l:
+        return "GPT"
     else:
         return model[:8]
 
@@ -557,6 +557,7 @@ def agy_quota_entries(quota):
         "PH": 5,
         "CS": 6,
         "CO": 7,
+        "GPT": 8,
     }
     entries = []
     for idx, (name, data) in enumerate(limits.items()):

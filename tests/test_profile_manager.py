@@ -391,6 +391,9 @@ def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
         Gemini 3.1 Pro (High)
         [███░░░░░░░] 5.00%
         5% remaining · Refreshes in 76h 19m
+        ChatGPT 5
+        [██████████] 100.00%
+        Quota available
         """,
     )
 
@@ -400,7 +403,8 @@ def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
     assert quota["limits"]["gemini_3_5_flash_low"]["percent"] == 0
     assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
     assert quota["limits"]["gemini_3_1_pro_high"]["percent"] == 5
-    assert quota_summary({"quota": quota}) == "FM:0% FH:0% FL:0% PL:5% PH:5%"
+    assert quota["limits"]["chatgpt_5"]["percent"] == 100
+    assert quota_summary({"quota": quota}) == "FM:0% FH:0% FL:0% PL:5% PH:5% GPT:100%"
 
 
 def test_interactive_agy_quota_columns_split_model_limits():
@@ -415,14 +419,15 @@ def test_interactive_agy_quota_columns_split_model_limits():
                 "gemini_3_1_pro_low": {"model": "Gemini 3.1 Pro (Low)", "percent": 5},
                 "claude_sonnet_4_6_thinking": {"model": "Claude Sonnet 4.6 (Thinking)", "percent": 100},
                 "claude_opus_4_1": {"model": "Claude Opus 4.1", "percent": 100},
+                "chatgpt_5": {"model": "ChatGPT 5", "percent": 88},
             },
         },
     }
 
     columns = agy_status_quota_columns([status])
 
-    assert columns[:7] == ["FM", "FH", "FL", "PL", "PH", "CS", "CO"]
-    assert agy_quota_cells(status, columns)[:7] == ["0%", "94%", "", "5%", "", "100%", "100%"]
+    assert columns[:8] == ["FM", "FH", "FL", "PL", "PH", "CS", "CO", "GPT"]
+    assert agy_quota_cells(status, columns)[:8] == ["0%", "94%", "", "5%", "", "100%", "100%", "88%"]
 
 
 def test_codex_quota_parser_extracts_status_limit_variants():
@@ -1994,6 +1999,8 @@ def test_agy_quota_snapshot_ready_rejects_partial_all_models_capture():
     Claude Sonnet 4.6 (Thinking)
     [██████████] 100.00%
     Claude Opus 4.6 (Thinking)
+    [██████████] 100.00%
+    ChatGPT 5
     [██████████] 100.00%
     """
 
