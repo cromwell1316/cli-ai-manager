@@ -391,7 +391,7 @@ def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
         Gemini 3.1 Pro (High)
         [███░░░░░░░] 5.00%
         5% remaining · Refreshes in 76h 19m
-        ChatGPT 5
+        GPT-OSS 120B (Medium)
         [██████████] 100.00%
         Quota available
         """,
@@ -403,7 +403,7 @@ def test_agy_quota_parser_extracts_all_model_rows_from_usage_output():
     assert quota["limits"]["gemini_3_5_flash_low"]["percent"] == 0
     assert quota["limits"]["gemini_3_1_pro_low"]["percent"] == 5
     assert quota["limits"]["gemini_3_1_pro_high"]["percent"] == 5
-    assert quota["limits"]["chatgpt_5"]["percent"] == 100
+    assert quota["limits"]["gpt_oss_120b_medium"]["percent"] == 100
     assert quota_summary({"quota": quota}) == "FM:0% FH:0% FL:0% PL:5% PH:5% GPT:100%"
 
 

@@ -290,7 +290,7 @@ def codex_status_limit_line(line):
 def agy_model_name_from_line(line):
     if "quota pools" in line.lower() or "," in line or len(line) > 72:
         return None
-    match = re.search(r"\b(?:Gemini|Claude|ChatGPT|GPT|OpenAI)\s+[A-Za-z0-9 .()/-]+", line)
+    match = re.search(r"\b(?:Gemini|Claude|ChatGPT|OpenAI)\s+[A-Za-z0-9 .()/-]+|\bGPT(?:[\s_-]+[A-Za-z0-9 .()/-]+)?", line)
     if not match:
         return None
     return match.group(0).strip()
