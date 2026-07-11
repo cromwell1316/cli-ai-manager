@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H42_Operations_Lazy_Import_Slimming/README.
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,3 +26,11 @@ dependencies behind lazy boundaries.
 
 Cold import and simple command startup improve without changing command output
 or operation result contracts.
+
+## Result
+
+`operations` now imports only the common metadata/path layer at module import.
+Command-specific dependencies are loaded through local lazy accessors when their
+operation path actually needs them. The operation result classes and payload
+schemas remain unchanged, while subprocess smoke coverage verifies that heavy
+modules are deferred after a plain `operations` import.

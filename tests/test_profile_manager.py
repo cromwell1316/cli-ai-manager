@@ -128,6 +128,69 @@ def test_parser_help_detection_ignores_launch_passthrough_help(monkeypatch, tmp_
     assert pm.is_parser_help_request(["launch", "agy", "p1", "--", "--help"]) is False
 
 
+def test_operations_import_defers_command_specific_dependencies(tmp_path):
+    env = os.environ.copy()
+    env.update(
+        {
+            "AI_MAN_AGY_HOME": str(tmp_path / "agy-homes"),
+            "AI_MAN_CODEX_HOME": str(tmp_path / "codex-homes"),
+            "AI_MAN_CLAUDE_HOME": str(tmp_path / "claude-homes"),
+            "AI_MAN_METADATA_DIR": str(tmp_path / "metadata"),
+            "AI_MAN_WSL_HOME": str(tmp_path / "wsl"),
+            "AI_MAN_WINDOWS_HOME": str(tmp_path / "windows"),
+        }
+    )
+    code = r"""
+import json
+import sys
+
+from cli_profile_manager import operations
+
+deferred_after_import = {
+    name: name in sys.modules
+    for name in (
+        "cli_profile_manager.audit",
+        "cli_profile_manager.config",
+        "cli_profile_manager.process_policy",
+        "cli_profile_manager.runtime_service",
+        "cli_profile_manager.sync",
+        "cli_profile_manager.credentials.agy",
+        "cli_profile_manager.credentials.claude",
+        "cli_profile_manager.credentials.codex",
+    )
+}
+
+operations.config_show_operation()
+
+print(json.dumps({
+    "deferred_after_import": deferred_after_import,
+    "config_loaded_after_use": "cli_profile_manager.config" in sys.modules,
+}))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload["deferred_after_import"] == {
+        "cli_profile_manager.audit": False,
+        "cli_profile_manager.config": False,
+        "cli_profile_manager.process_policy": False,
+        "cli_profile_manager.runtime_service": False,
+        "cli_profile_manager.sync": False,
+        "cli_profile_manager.credentials.agy": False,
+        "cli_profile_manager.credentials.claude": False,
+        "cli_profile_manager.credentials.codex": False,
+    }
+    assert payload["config_loaded_after_use"] is True
+
+
 def test_in_process_command_perf_budgets(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     agy_token = tmp_path / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json"

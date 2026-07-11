@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from dataclasses import dataclass, field
 import os
-import shutil
-from typing import Any
 
-from cli_profile_manager import audit, process_policy, runtime_service, sync
-from cli_profile_manager.config import config_health_payload, effective_config_payload
-from cli_profile_manager.credentials import agy as agy_credentials
-from cli_profile_manager.credentials import claude as claude_credentials
-from cli_profile_manager.credentials import codex as codex_credentials
-from cli_profile_manager.credentials import common as credentials_common
 from cli_profile_manager.metadata import label_profile, load_metadata
 from cli_profile_manager.paths import (
     DISPLAY_SLOT_COUNT,
@@ -43,18 +34,30 @@ RESULT_NO_TOKEN = "no_token"
 RESULT_RUNTIME_FAILURE = "runtime_failure"
 core_quota_payload = None
 run_persistent_cli_quota_snapshot = None
+core_audit = None
+core_process_policy = None
+core_runtime_service = None
+core_sync = None
+core_config = None
+core_agy_credentials = None
+core_claude_credentials = None
+core_codex_credentials = None
+core_credentials_common = None
+core_shutil = None
 DEFAULT_AGY_QUOTA_TIMEOUT_SECONDS = 120
 DEFAULT_QUOTA_TIMEOUT_SECONDS = 20
 
 
-@dataclass
 class OperationResult:
-    status: str
-    exit_code: int
-    payload: dict[str, Any] = field(default_factory=dict)
-    message: str | None = None
-    error_type: str | None = None
-    exception: Exception | None = None
+    __slots__ = ("status", "exit_code", "payload", "message", "error_type", "exception")
+
+    def __init__(self, status, exit_code, payload=None, message=None, error_type=None, exception=None):
+        self.status = status
+        self.exit_code = exit_code
+        self.payload = {} if payload is None else payload
+        self.message = message
+        self.error_type = error_type
+        self.exception = exception
 
     @property
     def ok(self):
@@ -71,25 +74,50 @@ class OperationResult:
         }
 
 
-@dataclass(frozen=True)
 class FileFact:
-    path: str
-    exists: bool
-    mtime_ns: int | None = None
-    size: int | None = None
+    __slots__ = ("path", "exists", "mtime_ns", "size")
+
+    def __init__(self, path, exists, mtime_ns=None, size=None):
+        self.path = path
+        self.exists = exists
+        self.mtime_ns = mtime_ns
+        self.size = size
 
 
-@dataclass(frozen=True)
 class ProfileFact:
-    tool_key: str
-    num: int
-    home: str
-    home_fact: FileFact
-    credential: FileFact
-    account: FileFact | None = None
-    agy_log_dir: FileFact | None = None
-    windows_credential: FileFact | None = None
-    agy_cli_token: FileFact | None = None
+    __slots__ = (
+        "tool_key",
+        "num",
+        "home",
+        "home_fact",
+        "credential",
+        "account",
+        "agy_log_dir",
+        "windows_credential",
+        "agy_cli_token",
+    )
+
+    def __init__(
+        self,
+        tool_key,
+        num,
+        home,
+        home_fact,
+        credential,
+        account=None,
+        agy_log_dir=None,
+        windows_credential=None,
+        agy_cli_token=None,
+    ):
+        self.tool_key = tool_key
+        self.num = num
+        self.home = home
+        self.home_fact = home_fact
+        self.credential = credential
+        self.account = account
+        self.agy_log_dir = agy_log_dir
+        self.windows_credential = windows_credential
+        self.agy_cli_token = agy_cli_token
 
 
 def success(payload=None, message=None, exit_code=EXIT_OK):
@@ -129,6 +157,96 @@ def _profile_num_from_name(name):
     if name.startswith("p") and name[1:].isdigit():
         return int(name[1:])
     return None
+
+
+def _audit():
+    global core_audit
+    if core_audit is None:
+        from cli_profile_manager import audit as module
+
+        core_audit = module
+    return core_audit
+
+
+def _process_policy():
+    global core_process_policy
+    if core_process_policy is None:
+        from cli_profile_manager import process_policy as module
+
+        core_process_policy = module
+    return core_process_policy
+
+
+def _runtime_service():
+    global core_runtime_service
+    if core_runtime_service is None:
+        from cli_profile_manager import runtime_service as module
+
+        core_runtime_service = module
+    return core_runtime_service
+
+
+def _sync():
+    global core_sync
+    if core_sync is None:
+        from cli_profile_manager import sync as module
+
+        core_sync = module
+    return core_sync
+
+
+def _config():
+    global core_config
+    if core_config is None:
+        from cli_profile_manager import config as module
+
+        core_config = module
+    return core_config
+
+
+def _agy_credentials():
+    global core_agy_credentials
+    if core_agy_credentials is None:
+        from cli_profile_manager.credentials import agy as module
+
+        core_agy_credentials = module
+    return core_agy_credentials
+
+
+def _claude_credentials():
+    global core_claude_credentials
+    if core_claude_credentials is None:
+        from cli_profile_manager.credentials import claude as module
+
+        core_claude_credentials = module
+    return core_claude_credentials
+
+
+def _codex_credentials():
+    global core_codex_credentials
+    if core_codex_credentials is None:
+        from cli_profile_manager.credentials import codex as module
+
+        core_codex_credentials = module
+    return core_codex_credentials
+
+
+def _credentials_common():
+    global core_credentials_common
+    if core_credentials_common is None:
+        from cli_profile_manager.credentials import common as module
+
+        core_credentials_common = module
+    return core_credentials_common
+
+
+def _shutil():
+    global core_shutil
+    if core_shutil is None:
+        import shutil as module
+
+        core_shutil = module
+    return core_shutil
 
 
 def _windows_agy_credential_num(name):
@@ -196,7 +314,7 @@ class ProfileIndex:
                 account=account,
                 agy_log_dir=_file_fact(os.path.join(home, ".gemini", "antigravity-cli", "log")) if self.tool_key == "agy" else None,
                 windows_credential=_file_fact(agy_windows_credential_path(n, self.base_dir)) if self.tool_key == "agy" else None,
-                agy_cli_token=_file_fact(os.path.join(home, agy_credentials.AGY_CLI_TOKEN_FILE)) if self.tool_key == "agy" else None,
+                agy_cli_token=_file_fact(os.path.join(home, _agy_credentials().AGY_CLI_TOKEN_FILE)) if self.tool_key == "agy" else None,
             )
         return self._facts[n]
 
@@ -336,23 +454,23 @@ def quota_probe_runner(tool_key, runner=None):
 
 
 def account_email_from_google_accounts(home):
-    return agy_credentials.account_email_from_profile(home, TOOLS["agy"]["acct_file"])
+    return _agy_credentials().account_email_from_profile(home, TOOLS["agy"]["acct_file"])
 
 
 def decode_windows_agy_credential(win_cred_path):
-    return agy_credentials.decode_windows_credential(win_cred_path)
+    return _agy_credentials().decode_windows_credential(win_cred_path)
 
 
 def read_wsl_agy_oauth(token_path):
-    return agy_credentials.read_wsl_oauth(token_path)
+    return _agy_credentials().read_wsl_oauth(token_path)
 
 
 def build_windows_agy_credential(token_data, account=None):
-    return agy_credentials.build_windows_credential(token_data, account)
+    return _agy_credentials().build_windows_credential(token_data, account)
 
 
 def import_windows_agy_credential(win_cred_path, profile_num):
-    return agy_credentials.import_windows_credential(
+    return _agy_credentials().import_windows_credential(
         win_cred_path,
         profile_home("agy", profile_num),
         credential_path("agy", profile_num),
@@ -361,7 +479,7 @@ def import_windows_agy_credential(win_cred_path, profile_num):
 
 
 def export_wsl_agy_credential(profile_num, win_cred_path):
-    return agy_credentials.export_wsl_credential(
+    return _agy_credentials().export_wsl_credential(
         credential_path("agy", profile_num),
         profile_home("agy", profile_num),
         win_cred_path,
@@ -421,7 +539,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None, profi
                 warnings.append(str(e))
                 email = f"invalid token: {e}"
         else:
-            read_agy_cli_token = getattr(agy_credentials, "read_agy_cli_token", None)
+            read_agy_cli_token = getattr(_agy_credentials(), "read_agy_cli_token", None)
             if read_agy_cli_token is not None:
                 agy_cli_token_exists = (
                     profile_fact.agy_cli_token.exists
@@ -451,7 +569,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None, profi
 
     if tool_key == "codex" and has_token:
         try:
-            email = codex_credentials.account_from_auth(cred_path)
+            email = _codex_credentials().account_from_auth(cred_path)
             token_state = "valid"
             account = email
         except Exception as e:
@@ -460,7 +578,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None, profi
             email = "logged in"
     elif tool_key == "claude" and has_token:
         try:
-            email = claude_credentials.account_summary(cred_path)
+            email = _claude_credentials().account_summary(cred_path)
             token_state = "valid"
             account = email
         except Exception as e:
@@ -595,9 +713,9 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
     if tool_key == "agy":
         dest_file = import_windows_agy_credential(source, n)
     else:
-        credentials_common.ensure_parent(dest_file)
+        _credentials_common().ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        shutil.copy2(source, tmp_path)
+        _shutil().copy2(source, tmp_path)
         os.replace(tmp_path, dest_file)
     return n, dest_file
 
@@ -681,9 +799,9 @@ def export_credential_file(tool_key, profile_num, to_path=None):
     if tool_key == "agy":
         export_wsl_agy_credential(profile_num, dest_file)
     else:
-        credentials_common.ensure_parent(dest_file)
+        _credentials_common().ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
-        shutil.copy2(src_file, tmp_path)
+        _shutil().copy2(src_file, tmp_path)
         os.replace(tmp_path, dest_file)
     return dest_file
 
@@ -733,7 +851,7 @@ def clear_profile_data(tool_key, n):
     if not target.startswith(base + os.sep):
         raise ValueError(f"refusing to clear unsafe path: {target}")
     if os.path.exists(home):
-        shutil.rmtree(home)
+        _shutil().rmtree(home)
     return home
 
 
@@ -750,7 +868,7 @@ def clear_profile_operation(tool_key, profile):
 
 def sync_profiles_noninteractive(direction, mode, dry_run=False, yes=False):
     src_base, dst_base = resolve_sync_bases(direction)
-    return sync.sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
+    return _sync().sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run, yes)
 
 
 def sync_profiles_operation(direction, mode, dry_run=False, yes=False):
@@ -765,15 +883,16 @@ def sync_profiles_operation(direction, mode, dry_run=False, yes=False):
 
 
 def config_show_operation(include_sources=False, filter_text=None):
-    return success(effective_config_payload(include_sources=include_sources, filter_text=filter_text))
+    return success(_config().effective_config_payload(include_sources=include_sources, filter_text=filter_text))
 
 
 def config_health_operation():
-    payload = config_health_payload()
+    payload = _config().config_health_payload()
     return success({"ok": True, **payload})
 
 
 def audit_operation(action, **kwargs):
+    audit = _audit()
     if action == "status":
         return success(audit.status_payload())
     if action == "list":
@@ -804,6 +923,7 @@ def audit_operation(action, **kwargs):
 
 
 def runtime_service_operation(action, profile_manager_path=None):
+    runtime_service = _runtime_service()
     if action == "status":
         payload = {"ok": True, "service": runtime_service.service_status()}
         try:
@@ -828,7 +948,7 @@ def runtime_service_operation(action, profile_manager_path=None):
 def prepare_launch_command(tool_key, n, extra_args=None):
     tool = TOOLS[tool_key]
     cmd = [tool["cmd"]] + list(extra_args or [])
-    return process_policy.prepare_popen(
+    return _process_policy().prepare_popen(
         cmd,
         tier="launch",
         needs_pty=False,

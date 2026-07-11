@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H42_Operations_Lazy_Import_Slimming/README.
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,21 @@ Move selected heavy imports behind command-specific execution paths.
 - Keep public modules importable.
 - Do not change result classes or payload schemas.
 - Keep lazy imports close to the code that uses them.
+
+## Implementation
+
+- Added cached lazy accessors inside `cli_profile_manager.operations` for:
+  `_audit`, `_process_policy`, `_runtime_service`, `_sync`, `_config`,
+  `_agy_credentials`, `_claude_credentials`, `_codex_credentials`,
+  `_credentials_common`, and `_shutil`.
+- Rewired config, audit, service, sync, launch preparation, status,
+  import/export, and clear helpers to call those accessors only on demand.
+- Replaced `dataclass` DTO declarations with explicit lightweight classes using
+  the same constructor arguments and attributes.
+- Added `test_operations_import_defers_command_specific_dependencies` to lock
+  the lazy import boundary in a clean subprocess.
+
+## Deferred Changes
+
+- `metadata` and `paths` remain top-level because most operation flows need
+  them immediately and moving them would create more risk than measured benefit.
