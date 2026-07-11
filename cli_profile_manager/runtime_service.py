@@ -302,7 +302,7 @@ def execute_argv(argv, state=None):
     os.environ["AI_MAN_SERVICE"] = "0"
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            rc = cli.run_cli(list(argv))
+            rc = cli.run_cli(list(argv), parser_factory=cli.runtime_command_parser)
         return {
             "ok": True,
             "returncode": 0 if rc is None else rc,

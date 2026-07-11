@@ -64,6 +64,7 @@ core_shutil = None
 core_shlex = None
 core_subprocess = None
 core_runtime_service = None
+_RUNTIME_COMMAND_PARSER = None
 core_audit = None
 core_safety = None
 core_operations = None
@@ -1651,6 +1652,18 @@ def build_parser():
 
     return parser
 
+
+def runtime_command_parser():
+    global _RUNTIME_COMMAND_PARSER
+    if _RUNTIME_COMMAND_PARSER is None:
+        _RUNTIME_COMMAND_PARSER = build_parser()
+    return _RUNTIME_COMMAND_PARSER
+
+
+def reset_runtime_command_parser_cache():
+    global _RUNTIME_COMMAND_PARSER
+    _RUNTIME_COMMAND_PARSER = None
+
 def normalize_launch_argv(argv):
     if not argv or argv[0] != "launch" or "--" in argv[:1]:
         return argv
@@ -1697,7 +1710,7 @@ def is_parser_help_request(argv):
     return any(item in ("-h", "--help") for item in argv[:passthrough_index])
 
 
-def run_cli(argv):
+def run_cli(argv, parser_factory=None):
     argv = normalize_launch_argv(argv)
     if should_use_service(argv):
         result = try_run_service_command(argv)
@@ -1713,7 +1726,8 @@ def run_cli(argv):
         _audit().write_event(audit_started)
         audit_corr_token = _audit().CURRENT_CORRELATION_ID.set(audit_started["correlation_id"])
         audit_parent_token = _audit().CURRENT_PARENT_ID.set(audit_started["event_id"])
-    parser = build_parser()
+    parser_factory = runtime_command_parser if parser_factory is None else parser_factory
+    parser = parser_factory()
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         return None

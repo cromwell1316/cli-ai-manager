@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H40_Cached_Command_Parser_For_Runtime_Servi
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,9 @@ Add and validate a cached parser accessor for runtime-service command handling.
 - Scope the cache to the current process.
 - Keep parser construction single-thread safe for expected runtime-service use.
 - Avoid broad command dispatch refactors.
+
+## Result
+
+Added `runtime_command_parser()` and `reset_runtime_command_parser_cache()`.
+In-process command execution uses the cached accessor while public parser
+creation through `build_parser()` remains unchanged.

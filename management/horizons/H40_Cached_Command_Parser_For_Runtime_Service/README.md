@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H40_Cached_Command_Parser_For_Runtime_Servi
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: completed.
 
 ## Purpose
 
@@ -41,6 +41,17 @@ python3 scripts/benchmark_runtime.py --scenario command-execute
 
 Acceptance target: runtime-service command execution avoids parser rebuild cost
 without changing command behavior.
+
+## Implementation Result
+
+- `build_parser()` remains a fresh parser factory for normal CLI startup and
+  tests.
+- In-process command execution now uses a process-local cached parser accessor,
+  including runtime-service requests.
+- Repeated parse coverage proves namespaces do not leak state across commands.
+- Runtime execution coverage proves repeated in-process commands build the
+  parser once per process unless a caller explicitly supplies a fresh factory.
+- Benchmark evidence was captured for `parse-args` and `command-execute`.
 
 ## Files
 

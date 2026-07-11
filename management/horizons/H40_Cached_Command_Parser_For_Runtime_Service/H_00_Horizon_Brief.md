@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H40_Cached_Command_Parser_For_Runtime_Servi
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,3 +26,9 @@ for the long-lived runtime-service execution path.
 
 Runtime-service commands avoid parser rebuild overhead while public CLI parsing
 and tests retain fresh-parser semantics.
+
+## Completion Notes
+
+In-process `run_cli` execution now uses the cached parser accessor by default,
+which also covers runtime-service requests. Callers that need a fresh parser can
+still call `build_parser()` directly or pass it as `parser_factory`.
