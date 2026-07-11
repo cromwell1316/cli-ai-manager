@@ -4,6 +4,7 @@ import io
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -2682,6 +2683,41 @@ def test_sync_only_managed_profile_files(monkeypatch, tmp_path):
     assert not (windows / "codex-homes" / "p1" / "site-packages").exists()
     assert not (windows / "codex-homes" / "p1" / "__pycache__").exists()
     assert (windows / "codex-homes" / "p9" / "node_modules" / "pkg" / "index.js").exists()
+    assert not (windows / "codex-homes" / "p9" / "auth.json").exists()
+
+
+def test_sync_manifest_for_managed_profile_roots_avoids_walk(monkeypatch, tmp_path):
+    from cli_profile_manager import sync
+
+    base = tmp_path / "codex-homes"
+    write_json(base / "p1" / "auth.json", {"OPENAI_API_KEY": "new"})
+    write_json(base / "p1" / "node_modules" / "pkg" / "index.js", {"ignored": True})
+
+    monkeypatch.setattr(sync.os, "walk", lambda *_args, **_kwargs: pytest.fail("managed sync manifest should not walk profile trees"))
+
+    manifest = sync.build_sync_manifest(base, "codex-homes")
+
+    assert sorted(str(path) for path in manifest) == ["p1/auth.json"]
+    assert manifest[Path("p1/auth.json")].size > 0
+    assert manifest[Path("p1/auth.json")].entry_type == "file"
+
+
+def test_sync_hard_uses_manifest_diff_to_skip_identical_files(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    wsl = tmp_path / "wsl"
+    windows = tmp_path / "windows"
+    source = wsl / "codex-homes" / "p1" / "auth.json"
+    dest = windows / "codex-homes" / "p1" / "auth.json"
+    write_json(source, {"OPENAI_API_KEY": "same"})
+    write_json(dest, {"OPENAI_API_KEY": "same"})
+    shutil.copy2(source, dest)
+    write_json(windows / "codex-homes" / "p9" / "auth.json", {"OPENAI_API_KEY": "old"})
+
+    result = pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=True)
+
+    assert result["copied"] == 0
+    assert result["skipped"] == 1
+    assert result["would_delete"] == 1
     assert not (windows / "codex-homes" / "p9" / "auth.json").exists()
 
 

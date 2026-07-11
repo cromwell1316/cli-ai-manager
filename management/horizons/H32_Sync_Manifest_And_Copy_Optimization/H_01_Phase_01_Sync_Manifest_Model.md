@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H32_Sync_Manifest_And_Copy_Optimization/REA
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: implemented.
 
 ## Objective
 
@@ -17,3 +17,9 @@ Represent sync input as a manifest with enough facts for diffing.
 - Known profile file collectors.
 - Destination managed-file collector.
 - Dry-run evidence format.
+
+## Result
+
+Sync planning now uses explicit manifests for source and destination roots.
+Managed profile roots collect only known profile/config files and record path,
+size, mtime, and entry type facts for diffing.

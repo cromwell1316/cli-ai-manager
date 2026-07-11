@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H32_Sync_Manifest_And_Copy_Optimization/REA
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H32_Sync_Manifest_And_Copy_Optimization/REA
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -43,6 +43,19 @@ python3 profile_manager.py sync --from wsl --mode soft --dry-run
 
 Acceptance target: same sync decisions with less filesystem traversal and faster
 dry-run output.
+
+## Implementation Evidence
+
+- Added `SyncManifestEntry` with relative path, absolute path, size, mtime, and
+  entry type facts.
+- Added manifest builders for managed AGY, Codex, Claude, and metadata roots
+  that collect only known files without walking profile trees.
+- Switched copy/delete planning to manifest diffs; hard sync skips identical
+  files by size and mtime while still deleting extra managed destination files.
+- Preserved AGY Windows/WSL credential conversion as a separate sync step.
+- Targeted validation passed:
+  - `pytest -q tests/test_profile_manager.py -k "sync"`
+  - `python3 profile_manager.py sync --from wsl --mode soft --dry-run --json`
 
 ## Files
 

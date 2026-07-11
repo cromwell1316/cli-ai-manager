@@ -1,5 +1,6 @@
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from .credentials.agy import (
@@ -43,6 +44,23 @@ PRUNED_DIR_NAMES = {
 }
 
 
+@dataclass(frozen=True)
+class SyncManifestEntry:
+    rel_path: Path
+    path: Path
+    size: int
+    mtime_ns: int
+    entry_type: str = "file"
+
+    def same_content_facts(self, other):
+        return (
+            other is not None
+            and self.entry_type == other.entry_type
+            and self.size == other.size
+            and self.mtime_ns == other.mtime_ns
+        )
+
+
 def profile_number_from_dir_name(name):
     if name.startswith("p") and name[1:].isdigit():
         return int(name[1:])
@@ -80,40 +98,72 @@ def deletion_preflight_paths(path):
     return sorted(paths)
 
 
-def sync_file_rel_paths(base, name):
+def manifest_entry(path, rel_path):
+    path = Path(path)
+    stat = path.stat()
+    return SyncManifestEntry(Path(rel_path), path, stat.st_size, stat.st_mtime_ns)
+
+
+def build_sync_manifest(base, name):
     if name in PROFILE_SYNC_FILES:
         if not base.exists():
-            return []
-        rel_paths = []
+            return {}
+        manifest = {}
         for profile_dir in base.iterdir():
             if not profile_dir.is_dir() or profile_number_from_dir_name(profile_dir.name) is None:
                 continue
             for rel_file in PROFILE_SYNC_FILES[name]:
                 candidate = profile_dir / rel_file
-                if candidate.exists() and candidate.is_file():
-                    rel_paths.append(Path(profile_dir.name) / rel_file)
-        return sorted(rel_paths)
+                if candidate.exists() and candidate.is_file() and not candidate.is_symlink():
+                    rel_path = Path(profile_dir.name) / rel_file
+                    manifest[rel_path] = manifest_entry(candidate, rel_path)
+                elif candidate.is_symlink():
+                    rel_path = Path(profile_dir.name) / rel_file
+                    manifest[rel_path] = SyncManifestEntry(rel_path, candidate, 0, 0, "symlink")
+        return dict(sorted(manifest.items()))
     if name in CONFIG_SYNC_FILES:
-        return sorted(rel_file for rel_file in CONFIG_SYNC_FILES[name] if (base / rel_file).exists())
-    return sync_file_rel_paths_by_walk(base)
+        manifest = {}
+        for rel_file in CONFIG_SYNC_FILES[name]:
+            candidate = base / rel_file
+            if candidate.exists() and candidate.is_file() and not candidate.is_symlink():
+                manifest[rel_file] = manifest_entry(candidate, rel_file)
+            elif candidate.is_symlink():
+                manifest[rel_file] = SyncManifestEntry(rel_file, candidate, 0, 0, "symlink")
+        return dict(sorted(manifest.items()))
+    return build_sync_manifest_by_walk(base)
 
 
-def sync_file_rel_paths_by_walk(base):
+def build_sync_manifest_by_walk(base):
     if not base.exists():
-        return []
-    rel_paths = []
+        return {}
+    manifest = {}
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if d not in PRUNED_DIR_NAMES]
         rel_root = Path(root).relative_to(base)
         for file_name in files:
-            rel_paths.append(rel_root / file_name)
-    return sorted(rel_paths)
+            path = Path(root) / file_name
+            rel_path = rel_root / file_name
+            if path.is_symlink():
+                manifest[rel_path] = SyncManifestEntry(rel_path, path, 0, 0, "symlink")
+            elif path.is_file():
+                manifest[rel_path] = manifest_entry(path, rel_path)
+    return dict(sorted(manifest.items()))
+
+
+def sync_file_rel_paths(base, name):
+    return sorted(build_sync_manifest(base, name))
+
+
+def sync_file_rel_paths_by_walk(base):
+    return sorted(build_sync_manifest_by_walk(base))
+
+
+def managed_destination_manifest(base, name):
+    return build_sync_manifest(base, name)
 
 
 def managed_destination_rel_paths(base, name):
-    if name in PROFILE_SYNC_FILES or name in CONFIG_SYNC_FILES:
-        return sync_file_rel_paths(base, name)
-    return sync_file_rel_paths_by_walk(base)
+    return sorted(managed_destination_manifest(base, name))
 
 
 def remove_empty_parents(path, stop_at):
@@ -204,23 +254,23 @@ def sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run=Fal
             continue
         if not path_is_within(dst, dst_base):
             raise PermissionError(f"refusing to sync unsafe destination path: {dst}")
-        src_rel_paths = sync_file_rel_paths(src, name)
+        src_manifest = build_sync_manifest(src, name)
+        dst_manifest = managed_destination_manifest(dst, name) if dst.exists() else {}
         if hard_mode and dst.exists():
-            src_rel_set = set(src_rel_paths)
-            for rel_path in managed_destination_rel_paths(dst, name):
-                if rel_path not in src_rel_set:
-                    dst_file = dst / rel_path
-                    delete_paths.append(str(dst_file))
-                    if not dry_run:
-                        try:
-                            dst_file.unlink()
-                        except FileNotFoundError:
-                            pass
-                        remove_empty_parents(dst_file, dst)
-        if not dry_run and src_rel_paths:
+            src_rel_set = set(src_manifest)
+            for rel_path in sorted(set(dst_manifest) - src_rel_set):
+                dst_file = dst / rel_path
+                delete_paths.append(str(dst_file))
+                if not dry_run:
+                    try:
+                        dst_file.unlink()
+                    except FileNotFoundError:
+                        pass
+                    remove_empty_parents(dst_file, dst)
+        if not dry_run and src_manifest:
             dst.mkdir(parents=True, exist_ok=True)
-        for rel_path in src_rel_paths:
-            src_file = src / rel_path
+        for rel_path, src_entry in src_manifest.items():
+            src_file = src_entry.path
             file_name = src_file.name
             if direction == "windows" and name == "agy-homes" and is_windows_agy_backup_name(file_name):
                 skipped += 1
@@ -231,7 +281,17 @@ def sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run=Fal
                 skipped_items.append({"source": str(src_file), "reason": "symlink"})
                 continue
             dst_file = dst / rel_path
-            if hard_mode or not dst_file.exists() or src_file.stat().st_mtime > dst_file.stat().st_mtime:
+            dst_entry = dst_manifest.get(rel_path)
+            should_copy = (
+                dst_entry is None
+                or dst_entry.entry_type != "file"
+                or (
+                    not src_entry.same_content_facts(dst_entry)
+                    if hard_mode
+                    else src_entry.size != dst_entry.size or src_entry.mtime_ns > dst_entry.mtime_ns
+                )
+            )
+            if should_copy:
                 copied += 1
                 copied_items.append({"source": str(src_file), "destination": str(dst_file)})
                 if not dry_run:
