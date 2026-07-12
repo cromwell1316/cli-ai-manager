@@ -47,5 +47,12 @@ symbol shortcuts, or credential submenu placement.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_UI_Contract_Snapshots.md`
+- `H_02_Phase_02_Action_Route_Tests.md`
+- `H_03_Phase_03_Terminal_Hygiene_Tests.md`
+- `H_04_Phase_04_CI_Integration.md`
 - `README.md`
-
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

@@ -46,5 +46,12 @@ closed, unavailable, or the repo is moved inside WSL.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Install_Layout.md`
+- `H_02_Phase_02_Source_Copy_And_Shims.md`
+- `H_03_Phase_03_Update_And_Rollback.md`
+- `H_04_Phase_04_CI_And_Runbook.md`
 - `README.md`
-
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

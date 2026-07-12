@@ -48,5 +48,13 @@ one shared definition and is reflected on both WSL and native Windows.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Surface_Inventory.md`
+- `H_02_Phase_02_Shared_Screen_Model.md`
+- `H_03_Phase_03_Platform_Renderer_Adapters.md`
+- `H_04_Phase_04_Workflow_Migration.md`
+- `H_05_Phase_05_Cleanup_And_Docs.md`
 - `README.md`
-
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

@@ -46,5 +46,12 @@ recover the live slot, and when separate Windows users are required.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_State_Model.md`
+- `H_02_Phase_02_User_Facing_Warnings.md`
+- `H_03_Phase_03_Lock_And_Recovery_Flows.md`
+- `H_04_Phase_04_Diagnostics_And_Docs.md`
 - `README.md`
-
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

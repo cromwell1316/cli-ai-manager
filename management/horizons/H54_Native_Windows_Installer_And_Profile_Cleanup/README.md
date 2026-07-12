@@ -50,5 +50,12 @@ can run `ai-man` without stale function conflicts or startup errors.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Profile_Conflict_Inventory.md`
+- `H_02_Phase_02_Cleanup_Command_And_Dry_Run.md`
+- `H_03_Phase_03_Installer_Integration.md`
+- `H_04_Phase_04_Rollback_And_Runbook.md`
 - `README.md`
-
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

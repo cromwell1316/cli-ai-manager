@@ -1,0 +1,25 @@
+# H_01 Phase 01 Profile Conflict Inventory
+
+Owner: cli-profile-manager
+Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cleanup/README.md
+Lifecycle: living
+Document Class: phase
+
+Status: planned.
+
+## Objective
+
+Identify PowerShell profile constructs that can shadow or break the installed
+application.
+
+## Work
+
+- Detect functions named `ai-man`, `profile-man`, `pman`, `agy`, and `codex`.
+- Detect dot-sourced files that no longer exist.
+- Detect PATH ordering that hides installed shims.
+
+## Exit Criteria
+
+Diagnostics can explain why `Get-Command ai-man` is not resolving to the
+installed shim.
+
