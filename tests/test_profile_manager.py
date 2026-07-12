@@ -2829,17 +2829,21 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
 def test_pilot_splash_lines_brand_startup():
     import cli_profile_manager.interactive as interactive
 
-    lines = interactive.pilot_splash_lines()
+    lines = interactive.pilot_splash_lines(size=(96, 24))
     rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
 
-    assert lines[:2] == ["", ""]
-    assert lines[-2:] == ["", ""]
+    assert len(lines) == 24
+    assert all(interactive.visible_len(line) == 96 for line in lines)
+    assert all(line.startswith(interactive.CLR_BG_BLACK) for line in lines)
     assert "██████" in rendered
     assert "AI profile control deck" in rendered
     assert "AGY" in rendered
     assert "Codex" in rendered
     assert "Claude" in rendered
-    assert interactive.CLR_ORANGE in next(line for line in lines if "Claude" in line)
+    assert interactive.CLR_BG_BLACK in next(line for line in lines if "██████" in line)
+    assert interactive.CLR_BRIGHT_RED in next(line for line in lines if "AGY" in line)
+    assert interactive.CLR_DARK_RED in next(line for line in lines if "Claude" in line)
+    assert interactive.ANSI_RE.sub("", next(line for line in lines if "██████" in line)).startswith(" " * 13)
     assert "Enter to continue" in rendered
     assert "q/Esc to exit" in rendered
 

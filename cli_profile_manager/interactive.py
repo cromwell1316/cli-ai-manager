@@ -68,6 +68,9 @@ CLR_ROYAL = "\033[38;5;33m"
 CLR_VIOLET = "\033[38;5;99m"
 CLR_MINT = "\033[38;5;48m"
 CLR_ORANGE = "\033[38;5;208m"
+CLR_BG_BLACK = "\033[40m"
+CLR_DARK_RED = "\033[38;5;88m"
+CLR_BRIGHT_RED = "\033[38;5;196m"
 
 
 def _audit():
@@ -1816,24 +1819,49 @@ def print_header(title=""):
         print(line)
 
 
-def pilot_splash_lines():
-    return [
-        "",
-        "",
-        f"{CLR_BOLD}{CLR_SKY}██████╗ ██╗██╗      ██████╗ ████████╗{CLR_MINT}     ██████╗██╗     ██╗{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_AZURE}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝{CLR_GREEN}    ██╔════╝██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_ROYAL}██████╔╝██║██║     ██║   ██║   ██║   {CLR_GREEN}    ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BLUE}██╔═══╝ ██║██║     ██║   ██║   ██║   {CLR_MINT}    ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_VIOLET}██║     ██║███████╗╚██████╔╝   ██║   {CLR_SKY}    ╚██████╗███████╗██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_WHITE}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝   {CLR_WHITE}     ╚═════╝╚══════╝╚═╝{CLR_RESET}",
-        "",
-        f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
-        f"{CLR_CYAN}● AGY{CLR_RESET}   {CLR_GREEN}● Codex{CLR_RESET}   {CLR_ORANGE}● Claude{CLR_RESET}",
-        "",
-        f"{CLR_BOLD}{CLR_CYAN}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_BOLD}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
-        "",
-        "",
+def _black_splash_line(text="", width=None):
+    width = max(1, width or terminal_size()[0])
+    body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
+    padding = " " * max(0, width - visible_len(body))
+    return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
+
+
+def _center_splash_line(text, width):
+    pad = max(0, (width - visible_len(text)) // 2)
+    return _black_splash_line((" " * pad) + text, width)
+
+
+def pilot_splash_lines(size=None):
+    width, height = size or terminal_size()
+    width = max(1, width)
+    height = max(1, height)
+    logo = [
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╗ ██╗██╗      ██████╗ ████████╗     ██████╗██╗     ██╗{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_RED}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝    ██╔════╝██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╔╝██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_RED}██╔═══╝ ██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}██║     ██║███████╗╚██████╔╝   ██║       ╚██████╗███████╗██║{CLR_RESET}",
+        f"{CLR_BOLD}{CLR_DARK_RED}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝        ╚═════╝╚══════╝╚═╝{CLR_RESET}",
     ]
+    divider = f"{CLR_DARK_RED}{'━' * min(56, width)}{CLR_RESET}"
+    content = (
+        logo
+        + [
+            "",
+            divider,
+            f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
+            f"{CLR_BRIGHT_RED}● AGY{CLR_RESET}   {CLR_RED}● Codex{CLR_RESET}   {CLR_DARK_RED}● Claude{CLR_RESET}",
+            divider,
+            "",
+            f"{CLR_BOLD}{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_RED}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
+        ]
+    )
+    top_padding = max(1, (height - len(content)) // 3)
+    lines = [_black_splash_line(width=width) for _ in range(top_padding)]
+    lines.extend(_center_splash_line(line, width) if line else _black_splash_line(width=width) for line in content)
+    while len(lines) < height:
+        lines.append(_black_splash_line(width=width))
+    return lines[:height]
 
 
 def show_startup_splash():
