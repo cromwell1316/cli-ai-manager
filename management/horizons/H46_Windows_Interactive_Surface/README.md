@@ -49,4 +49,11 @@ usable selector instead of falling back to direct-command help.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Terminal_Dependency_Audit.md`
+- `H_02_Phase_02_Windows_Input_And_Rendering_Adapter.md`
+- `H_03_Phase_03_Workflow_Parity_And_Docs.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

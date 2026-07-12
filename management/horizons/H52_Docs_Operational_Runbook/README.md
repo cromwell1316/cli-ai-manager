@@ -50,4 +50,11 @@ without relying on the external AGY multi-account notes.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Windows_And_WSL_Install_Runbook.md`
+- `H_02_Phase_02_Profile_Workflows_And_Sync_Runbook.md`
+- `H_03_Phase_03_Recovery_Diagnostics_And_Limitations.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

@@ -49,4 +49,11 @@ and command-surface regressions.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_CI_Scope_And_Secrets_Boundary.md`
+- `H_02_Phase_02_Workflow_Implementation.md`
+- `H_03_Phase_03_Local_Reproduction_And_Governance.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

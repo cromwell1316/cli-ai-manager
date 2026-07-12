@@ -49,4 +49,11 @@ the live Windows Credential Manager slot.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Scenario_Matrix_And_Fixtures.md`
+- `H_02_Phase_02_AGY_Conversion_And_Metadata_Parity.md`
+- `H_03_Phase_03_Mode_Safety_And_Diagnostics.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

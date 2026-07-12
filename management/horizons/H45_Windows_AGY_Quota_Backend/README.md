@@ -52,4 +52,11 @@ code paths.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Backend_Boundary_And_Command_Model.md`
+- `H_02_Phase_02_Helper_Integrated_Quota_Execution.md`
+- `H_03_Phase_03_Diagnostics_And_Regression_Coverage.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

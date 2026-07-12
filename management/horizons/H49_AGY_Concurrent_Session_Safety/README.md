@@ -51,4 +51,11 @@ sessions on Windows, including clear user warnings and recovery commands.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Concurrency_Drill_Design.md`
+- `H_02_Phase_02_Diagnostics_And_Live_Slot_Inspection.md`
+- `H_03_Phase_03_Policy_Warnings_And_Recovery.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`

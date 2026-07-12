@@ -47,4 +47,11 @@ without manually editing PowerShell scripts or exposing token blobs.
 
 ## Files
 
+- `H_00_Horizon_Brief.md`
+- `H_01_Phase_01_Command_Grammar_And_Safety_Model.md`
+- `H_02_Phase_02_Helper_And_Operations_Integration.md`
+- `H_03_Phase_03_Diagnostics_And_Runbook.md`
 - `README.md`
+- `V_00_Validation_Plan.md`
+- `V_01_Acceptance_Matrix.md`
+- `V_02_Phase_Verification.md`
