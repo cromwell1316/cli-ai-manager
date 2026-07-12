@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H50_Native_Windows_CI_Smoke_Matrix/README.m
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,11 @@ Define Windows CI scope without using real credentials.
 
 - Tests do not require AGY login.
 - Generated artifacts remain in temporary directories.
+
+## Completion Evidence
+
+- CI smoke uses `$env:RUNNER_TEMP` for `BinDir` and `AgyHome`.
+- Installer runs with `-NoPathUpdate`; verifier runs with `-SkipPathCheck` and
+  `-SkipCredentialCheck`.
+- The workflow installs only `requirements-dev.txt` and runs focused static and
+  pytest checks; no AGY, Codex, or Claude account secrets are required.

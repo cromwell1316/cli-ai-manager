@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H50_Native_Windows_CI_Smoke_Matrix/README.m
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,11 @@ Document local reproduction and governance evidence for Windows CI.
 
 - Developers can reproduce the CI smoke locally.
 - Horizon governance remains clean.
+
+## Completion Evidence
+
+- README documents `.\scripts\windows_ci_smoke.ps1` with temporary `BinDir` and
+  `AgyHome` arguments.
+- H50 validation commands now include py_compile, focused Windows tests,
+  governance, and full pytest.
+- Governance reports H50 as implemented with no issues or warnings.

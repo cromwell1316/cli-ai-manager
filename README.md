@@ -258,6 +258,20 @@ managed environments:
 .\scripts\verify_install_windows.ps1 -SkipCredentialCheck
 ```
 
+Native Windows CI smoke uses token-safe temporary paths and can be reproduced
+locally:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+.\scripts\windows_ci_smoke.ps1 `
+  -BinDir "$env:TEMP\ai-man-ci-bin" `
+  -AgyHome "$env:TEMP\ai-man-ci-agy-homes"
+```
+
+The smoke verifies syntax, focused Windows tests, shim/helper generation, and
+install verification with `-SkipPathCheck` and `-SkipCredentialCheck`; it does
+not require live AGY, Codex, or Claude credentials.
+
 If verification reports that the current shell PATH is stale, open a new
 PowerShell window. If PowerShell blocks scripts, run:
 

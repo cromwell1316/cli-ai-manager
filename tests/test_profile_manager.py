@@ -4502,6 +4502,25 @@ def test_windows_installer_and_verifier_use_same_shim_names():
     assert expected in verifier
 
 
+def test_windows_ci_smoke_contract_is_token_safe():
+    workflow = (ROOT / ".github" / "workflows" / "windows-smoke.yml").read_text(encoding="utf-8")
+    smoke = (ROOT / "scripts" / "windows_ci_smoke.ps1").read_text(encoding="utf-8")
+
+    assert "runs-on: windows-latest" in workflow
+    assert "actions/setup-python@v5" in workflow
+    assert "requirements-dev.txt" in workflow
+    assert ".\\scripts\\windows_ci_smoke.ps1" in workflow
+    assert "RUNNER_TEMP" in workflow
+
+    assert 'python -m pytest tests\\test_profile_manager.py -k "windows"' in smoke
+    assert ".\\install-windows.ps1" in smoke
+    assert "-NoPathUpdate" in smoke
+    assert ".\\scripts\\verify_install_windows.ps1" in smoke
+    assert "-SkipPathCheck" in smoke
+    assert "-SkipCredentialCheck" in smoke
+    assert "Invoke-WithAgyCredentialSlotLock" in smoke
+
+
 def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

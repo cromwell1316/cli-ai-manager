@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H50_Native_Windows_CI_Smoke_Matrix/README.m
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -18,5 +18,12 @@ Status: planned.
 ## Commands
 
 ```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows"
 python3 scripts/horizon_governance.py --json
+python3 -m pytest
 ```
+
+## Completion Evidence
+
+Phase verification is implemented by the Windows smoke workflow, the local
+PowerShell smoke script, focused Windows tests, and horizon governance.

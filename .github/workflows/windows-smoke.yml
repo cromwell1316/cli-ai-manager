@@ -1,0 +1,41 @@
+name: Windows Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-smoke:
+    name: Native Windows smoke
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run Windows smoke
+        shell: pwsh
+        run: |
+          .\scripts\windows_ci_smoke.ps1 `
+            -BinDir (Join-Path $env:RUNNER_TEMP "ai-man-bin") `
+            -AgyHome (Join-Path $env:RUNNER_TEMP "agy-homes")

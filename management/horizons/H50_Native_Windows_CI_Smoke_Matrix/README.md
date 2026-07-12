@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H50_Native_Windows_CI_Smoke_Matrix/README.m
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -36,6 +36,18 @@ most development continues from WSL/Linux.
   global `os.name`.
 - Document how to reproduce the Windows CI smoke locally.
 
+## Implementation Evidence
+
+- Added `.github/workflows/windows-smoke.yml` for pull requests, pushes to
+  `main`, and manual workflow dispatch.
+- Added `scripts/windows_ci_smoke.ps1` as the local and CI smoke entrypoint.
+- The smoke runs syntax checks, focused `windows` pytest selection, temporary
+  Windows installer smoke, install verification, helper contract checks, and
+  horizon governance.
+- CI uses temporary runner paths, `-NoPathUpdate`, `-SkipPathCheck`, and
+  `-SkipCredentialCheck`, so it does not require accounts or mutate the live
+  Credential Manager.
+
 ## Validation
 
 ```powershell
@@ -46,6 +58,15 @@ python -m pytest tests\test_profile_manager.py -k "windows"
 
 Acceptance target: every pull request gets native Windows signal for installer
 and command-surface regressions.
+
+Completed validation:
+
+```bash
+python3 -m py_compile profile_manager.py cli_profile_manager/cli.py cli_profile_manager/operations.py cli_profile_manager/windows_support.py cli_profile_manager/diagnostics.py
+python3 -m pytest tests/test_profile_manager.py -k "windows"
+python3 scripts/horizon_governance.py --json
+python3 -m pytest
+```
 
 ## Files
 

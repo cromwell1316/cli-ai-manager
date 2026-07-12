@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H50_Native_Windows_CI_Smoke_Matrix/README.m
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -26,3 +26,10 @@ helper generation without requiring real tokens.
 
 Pull requests receive native Windows signal for command surface and installer
 regressions.
+
+## Result
+
+Implemented a native Windows GitHub Actions smoke workflow plus a local
+PowerShell reproduction script. The job is token-safe and verifies syntax,
+focused Windows tests, temporary installer output, helper generation, and
+horizon governance.
