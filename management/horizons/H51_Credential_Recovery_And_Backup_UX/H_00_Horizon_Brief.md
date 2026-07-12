@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H51_Credential_Recovery_And_Backup_UX/READM
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -27,3 +27,9 @@ recovery using existing safety and audit boundaries.
 
 Users can recover AGY credential state from managed backups without exposing
 tokens or editing helper scripts.
+
+## Result
+
+Implemented an audited `agy-credential` command surface with token-safe
+inspection, backup restore, live slot set/save/clear actions, dry-run preflight,
+and diagnostics/runbook coverage.

@@ -23,7 +23,7 @@ LOG_NAME = "service.log"
 LAST_INVALIDATION_NAME = "last_invalidation.json"
 READ_ONLY_COMMANDS = {"config", "diagnostics", "list", "status"}
 RESPONSE_CACHE_COMMANDS = {"config", "list", "status"}
-MUTATING_COMMANDS = {"audit", "clear", "export", "import", "label", "login", "sync"}
+MUTATING_COMMANDS = {"agy-credential", "audit", "clear", "export", "import", "label", "login", "sync"}
 INELIGIBLE_COMMANDS = sorted(MUTATING_COMMANDS | {"launch", "quota", "service"})
 RUNTIME_STATE_OWNERSHIP = {
     "metadata": "profiles_metadata.json labels and profile annotations",
@@ -42,6 +42,7 @@ NEVER_CACHE_STATE = (
 MUTATION_INVALIDATION_CONTRACT = {
     "import": ("credentials", "profiles", "command_snapshot", "diagnostics"),
     "export": ("audit", "diagnostics"),
+    "agy-credential": ("credentials", "profiles", "command_snapshot", "diagnostics", "audit"),
     "label": ("metadata", "command_snapshot", "diagnostics"),
     "clear": ("credentials", "profiles", "metadata", "command_snapshot", "quota", "diagnostics"),
     "login": ("credentials", "profiles", "command_snapshot", "quota", "diagnostics"),

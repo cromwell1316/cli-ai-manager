@@ -309,6 +309,11 @@ def diagnostics_payload(
         "token_safe": True,
         "target": agy_concurrency["target"],
     }
+    agy_recovery = None
+    if "agy" in selected_tools:
+        from .operations import agy_windows_backups_payload
+
+        agy_recovery = agy_windows_backups_payload()
     payload = {
         "ok": True,
         "mode": mode,
@@ -335,5 +340,6 @@ def diagnostics_payload(
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
         "agy_quota_backend": agy_backend,
         "agy_windows_concurrency": agy_concurrency,
+        "agy_credential_recovery": agy_recovery,
     }
     return redact_sensitive(payload, show_accounts)

@@ -46,6 +46,14 @@ POLICIES = {
         "summary": "copy credential material out of a managed profile",
         "recovery": "delete the exported credential file if it was written to the wrong location",
     },
+    "agy-credential": {
+        "risk": RISK_CREDENTIAL,
+        "requires_confirmation": True,
+        "confirmation_flag": "--yes",
+        "dry_run_supported": True,
+        "summary": "inspect or mutate managed Windows AGY credential backups and live slot state",
+        "recovery": "restore a selected cred-pN.json backup or rerun ai-man login agy pN",
+    },
     "label": {
         "risk": RISK_LOW,
         "requires_confirmation": False,

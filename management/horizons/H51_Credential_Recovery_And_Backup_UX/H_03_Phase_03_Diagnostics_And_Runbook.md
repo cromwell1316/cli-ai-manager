@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H51_Credential_Recovery_And_Backup_UX/READM
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,11 @@ Document and expose recovery state clearly.
 
 - Users can identify the active and restorable account safely.
 - Docs cover rollback from common mistakes.
+
+## Completion Evidence
+
+- `ai-man diagnostics agy --json` includes `agy_credential_recovery` with
+  managed backup validity, account metadata, saved timestamps, and paths.
+- README documents restore/set/save/clear recovery examples and dry-run usage.
+- Troubleshooting behavior is covered for missing, invalid, and non-native live
+  slot operations.

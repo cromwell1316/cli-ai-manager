@@ -52,7 +52,7 @@ AGY_WINDOWS_USERNAME = "antigravity"
 # Tool configurations
 TOOLS = CORE_TOOLS
 SERVICE_ENV_TRUE = ("1", "true", "yes", "on")
-SERVICE_MUTATING_COMMANDS = {"audit", "clear", "export", "import", "label", "login", "sync"}
+SERVICE_MUTATING_COMMANDS = {"agy-credential", "audit", "clear", "export", "import", "label", "login", "sync"}
 agy_credentials = None
 claude_credentials = None
 codex_credentials = None
@@ -1261,6 +1261,83 @@ def cmd_sync(args):
             print(f"  {path}")
     return EXIT_OK
 
+def cmd_agy_credential(args):
+    action = args.credential_action
+    profile = getattr(args, "profile", None)
+    source = getattr(args, "source", None)
+    set_live = bool(getattr(args, "set_live", False))
+    dry_run = bool(getattr(args, "dry_run", False))
+    yes = bool(getattr(args, "yes", False))
+    readonly = action == "whoami"
+    decision = None
+    if not readonly:
+        decision = safety_decision(
+            "agy-credential",
+            command="agy-credential",
+            tool="agy",
+            profile=profile,
+            target=source or profile or "gemini:antigravity",
+            facts={"action": action, "source": source, "set_live": set_live},
+            yes=yes,
+            dry_run=dry_run,
+        )
+        _audit().record(
+            "credential",
+            "decision",
+            command="agy-credential",
+            tool="agy",
+            profile=profile,
+            details={"action": action, "dry_run": dry_run, "safety": _safety().payload(decision)},
+        )
+        if not decision["ok"]:
+            if args.json:
+                print_json_payload({
+                    "ok": False,
+                    "error": {
+                        "type": "confirmation_required",
+                        "message": decision["message"],
+                        "code": EXIT_USAGE,
+                    },
+                    "safety": _safety().payload(decision),
+                })
+            else:
+                print_error(decision["message"])
+            return EXIT_USAGE
+    result = _operations().agy_credential_recovery_operation(
+        action,
+        profile=profile,
+        source=source,
+        set_live=set_live,
+        dry_run=dry_run,
+    )
+    if not result.ok:
+        if args.json:
+            payload = result.json_error_payload()
+            if decision is not None:
+                payload["safety"] = _safety().payload(decision)
+            print_json_payload(payload)
+        else:
+            print_error(result.message)
+        return result.exit_code
+    payload = result.payload
+    if decision is not None:
+        payload["safety"] = _safety().payload(decision)
+    if args.json:
+        print_json_payload(payload)
+        return EXIT_OK
+    if action == "whoami":
+        print(f"AGY Windows backups: {payload['base_dir']}")
+        for backup in payload["backups"]:
+            account = backup.get("account") or "-"
+            state = "valid" if backup.get("valid") else f"invalid: {backup.get('error')}"
+            print(f"  {backup['profile']}: {state} account={account} path={backup['path']}")
+        return EXIT_OK
+    if dry_run:
+        print(f"Would run AGY credential {action} for {profile or 'live slot'}")
+    else:
+        print(f"AGY credential {action} completed")
+    return EXIT_OK
+
 def cmd_audit(args):
     audit = _audit()
     action = args.audit_action
@@ -1488,6 +1565,7 @@ def cmd_diagnostics(args):
 
 
 COMMAND_HANDLERS = {
+    "agy_credential": cmd_agy_credential,
     "audit": cmd_audit,
     "clear": cmd_clear,
     "config_health": cmd_config_health,
@@ -1591,6 +1669,43 @@ def build_parser():
     clear_p.add_argument("--yes", action="store_true", help="confirm profile deletion")
     clear_p.add_argument("--json", action="store_true")
     set_command_handler(clear_p, "clear")
+
+    agy_cred_p = sub.add_parser("agy-credential", help="inspect and recover Windows AGY credential backups")
+    set_command_handler(agy_cred_p, "agy_credential")
+    agy_cred_sub = agy_cred_p.add_subparsers(dest="credential_action", required=True)
+
+    agy_cred_whoami = agy_cred_sub.add_parser("whoami", help="list managed Windows AGY credential backups")
+    agy_cred_whoami.add_argument("--json", action="store_true")
+    set_command_handler(agy_cred_whoami, "agy_credential")
+
+    agy_cred_set = agy_cred_sub.add_parser("set", help="set the live Windows AGY slot from a managed backup")
+    agy_cred_set.add_argument("profile")
+    agy_cred_set.add_argument("--dry-run", action="store_true")
+    agy_cred_set.add_argument("--yes", action="store_true")
+    agy_cred_set.add_argument("--json", action="store_true")
+    set_command_handler(agy_cred_set, "agy_credential")
+
+    agy_cred_save = agy_cred_sub.add_parser("save", help="save the live Windows AGY slot into a managed backup")
+    agy_cred_save.add_argument("profile")
+    agy_cred_save.add_argument("--dry-run", action="store_true")
+    agy_cred_save.add_argument("--yes", action="store_true")
+    agy_cred_save.add_argument("--json", action="store_true")
+    set_command_handler(agy_cred_save, "agy_credential")
+
+    agy_cred_clear = agy_cred_sub.add_parser("clear", help="clear the live Windows AGY slot")
+    agy_cred_clear.add_argument("--dry-run", action="store_true")
+    agy_cred_clear.add_argument("--yes", action="store_true")
+    agy_cred_clear.add_argument("--json", action="store_true")
+    set_command_handler(agy_cred_clear, "agy_credential")
+
+    agy_cred_restore = agy_cred_sub.add_parser("restore", help="restore a Windows AGY backup file into a managed profile")
+    agy_cred_restore.add_argument("source")
+    agy_cred_restore.add_argument("profile")
+    agy_cred_restore.add_argument("--set-live", action="store_true", help="also set the live Windows AGY slot after restore")
+    agy_cred_restore.add_argument("--dry-run", action="store_true")
+    agy_cred_restore.add_argument("--yes", action="store_true")
+    agy_cred_restore.add_argument("--json", action="store_true")
+    set_command_handler(agy_cred_restore, "agy_credential")
 
     sync_p = sub.add_parser("sync", help="sync profile directories between WSL and Windows")
     sync_p.add_argument("--from", dest="source", choices=("wsl", "windows"), default="wsl")

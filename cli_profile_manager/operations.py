@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import subprocess
 
 from cli_profile_manager.metadata import label_profile, load_metadata
 from cli_profile_manager.paths import (
@@ -44,6 +45,7 @@ core_agy_credentials = None
 core_claude_credentials = None
 core_codex_credentials = None
 core_credentials_common = None
+core_windows_support = None
 core_shutil = None
 DEFAULT_AGY_QUOTA_TIMEOUT_SECONDS = 120
 DEFAULT_QUOTA_TIMEOUT_SECONDS = 20
@@ -245,6 +247,15 @@ def _credentials_common():
     return core_credentials_common
 
 
+def _windows_support():
+    global core_windows_support
+    if core_windows_support is None:
+        from cli_profile_manager import windows_support as module
+
+        core_windows_support = module
+    return core_windows_support
+
+
 def _shutil():
     global core_shutil
     if core_shutil is None:
@@ -252,6 +263,192 @@ def _shutil():
 
         core_shutil = module
     return core_shutil
+
+
+def _redacted_windows_backup_summary(path, profile=None):
+    path = os.path.abspath(str(path))
+    payload = {
+        "profile": f"p{profile}" if profile else None,
+        "path": path,
+        "exists": os.path.exists(path),
+        "valid": False,
+        "account": None,
+        "saved_at": None,
+        "blob_size": None,
+        "size": None,
+        "error": None,
+    }
+    if not payload["exists"]:
+        payload["error"] = "missing"
+        return payload
+    try:
+        stat = os.stat(path)
+        payload["size"] = stat.st_size
+        data = _credentials_common().read_json_object(path, encoding="utf-8-sig")
+        _token_data, account = decode_windows_agy_credential(path)
+        payload.update({
+            "valid": True,
+            "account": account,
+            "saved_at": data.get("SavedAt"),
+            "blob_size": data.get("BlobSize"),
+        })
+    except Exception as exc:
+        payload["error"] = str(exc).replace("BlobBase64", "credential blob")
+    return payload
+
+
+def agy_windows_backups_payload(base_dir=None):
+    base = os.path.abspath(str(base_dir or TOOLS["agy"]["base_dir"]))
+    backups = []
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            num = _windows_agy_credential_num(name)
+            if num is None:
+                continue
+            backups.append(_redacted_windows_backup_summary(os.path.join(base, name), num))
+    return {
+        "ok": True,
+        "tool": "agy",
+        "base_dir": base,
+        "backups": backups,
+    }
+
+
+def _run_windows_agy_helper_action(action, profile_num, base_dir):
+    powershell = _windows_support().powershell_executable(_shutil())
+    if powershell is None:
+        raise FileNotFoundError("PowerShell is required for Windows agy Credential Manager recovery")
+    helper = _windows_support().ensure_windows_agy_helper(base_dir)
+    argv = _windows_support().windows_agy_launch_argv(
+        powershell,
+        helper,
+        action,
+        profile_num,
+        base_dir,
+        TOOLS["agy"]["cmd"],
+        [],
+    )
+    completed = subprocess.run(argv, text=True, capture_output=True, check=False)
+    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
+    if completed.returncode != 0:
+        raise RuntimeError(output.strip() or f"Windows AGY helper action {action} failed with exit code {completed.returncode}")
+    return {"returncode": completed.returncode, "helper": helper, "output": output.strip()}
+
+
+def agy_credential_recovery_operation(action, profile=None, source=None, set_live=False, dry_run=False):
+    try:
+        action = action.replace("_", "-")
+        if action == "whoami":
+            return success(agy_windows_backups_payload())
+
+        n = parse_profile(profile) if profile else 0
+        base_dir = TOOLS["agy"]["base_dir"]
+        backup_path = agy_windows_credential_path(n, base_dir) if n > 0 else None
+        live_action = action in {"set", "save", "clear"}
+        restore_action = action == "restore"
+        if not (live_action or restore_action):
+            raise ValueError(f"unknown AGY credential recovery action: {action}")
+
+        if live_action and not is_native_windows() and not dry_run:
+            raise RuntimeError("live Windows AGY Credential Manager recovery requires native Windows")
+
+        if action in {"set", "save", "restore"} and n <= 0:
+            raise ValueError("profile is required and must be a positive pN number")
+
+        if action == "set":
+            summary = _redacted_windows_backup_summary(backup_path, n)
+            if not summary["valid"]:
+                raise FileNotFoundError(f"valid Windows AGY backup not found for p{n}: {summary['error']}")
+            payload = {
+                "ok": True,
+                "tool": "agy",
+                "action": "set",
+                "profile": f"p{n}",
+                "backup": summary,
+                "live_slot": "gemini:antigravity",
+                "would_set_live": bool(dry_run),
+            }
+            if dry_run:
+                payload["dry_run"] = True
+                return success(payload)
+            payload["helper"] = _run_windows_agy_helper_action("Set", n, base_dir)
+            payload["set_live"] = True
+            return success(payload)
+
+        if action == "save":
+            payload = {
+                "ok": True,
+                "tool": "agy",
+                "action": "save",
+                "profile": f"p{n}",
+                "destination": os.path.abspath(backup_path),
+                "live_slot": "gemini:antigravity",
+                "would_save_live": bool(dry_run),
+            }
+            if dry_run:
+                payload["dry_run"] = True
+                return success(payload)
+            payload["helper"] = _run_windows_agy_helper_action("Save", n, base_dir)
+            payload["saved"] = _redacted_windows_backup_summary(backup_path, n)
+            return success(payload)
+
+        if action == "clear":
+            payload = {
+                "ok": True,
+                "tool": "agy",
+                "action": "clear",
+                "live_slot": "gemini:antigravity",
+                "would_clear_live": bool(dry_run),
+            }
+            if dry_run:
+                payload["dry_run"] = True
+                return success(payload)
+            payload["helper"] = _run_windows_agy_helper_action("Clear", 0, base_dir)
+            payload["cleared_live"] = True
+            return success(payload)
+
+        source_path = normalize_credential_path("agy", source or "")
+        if not source_path:
+            raise ValueError("restore source path is required")
+        source_summary = _redacted_windows_backup_summary(source_path)
+        if not source_summary["valid"]:
+            raise FileNotFoundError(f"valid Windows AGY backup not found: {source_summary['error']}")
+        if set_live and not is_native_windows() and not dry_run:
+            raise RuntimeError("setting the live Windows AGY Credential Manager slot requires native Windows")
+        destination = os.path.abspath(backup_path)
+        payload = {
+            "ok": True,
+            "tool": "agy",
+            "action": "restore",
+            "profile": f"p{n}",
+            "source": source_summary,
+            "destination": destination,
+            "set_live": bool(set_live),
+            "would_restore": bool(dry_run),
+            "would_set_live": bool(dry_run and set_live),
+        }
+        if dry_run:
+            payload["dry_run"] = True
+            return success(payload)
+        _credentials_common().ensure_parent(destination)
+        tmp_path = f"{destination}.tmp-{os.getpid()}"
+        _shutil().copy2(source_path, tmp_path)
+        os.replace(tmp_path, destination)
+        if source_summary.get("account"):
+            _credentials_common().write_json_atomic(
+                os.path.join(profile_home("agy", n), TOOLS["agy"]["acct_file"]),
+                {"active": source_summary["account"]},
+            )
+        payload["restored"] = _redacted_windows_backup_summary(destination, n)
+        if set_live:
+            payload["helper"] = _run_windows_agy_helper_action("Set", n, base_dir)
+        return success(payload)
+    except ValueError as e:
+        return validation_error(str(e))
+    except FileNotFoundError as e:
+        return not_found(str(e))
+    except Exception as e:
+        return runtime_failure(f"AGY credential recovery failed: {e}", exception=e)
 
 
 def _windows_agy_credential_num(name):

@@ -103,6 +103,11 @@ ai-man export <tool> <profile> [--to path]
 ai-man label <tool> <profile> <label>
 ai-man clear <tool> <profile> --yes
 ai-man sync [--from wsl|windows] [--mode soft|hard] [--dry-run] [--yes]
+ai-man agy-credential whoami [--json]
+ai-man agy-credential restore <cred-backup.json> <profile> [--set-live] [--dry-run] [--yes] [--json]
+ai-man agy-credential set <profile> [--dry-run] --yes
+ai-man agy-credential save <profile> [--dry-run] --yes
+ai-man agy-credential clear [--dry-run] --yes
 ```
 
 Supported tools are `agy`, `codex`, and `claude`. Profiles accept `pN` or `N`.
@@ -120,6 +125,9 @@ Exit codes:
 ```
 
 `clear` refuses to delete a profile unless `--yes` is supplied.
+`agy-credential` mutating actions also require `--yes`; use `--dry-run --json`
+first to inspect source, destination, and safety preflight without exposing
+credential blobs.
 
 Sync direction is always read as "copy from this side to the other side":
 
@@ -410,6 +418,23 @@ for true parallel AGY isolation. To inspect the policy and recovery commands:
 ai-man diagnostics agy --json --show-accounts
 .\scripts\agy_windows_concurrency_drill.ps1
 ```
+
+Credential recovery commands avoid manual PowerShell edits:
+
+```powershell
+ai-man agy-credential whoami --json
+ai-man agy-credential restore .\cred-backup.json p2 --dry-run --json
+ai-man agy-credential restore .\cred-backup.json p2 --yes
+ai-man agy-credential set p2 --dry-run --json
+ai-man agy-credential set p2 --yes
+ai-man agy-credential save p2 --yes
+ai-man agy-credential clear --yes
+```
+
+`restore` validates a Windows AGY backup before writing `cred-pN.json` and can
+also set the live `gemini:antigravity` slot with `--set-live` on native Windows.
+`whoami` and diagnostics report managed backup account metadata, validity,
+timestamps, and paths without printing OAuth token blobs.
 
 Credential formats and Windows/WSL parity are tracked in:
 

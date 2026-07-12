@@ -3333,6 +3333,7 @@ def test_safety_policy_inventory_covers_sensitive_commands():
         "sync-soft",
         "import",
         "export",
+        "agy-credential",
         "label",
         "login",
         "launch",
@@ -3344,6 +3345,8 @@ def test_safety_policy_inventory_covers_sensitive_commands():
         assert command in inventory
         assert inventory[command]["risk"]
     assert inventory["clear"]["requires_confirmation"] is True
+    assert inventory["agy-credential"]["requires_confirmation"] is True
+    assert inventory["agy-credential"]["dry_run_supported"] is True
     assert inventory["sync-hard"]["dry_run_supported"] is True
     assert inventory["launch"]["risk"] == safety.RISK_EXTERNAL
 
@@ -4034,6 +4037,19 @@ def test_windows_agy_concurrency_policy_is_exposed_in_diagnostics(monkeypatch, t
     assert "ai-man launch agy pN" in policy["recovery_commands"]
 
 
+def test_diagnostics_reports_agy_credential_recovery_without_token_blob(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    write_json(Path(pm.agy_windows_credential_path(9)), pm.build_windows_agy_credential({"refresh_token": "diag"}, "diag@example.com"))
+
+    payload = pm.diagnostics_payload("agy", status_provider=lambda tool, num: None, mode="fast")
+    rendered = json.dumps(payload)
+
+    assert payload["agy_credential_recovery"]["backups"][0]["profile"] == "p9"
+    assert payload["agy_credential_recovery"]["backups"][0]["valid"] is True
+    assert "BlobBase64" not in rendered
+    assert "refresh_token" not in rendered
+
+
 def test_clear_agy_profile_removes_windows_credential_backup(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     from cli_profile_manager import operations
@@ -4086,6 +4102,103 @@ def test_native_windows_agy_export_reads_credential_backup(monkeypatch, tmp_path
     exported_token, exported_account = pm.decode_windows_agy_credential(str(destination))
     assert exported_token == {"refresh_token": "r4"}
     assert exported_account == "export@example.com"
+
+
+def test_agy_credential_whoami_lists_backups_without_token_blob(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "secret"}, "one@example.com"))
+    write_json(Path(pm.agy_windows_credential_path(2)), {"Target": "gemini:antigravity", "BlobBase64": "bad"})
+
+    result = operations.agy_credential_recovery_operation("whoami")
+
+    assert result.ok
+    rendered = json.dumps(result.payload)
+    assert "BlobBase64" not in rendered
+    assert "refresh_token" not in rendered
+    assert result.payload["backups"][0]["profile"] == "p1"
+    assert result.payload["backups"][0]["valid"] is True
+    assert result.payload["backups"][0]["account"] == "one@example.com"
+    assert result.payload["backups"][1]["profile"] == "p2"
+    assert result.payload["backups"][1]["valid"] is False
+
+
+def test_agy_credential_restore_dry_run_and_apply(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    source = tmp_path / "cred-backup.json"
+    write_json(source, pm.build_windows_agy_credential({"refresh_token": "restored"}, "restore@example.com"))
+    destination = Path(pm.agy_windows_credential_path(5))
+
+    dry_run = operations.agy_credential_recovery_operation("restore", profile="p5", source=str(source), dry_run=True)
+
+    assert dry_run.ok
+    assert dry_run.payload["would_restore"] is True
+    assert not destination.exists()
+    assert "BlobBase64" not in json.dumps(dry_run.payload)
+
+    applied = operations.agy_credential_recovery_operation("restore", profile="p5", source=str(source))
+
+    assert applied.ok
+    assert destination.exists()
+    token, account = pm.decode_windows_agy_credential(str(destination))
+    assert token == {"refresh_token": "restored"}
+    assert account == "restore@example.com"
+    google_accounts = tmp_path / "agy-homes" / "p5" / ".gemini" / "google_accounts.json"
+    assert json.loads(google_accounts.read_text(encoding="utf-8")) == {"active": "restore@example.com"}
+
+
+def test_agy_credential_restore_rejects_invalid_backup_before_write(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    source = tmp_path / "bad-cred.json"
+    write_json(source, {"Target": "gemini:antigravity", "BlobBase64": "not-base64"})
+
+    result = operations.agy_credential_recovery_operation("restore", profile="p6", source=str(source))
+
+    assert not result.ok
+    assert result.exit_code == 3
+    assert not Path(pm.agy_windows_credential_path(6)).exists()
+
+
+def test_agy_credential_cli_requires_confirmation_and_supports_dry_run(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    source = tmp_path / "cred-backup.json"
+    write_json(source, pm.build_windows_agy_credential({"refresh_token": "r"}, "cli@example.com"))
+
+    refused_rc, refused_stdout, _ = run_in_process_command(
+        pm,
+        ["agy-credential", "restore", str(source), "p7", "--json"],
+    )
+    dry_rc, dry_stdout, _ = run_in_process_command(
+        pm,
+        ["agy-credential", "restore", str(source), "p7", "--dry-run", "--json"],
+    )
+
+    assert refused_rc == 2
+    refused = json.loads(refused_stdout)
+    assert refused["safety"]["result"] == "refused"
+    assert dry_rc == 0
+    dry = json.loads(dry_stdout)
+    assert dry["safety"]["result"] == "dry_run"
+    assert dry["would_restore"] is True
+    assert not Path(pm.agy_windows_credential_path(7)).exists()
+
+
+def test_agy_credential_set_live_dry_run_uses_managed_backup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    write_json(Path(pm.agy_windows_credential_path(8)), pm.build_windows_agy_credential({"refresh_token": "r8"}, "set@example.com"))
+
+    rc, stdout, _ = run_in_process_command(pm, ["agy-credential", "set", "p8", "--dry-run", "--json"])
+
+    assert rc == 0
+    payload = json.loads(stdout)
+    assert payload["would_set_live"] is True
+    assert payload["backup"]["valid"] is True
+    assert "BlobBase64" not in stdout
 
 
 def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
@@ -4685,6 +4798,7 @@ def test_runtime_service_contract_lists_state_and_invalidation(monkeypatch, tmp_
     assert "raw credential contents" in contract["never_cache"]
     assert "list" in contract["eligible_commands"]
     assert "import" in contract["ineligible_commands"]
+    assert "agy-credential" in contract["ineligible_commands"]
     assert contract["mutation_invalidation"]["label"] == ["metadata", "command_snapshot", "diagnostics"]
 
 
@@ -4693,6 +4807,7 @@ def test_runtime_service_contract_lists_state_and_invalidation(monkeypatch, tmp_
     [
         (["label", "agy", "p1", "bench"], "label", {"metadata", "command_snapshot"}),
         (["import", "agy", "cred.json"], "import", {"credentials", "profiles"}),
+        (["agy-credential", "restore", "cred.json", "p1", "--yes"], "agy-credential", {"credentials", "profiles", "audit"}),
         (["clear", "agy", "p1", "--yes"], "clear", {"credentials", "profiles", "quota"}),
         (["sync", "--source", "wsl"], "sync", {"credentials", "profiles", "metadata"}),
         (["audit", "purge", "--yes"], "audit:purge", {"audit", "diagnostics"}),
@@ -4713,6 +4828,7 @@ def test_runtime_service_does_not_invalidate_dry_run_mutations():
 
     assert runtime_service.mutation_invalidation(["import", "agy", "cred.json", "--dry-run"]) is None
     assert runtime_service.mutates_runtime_state(["import", "agy", "cred.json", "--dry-run"]) is False
+    assert runtime_service.mutation_invalidation(["agy-credential", "restore", "cred.json", "p1", "--dry-run"]) is None
 
 
 def test_runtime_service_invalidation_is_idempotent_and_diagnostic(monkeypatch, tmp_path):

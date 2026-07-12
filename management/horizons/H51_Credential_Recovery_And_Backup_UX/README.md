@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H51_Credential_Recovery_And_Backup_UX/READM
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -35,6 +35,18 @@ Credential Manager switching.
 - Extend the PowerShell helper actions if needed.
 - Add tests for success, missing backup, invalid backup, and dry-run behavior.
 
+## Implementation Evidence
+
+- Added `ai-man agy-credential` subcommands: `whoami`, `restore`, `set`, `save`,
+  and `clear`.
+- Mutating recovery actions require `--yes` and support `--dry-run` preflight.
+- Recovery operations validate Windows AGY backups before writing managed
+  `cred-pN.json` files or calling the native helper.
+- Diagnostics now include token-safe `agy_credential_recovery` backup summaries.
+- Tests cover token-safe inspection, restore dry-run/apply, invalid backups,
+  confirmation refusal, live-slot dry-run, safety inventory, and runtime-service
+  invalidation.
+
 ## Validation
 
 ```bash
@@ -44,6 +56,15 @@ python3 -m pytest
 
 Acceptance target: users can inspect and restore Windows AGY credential state
 without manually editing PowerShell scripts or exposing token blobs.
+
+Completed validation:
+
+```bash
+python3 -m py_compile profile_manager.py cli_profile_manager/cli.py cli_profile_manager/operations.py cli_profile_manager/diagnostics.py cli_profile_manager/safety.py cli_profile_manager/runtime_service.py
+python3 -m pytest tests/test_profile_manager.py -k "credential or windows_agy or audit"
+python3 scripts/horizon_governance.py --json
+python3 -m pytest
+```
 
 ## Files
 
