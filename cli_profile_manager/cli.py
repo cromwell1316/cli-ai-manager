@@ -69,6 +69,7 @@ _RUNTIME_COMMAND_PARSER = None
 core_audit = None
 core_safety = None
 core_operations = None
+core_windows_support = None
 
 # ANSI Colors
 CLR_RESET = "\033[0m"
@@ -85,6 +86,9 @@ CLR_BLACK_TEXT = "\033[30m"
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
 )
+
+def is_native_windows():
+    return os.name == "nt"
 
 def _logging():
     global core_logging
@@ -125,6 +129,14 @@ def _subprocess():
 
         core_subprocess = subprocess
     return core_subprocess
+
+def _windows_support():
+    global core_windows_support
+    if core_windows_support is None:
+        from cli_profile_manager import windows_support as module
+
+        core_windows_support = module
+    return core_windows_support
 
 def _runtime_service():
     global core_runtime_service
@@ -731,7 +743,7 @@ def cmd_quota(args):
             print(f"warning: {warning}")
     return EXIT_OK
 
-def run_cli_tool(tool_key, n, extra_args=None):
+def run_cli_tool(tool_key, n, extra_args=None, login=False):
     tool = TOOLS[tool_key]
     extra_args = extra_args or []
     _audit().record(
@@ -740,28 +752,26 @@ def run_cli_tool(tool_key, n, extra_args=None):
         command="launch",
         tool=tool_key,
         profile=f"p{n}",
-        details={"argv": [tool["cmd"]] + list(extra_args), "platform": os.name},
+        details={"argv": [tool["cmd"]] + list(extra_args), "platform": os.name, "login": bool(login)},
     )
-    if os.name == "nt" and tool_key == "agy":
-        switcher = os.path.join(tool["base_dir"], "agy-multiaccount.ps1")
-        if not os.path.exists(switcher):
-            print_error(f"Windows agy launch requires Credential Manager switcher: {switcher}")
-            return EXIT_NOT_FOUND
-        powershell = _shutil().which("powershell.exe") or _shutil().which("powershell")
+    if is_native_windows() and tool_key == "agy":
+        powershell = _windows_support().powershell_executable(_shutil())
         if powershell is None:
             print_error("PowerShell is required for Windows agy Credential Manager switching")
             return EXIT_NOT_FOUND
+        switcher = _windows_support().ensure_windows_agy_helper(tool["base_dir"])
         os.makedirs(profile_home(tool_key, n), exist_ok=True)
-        quoted_args = " ".join(_shlex().quote(arg) for arg in extra_args)
-        command = (
-            f"& {_shlex().quote(switcher)} Set-AgyCred {n}; "
-            f"$env:USERPROFILE={_shlex().quote(profile_home(tool_key, n))}; "
-            f"$env:HOME=$env:USERPROFILE; "
-            f"& {_shlex().quote(tool['cmd'])}"
+        action = "Login" if login else "Launch"
+        argv = _windows_support().windows_agy_launch_argv(
+            powershell,
+            switcher,
+            action,
+            n,
+            tool["base_dir"],
+            tool["cmd"],
+            extra_args,
         )
-        if quoted_args:
-            command = f"{command} {quoted_args}"
-        completed = _subprocess().run([powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        completed = _subprocess().run(argv)
         _audit().record(
             "subprocess",
             "completed",
@@ -771,6 +781,7 @@ def run_cli_tool(tool_key, n, extra_args=None):
             backend="powershell",
             result="succeeded" if completed.returncode == 0 else "failed",
             exit_code=completed.returncode,
+            details={"action": action, "helper": switcher},
         )
         return completed.returncode
 
@@ -896,7 +907,7 @@ def cmd_login(args):
         target=profile_home(args.tool, n),
         facts={"external_command": TOOLS[args.tool]["cmd"]},
     )
-    return run_cli_tool(args.tool, n, [])
+    return run_cli_tool(args.tool, n, [], login=True)
 
 def import_credential_file(tool_key, cred_file, profile_num=None):
     return _operations().import_credential_file(tool_key, cred_file, profile_num)
@@ -1812,6 +1823,15 @@ def main(argv=None):
     result = run_cli(argv)
     if result is not None:
         return result
+
+    if is_native_windows():
+        print("ai-man is installed. On native Windows, use direct commands:")
+        print("  ai-man list agy")
+        print("  ai-man login agy p1")
+        print("  ai-man launch agy p1")
+        print("  ai-man import agy C:\\path\\to\\cred-p1.json p1")
+        print("  ai-man --help")
+        return EXIT_OK
 
     from cli_profile_manager.interactive import run_interactive_main
 

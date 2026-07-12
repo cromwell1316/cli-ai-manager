@@ -48,6 +48,10 @@ DEFAULT_AGY_QUOTA_TIMEOUT_SECONDS = 120
 DEFAULT_QUOTA_TIMEOUT_SECONDS = 20
 
 
+def is_native_windows():
+    return os.name == "nt"
+
+
 class OperationResult:
     __slots__ = ("status", "exit_code", "payload", "message", "error_type", "exception")
 
@@ -281,7 +285,7 @@ class ProfileIndex:
                     if num is not None:
                         profiles.add(num)
                         continue
-                    if os.name == "nt" and self.tool_key == "agy":
+                    if is_native_windows() and self.tool_key == "agy":
                         num = _windows_agy_credential_num(entry.name)
                         if num is not None:
                             profiles.add(num)
@@ -502,7 +506,7 @@ def get_profile_status(tool_key, n, metadata, account_email_provider=None, profi
     warnings = []
 
     if tool_key == "agy":
-        if os.name == "nt":
+        if is_native_windows():
             win_cred_path = (
                 profile_fact.windows_credential.path
                 if profile_fact is not None and profile_fact.windows_credential is not None
@@ -711,7 +715,21 @@ def import_credential_file(tool_key, cred_file, profile_num=None):
         raise ValueError("profile number must be positive")
     dest_file = credential_path(tool_key, n)
     if tool_key == "agy":
-        dest_file = import_windows_agy_credential(source, n)
+        if is_native_windows():
+            _, account = decode_windows_agy_credential(source)
+            os.makedirs(profile_home("agy", n), exist_ok=True)
+            dest_file = agy_windows_credential_path(n)
+            _credentials_common().ensure_parent(dest_file)
+            tmp_path = f"{dest_file}.tmp-{os.getpid()}"
+            _shutil().copy2(source, tmp_path)
+            os.replace(tmp_path, dest_file)
+            if account:
+                _credentials_common().write_json_atomic(
+                    os.path.join(profile_home("agy", n), TOOLS["agy"]["acct_file"]),
+                    {"active": account},
+                )
+        else:
+            dest_file = import_windows_agy_credential(source, n)
     else:
         _credentials_common().ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
@@ -731,7 +749,11 @@ def import_credential_operation(tool_key, cred_file, profile=None, dry_run=False
             raise ValueError("profile number must be positive")
         if tool_key == "agy":
             decode_windows_agy_credential(source)
-        dest_file = credential_path(tool_key, import_num)
+        dest_file = (
+            agy_windows_credential_path(import_num)
+            if tool_key == "agy" and is_native_windows()
+            else credential_path(tool_key, import_num)
+        )
         if dry_run:
             return success({
                 "ok": True,
@@ -797,7 +819,15 @@ def export_credential_file(tool_key, profile_num, to_path=None):
     export_dir, dest_file = resolve_export_destination(tool_key, profile_num, to_path)
     os.makedirs(export_dir, exist_ok=True)
     if tool_key == "agy":
-        export_wsl_agy_credential(profile_num, dest_file)
+        if is_native_windows():
+            src_file = agy_windows_credential_path(profile_num)
+            decode_windows_agy_credential(src_file)
+            _credentials_common().ensure_parent(dest_file)
+            tmp_path = f"{dest_file}.tmp-{os.getpid()}"
+            _shutil().copy2(src_file, tmp_path)
+            os.replace(tmp_path, dest_file)
+        else:
+            export_wsl_agy_credential(profile_num, dest_file)
     else:
         _credentials_common().ensure_parent(dest_file)
         tmp_path = f"{dest_file}.tmp-{os.getpid()}"
@@ -819,7 +849,7 @@ def export_credential_operation(tool_key, profile, to_path=None, dry_run=False):
                 "dry_run": True,
                 "tool": tool_key,
                 "profile": f"p{n}",
-                "source": credential_path(tool_key, n),
+                "source": agy_windows_credential_path(n) if tool_key == "agy" and is_native_windows() else credential_path(tool_key, n),
                 "destination": dest_file,
                 "would_export": True,
             })
@@ -852,6 +882,12 @@ def clear_profile_data(tool_key, n):
         raise ValueError(f"refusing to clear unsafe path: {target}")
     if os.path.exists(home):
         _shutil().rmtree(home)
+    if tool_key == "agy":
+        win_cred = os.path.abspath(agy_windows_credential_path(n, base))
+        if not win_cred.startswith(base + os.sep):
+            raise ValueError(f"refusing to clear unsafe path: {win_cred}")
+        if os.path.exists(win_cred):
+            os.remove(win_cred)
     return home
 
 

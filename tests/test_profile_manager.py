@@ -3620,6 +3620,136 @@ def test_run_cli_tool_uses_process_policy_wrapper(monkeypatch, tmp_path):
     assert captured["run"][2] == "preexec"
 
 
+def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    captured = {}
+
+    class FakeWindowsSupport:
+        @staticmethod
+        def powershell_executable(shutil_module):
+            return "powershell.exe"
+
+        @staticmethod
+        def ensure_windows_agy_helper(base_dir):
+            captured["base_dir"] = base_dir
+            return str(tmp_path / "agy-homes" / "ai-man-agy-credential.ps1")
+
+        @staticmethod
+        def windows_agy_launch_argv(powershell, helper, action, profile_num, base_dir, command, extra_args=None):
+            captured["helper_args"] = (powershell, helper, action, profile_num, base_dir, command, list(extra_args or []))
+            return [powershell, "-File", helper, "-Action", action]
+
+    class FakeCompleted:
+        returncode = 0
+
+    class FakeSubprocess:
+        @staticmethod
+        def run(command):
+            captured["run"] = command
+            return FakeCompleted()
+
+    monkeypatch.setattr(cli, "is_native_windows", lambda: True)
+    monkeypatch.setattr(cli, "_windows_support", lambda: FakeWindowsSupport)
+    monkeypatch.setattr(cli, "_subprocess", lambda: FakeSubprocess)
+
+    rc = pm.run_cli_tool("agy", 2, ["--prompt", "hi"], login=True)
+
+    assert rc == 0
+    assert captured["helper_args"][2] == "Login"
+    assert captured["helper_args"][3] == 2
+    assert captured["helper_args"][5] == "agy"
+    assert captured["helper_args"][6] == ["--prompt", "hi"]
+    assert captured["run"][-1] == "Login"
+
+
+def test_native_windows_empty_main_uses_direct_command_fallback(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    monkeypatch.setattr(cli, "is_native_windows", lambda: True)
+    sys.modules.pop("cli_profile_manager.interactive", None)
+
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+        rc = pm.main([])
+    stdout = stdout_buffer.getvalue()
+    stderr = stderr_buffer.getvalue()
+
+    assert rc == 0
+    assert "use direct commands" in stdout
+    assert "cli_profile_manager.interactive" not in sys.modules
+    assert stderr == ""
+
+
+def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path):
+    from cli_profile_manager import windows_support
+
+    helper = windows_support.ensure_windows_agy_helper(tmp_path / "agy-homes")
+    text = Path(helper).read_text(encoding="utf-8")
+
+    assert "CredWrite" in text
+    assert "CredRead" in text
+    assert "cred-p{0}.json" in text
+    assert '"Login" { Invoke-AgyProfile $Profile $true }' in text
+
+
+def test_clear_agy_profile_removes_windows_credential_backup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    home = Path(pm.profile_home("agy", 3))
+    home.mkdir(parents=True)
+    backup = Path(pm.agy_windows_credential_path(3))
+    backup.write_text("{}", encoding="utf-8")
+
+    result = operations.clear_profile_operation("agy", "p3")
+
+    assert result.ok is True
+    assert not home.exists()
+    assert not backup.exists()
+
+
+def test_native_windows_agy_import_writes_credential_backup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    source = tmp_path / "source-cred-p2.json"
+    write_json(source, pm.build_windows_agy_credential({"refresh_token": "r2"}, "win@example.com"))
+    monkeypatch.setattr(operations, "is_native_windows", lambda: True)
+
+    result = operations.import_credential_operation("agy", str(source), "p2")
+
+    backup = Path(pm.agy_windows_credential_path(2))
+    assert result.ok is True
+    assert result.payload["destination"] == str(backup)
+    assert backup.exists()
+    assert not Path(pm.credential_path("agy", 2)).exists()
+    status = operations.status_payload("agy", 2, {})
+    assert status["has_token"] is True
+    assert status["credential_source"] == "windows-backup"
+    assert status["account"] == "win@example.com"
+
+
+def test_native_windows_agy_export_reads_credential_backup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import operations
+
+    backup = Path(pm.agy_windows_credential_path(4))
+    write_json(backup, pm.build_windows_agy_credential({"refresh_token": "r4"}, "export@example.com"))
+    destination = tmp_path / "out" / "cred-p4.json"
+    monkeypatch.setattr(operations, "is_native_windows", lambda: True)
+
+    result = operations.export_credential_operation("agy", "p4", str(destination))
+
+    assert result.ok is True
+    exported_token, exported_account = pm.decode_windows_agy_credential(str(destination))
+    assert exported_token == {"refresh_token": "r4"}
+    assert exported_account == "export@example.com"
+
+
 def test_quota_pty_uses_quota_process_policy(monkeypatch, tmp_path):
     import cli_profile_manager.quota as quota
 

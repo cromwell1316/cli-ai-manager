@@ -1,8 +1,8 @@
-# Unified CLI Profile Manager for WSL
+# Unified CLI Profile Manager
 
 Keyboard-first command-line manager for isolated **Antigravity CLI** (`agy`),
 **OpenAI Codex CLI** (`codex`), and **Anthropic Claude CLI** (`claude`)
-profiles under WSL/Linux.
+profiles under WSL/Linux and Windows.
 
 The supported local interface is `profile_manager.py`, installed as `ai-man`,
 `profile-man`, and `pman`. Legacy alternate entrypoints have been removed; use
@@ -22,7 +22,7 @@ The supported local interface is `profile_manager.py`, installed as `ai-man`,
 
 ## Installation
 
-Run the installer from this directory:
+On WSL/Linux, run the installer from this directory:
 
 ```bash
 chmod +x install.sh
@@ -41,6 +41,30 @@ Ensure `~/.local/bin` is in your shell `PATH`, then run:
 
 ```bash
 ai-man
+```
+
+On Windows PowerShell, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+.\install-windows.ps1
+```
+
+The Windows installer creates `ai-man`, `profile-man`, and `pman` shims in
+`%LOCALAPPDATA%\Programs\ai-man\bin`, adds that directory to the user `Path`,
+and installs the managed `agy` Credential Manager helper into
+`%USERPROFILE%\agy-homes`.
+
+The same CLI commands are available on both platforms. Runtime behavior differs
+where the native tools differ:
+
+```text
+WSL/Linux agy  -> isolated by HOME and ~/.gemini/oauth_creds.json
+Windows agy    -> isolated by USERPROFILE/HOME plus a per-profile cred-pN.json
+                  backup that is written into the shared Credential Manager
+                  target gemini:antigravity before launch
+codex          -> isolated by CODEX_HOME
+claude         -> isolated by CLAUDE_CONFIG_DIR
 ```
 
 ## Direct Commands
@@ -286,6 +310,15 @@ WSL OAuth JSON file. Exporting an `agy` WSL profile wraps
 `gemini:antigravity`. Sync performs the same conversion in the selected
 direction; it does not mutate the live Windows Credential Manager slot during
 dry-run validation.
+
+On native Windows, `ai-man launch agy pN` first writes
+`%USERPROFILE%\agy-homes\cred-pN.json` into the single shared Credential Manager
+target `gemini:antigravity`, then launches `agy` with `USERPROFILE` and `HOME`
+set to `%USERPROFILE%\agy-homes\pN`. `ai-man login agy pN` clears the shared
+target before launching and saves the resulting live credential back to
+`cred-pN.json` after the native login flow exits. This matches the documented
+Antigravity limitation: the file profile is isolated per directory, while the
+Windows Credential Manager slot is shared per Windows user.
 
 Credential formats and Windows/WSL parity are tracked in:
 
