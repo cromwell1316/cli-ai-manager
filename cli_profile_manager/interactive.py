@@ -1856,6 +1856,14 @@ def paint_static_screen(lines):
         print_themed_line(line)
 
 
+def release_terminal_theme_for_child(clear_below=True):
+    sequence = CLR_RESET
+    if clear_below:
+        sequence += "\033[J"
+    sys.stdout.write(sequence)
+    sys.stdout.flush()
+
+
 def launch_intro_lines(tool_key, profile_num):
     tool = TOOLS[tool_key]
     return [
@@ -2085,11 +2093,9 @@ def launch_account(tool_key):
             continue
 
         paint_static_screen(launch_intro_lines(tool_key, profile_num))
-        sys.stdout.write(CLR_BG_BLACK)
-        sys.stdout.flush()
+        release_terminal_theme_for_child()
         code = run_cli_tool(tool_key, profile_num)
-        sys.stdout.write(CLR_BG_BLACK)
-        sys.stdout.flush()
+        release_terminal_theme_for_child(clear_below=False)
         invalidate_quota_cache(tool_key, profile_num)
         if code != EXIT_OK:
             print_themed_line(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
@@ -2125,7 +2131,9 @@ def add_account(tool_key):
     input("Press Enter to start authentication...")
 
     logging.info(f"Adding new profile p{next_p} for {tool_key}")
+    release_terminal_theme_for_child()
     code = run_cli_tool(tool_key, next_p)
+    release_terminal_theme_for_child(clear_below=False)
     invalidate_quota_cache(tool_key, next_p)
     if code == EXIT_OK:
         logging.info(f"Successfully configured new profile p{next_p} for {tool_key}")

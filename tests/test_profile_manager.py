@@ -2880,6 +2880,38 @@ def test_launch_intro_lines_use_themed_header_and_black_fill(monkeypatch, tmp_pa
     assert "Running CLI" in rendered
 
 
+def test_launch_account_releases_theme_before_child_cli(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
+    import cli_profile_manager.paths as paths
+    import cli_profile_manager.interactive as interactive
+
+    paths.refresh_from_env()
+    output = io.StringIO()
+    selections = iter([0, -1])
+    captured = {}
+
+    monkeypatch.setattr(interactive, "load_metadata", lambda: {})
+    monkeypatch.setattr(interactive, "get_display_profiles", lambda tool: [1])
+    monkeypatch.setattr(interactive, "status_with_auto_quota", lambda tool, profile, metadata: {"profile": profile})
+    monkeypatch.setattr(interactive, "launch_account_table", lambda tool, statuses: ([], ["p1"]))
+    monkeypatch.setattr(interactive, "run_menu", lambda options, title, pre_lines=None: next(selections))
+    monkeypatch.setattr(interactive, "status_payload", lambda tool, profile, metadata: {"has_token": True})
+    monkeypatch.setattr(interactive, "invalidate_quota_cache", lambda tool, profile: None)
+
+    def fake_run_cli_tool(tool, profile):
+        captured["before_child"] = output.getvalue()
+        sys.stdout.write("[child cli]")
+        return 0
+
+    monkeypatch.setattr(interactive, "run_cli_tool", fake_run_cli_tool)
+    with contextlib.redirect_stdout(output):
+        interactive.launch_account("agy")
+
+    assert captured["before_child"].endswith(interactive.CLR_RESET + "\033[J")
+    assert not captured["before_child"].endswith(interactive.CLR_BG_BLACK)
+    assert output.getvalue().endswith(interactive.CLR_RESET)
+
+
 def test_show_startup_splash_waits_for_enter(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
