@@ -52,6 +52,7 @@ from .operations import (
     sync_profiles_noninteractive,
 )
 from .metadata import save_metadata
+from . import interactive_model
 from .quota import close_persistent_quota_sessions
 from .terminal_rendering import (
     ANSI_RE,
@@ -2406,76 +2407,45 @@ def import_credential(tool_key):
 
 def credential_sync_menu(tool_key):
     tool = TOOLS[tool_key]
-    menu_options = [
-        "[*] Magic Import from Windows",
-        "[<] Import Windows Credential (Manual)",
-        "[^] Export Credential to Windows",
-        "[x] Back",
-    ]
+    menu_items = interactive_model.CREDENTIAL_SYNC_MENU
+    menu_options = interactive_model.options(menu_items)
 
     while True:
-        shortcuts = {
-            "*": 0,
-            "m": 0,
-            "<": 1,
-            "i": 1,
-            "^": 2,
-            "e": 2,
-            "x": 3,
-        }
+        shortcuts = interactive_model.shortcuts(menu_items)
         sel = run_menu(menu_options, f"{tool['name'].upper()} CREDENTIAL SYNC / RECOVERY", shortcuts)
-        if sel == 0:
+        action = interactive_model.action_at(menu_items, sel)
+        if action == "magic_import":
             magic_import(tool_key)
-        elif sel == 1:
+        elif action == "manual_import":
             import_credential(tool_key)
-        elif sel == 2:
+        elif action == "export":
             export_credential(tool_key)
-        elif sel in (3, -1):
+        elif action == "back":
             break
 
 
 def run_tool_manager(tool_key):
     tool = TOOLS[tool_key]
-    menu_options = [
-        "[>] Launch Account",
-        "[+] Login / Re-authenticate",
-        "[i] Detailed Account Status",
-        "[#] Set Profile Label",
-        "[~] Credential Sync / Recovery",
-        "[-] Clear / Logout Profile",
-        "[x] Back to main menu"
-    ]
+    menu_items = interactive_model.TOOL_MENU
+    menu_options = interactive_model.options(menu_items)
 
     while True:
-        shortcuts = {
-            ">": 0,
-            "+": 1,
-            "a": 1,
-            "l": 1,
-            "i": 2,
-            "s": 2,
-            "#": 3,
-            "~": 4,
-            "*": 4,
-            "r": 4,
-            "c": 5,
-            "-": 5,
-            "x": 6,
-        }
+        shortcuts = interactive_model.shortcuts(menu_items, include_digits=False)
         sel = run_menu(menu_options, tool["name"].upper(), shortcuts)
-        if sel == 0:
+        action = interactive_model.action_at(menu_items, sel)
+        if action == "launch":
             launch_account(tool_key)
-        elif sel == 1:
+        elif action == "login":
             add_account(tool_key)
-        elif sel == 2:
+        elif action == "status":
             view_status(tool_key)
-        elif sel == 3:
+        elif action == "label":
             set_label(tool_key)
-        elif sel == 4:
+        elif action == "credential_sync":
             credential_sync_menu(tool_key)
-        elif sel == 5:
+        elif action == "clear":
             clear_profile(tool_key)
-        elif sel in (6, -1):
+        elif action == "back":
             break
 
 def sync_profiles():
@@ -2740,26 +2710,22 @@ def run_interactive_main():
     try:
         show_startup_splash()
         while True:
-            options = [
-                "[1] Antigravity CLI (agy)",
-                "[2] OpenAI Codex CLI",
-                "[3] Anthropic Claude CLI",
-                "[4] Sync Profiles (WSL <-> Windows)",
-                "[5] Settings",
-                "[x] Exit",
-            ]
-            sel = run_menu(options, "UNIFIED PROFILE MANAGER", shortcuts={"x": 5})
-            if sel == 0:
+            menu_items = interactive_model.ROOT_MENU
+            options = interactive_model.options(menu_items)
+            shortcuts = interactive_model.shortcuts(menu_items, include_digits=False)
+            sel = run_menu(options, "UNIFIED PROFILE MANAGER", shortcuts=shortcuts)
+            action = interactive_model.action_at(menu_items, sel, cancelled_action="exit")
+            if action == "agy":
                 run_tool_manager("agy")
-            elif sel == 1:
+            elif action == "codex":
                 run_tool_manager("codex")
-            elif sel == 2:
+            elif action == "claude":
                 run_tool_manager("claude")
-            elif sel == 3:
+            elif action == "sync":
                 sync_profiles()
-            elif sel == 4:
+            elif action == "settings":
                 settings_menu()
-            elif sel in (5, -1):
+            elif action == "exit":
                 clear_screen_for_shell()
                 print("Exiting Profile Manager. Goodbye!")
                 break

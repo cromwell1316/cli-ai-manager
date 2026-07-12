@@ -2919,6 +2919,7 @@ def test_launch_account_releases_theme_before_child_cli(monkeypatch, tmp_path):
 
 def test_tool_manager_keeps_credential_actions_in_submenu(monkeypatch):
     import cli_profile_manager.interactive as interactive
+    from cli_profile_manager import interactive_model
 
     calls = []
     menus = []
@@ -2941,6 +2942,7 @@ def test_tool_manager_keeps_credential_actions_in_submenu(monkeypatch):
     title, options, shortcuts = menus[0]
     rendered = "\n".join(options)
     assert title == "ANTIGRAVITY CLI (AGY)"
+    assert options == interactive_model.options(interactive_model.TOOL_MENU)
     assert "[>] Launch Account" in rendered
     assert "[+] Login / Re-authenticate" in rendered
     assert "[i] Detailed Account Status" in rendered
@@ -2956,6 +2958,7 @@ def test_tool_manager_keeps_credential_actions_in_submenu(monkeypatch):
 
 def test_credential_sync_menu_routes_windows_credential_actions(monkeypatch):
     import cli_profile_manager.interactive as interactive
+    from cli_profile_manager import interactive_model
 
     calls = []
     menus = []
@@ -2975,6 +2978,7 @@ def test_credential_sync_menu_routes_windows_credential_actions(monkeypatch):
     title, options, shortcuts = menus[0]
     rendered = "\n".join(options)
     assert title == "ANTIGRAVITY CLI (AGY) CREDENTIAL SYNC / RECOVERY"
+    assert options == interactive_model.options(interactive_model.CREDENTIAL_SYNC_MENU)
     assert "[*] Magic Import from Windows" in rendered
     assert "[<] Import Windows Credential (Manual)" in rendered
     assert "[^] Export Credential to Windows" in rendered
@@ -2982,6 +2986,30 @@ def test_credential_sync_menu_routes_windows_credential_actions(monkeypatch):
     assert shortcuts["<"] == 1
     assert shortcuts["^"] == 2
     assert calls == [("magic", "agy"), ("manual_import", "agy"), ("export", "agy")]
+
+
+def test_cross_platform_interactive_menus_share_action_model():
+    from cli_profile_manager import interactive_model
+
+    assert [item.action for item in interactive_model.ROOT_MENU] == [
+        "agy",
+        "codex",
+        "claude",
+        "sync",
+        "settings",
+        "exit",
+    ]
+    assert [item.action for item in interactive_model.TOOL_MENU] == [
+        item.action for item in interactive_model.WINDOWS_TOOL_MENU
+    ]
+    assert interactive_model.options(interactive_model.CREDENTIAL_SYNC_MENU) == [
+        "[*] Magic Import from Windows",
+        "[<] Import Windows Credential (Manual)",
+        "[^] Export Credential to Windows",
+        "[x] Back",
+    ]
+    assert interactive_model.shortcuts(interactive_model.TOOL_MENU, include_digits=False)["~"] == 4
+    assert interactive_model.action_for_choice(interactive_model.ROOT_MENU, "@") == "agy"
 
 
 def test_show_startup_splash_waits_for_enter(monkeypatch):

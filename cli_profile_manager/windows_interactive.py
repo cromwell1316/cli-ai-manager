@@ -1,4 +1,5 @@
 from .metadata import load_metadata
+from . import interactive_model
 from .operations import (
     EXIT_OK,
     TOOLS,
@@ -183,81 +184,80 @@ def _clear_profile(tool_key, input_func, output):
 
 
 def _credential_sync_menu(tool_key, input_func, output):
+    menu_items = interactive_model.CREDENTIAL_SYNC_MENU
     while True:
         _banner(output, f"{TOOLS[tool_key]['name'].upper()} CREDENTIAL SYNC / RECOVERY")
-        _menu_item(output, "*", "Magic Import from Windows", selected=True)
-        _menu_item(output, "<", "Import Windows Credential (Manual)")
-        _menu_item(output, "^", "Export Credential to Windows")
-        _menu_item(output, "x", "Back")
+        for idx, item in enumerate(menu_items):
+            _menu_item(output, item.marker, item.label, selected=(idx == 0))
         _hint(output, "Use *, <, ^, x. Legacy m/i/e shortcuts also work.")
         choice = _choice(
             f"{CLR_RED}>{CLR_RESET} ",
-            {"*", "m", "<", "i", "^", "e", "x", "b"},
+            interactive_model.choice_keys(menu_items),
             input_func,
             output,
         )
-        if choice in ("*", "m"):
+        action = interactive_model.action_for_choice(menu_items, choice)
+        if action == "magic_import":
             _print(output, f"{CLR_YELLOW}Magic import is available in WSL interactive mode; use manual import here.{CLR_RESET}")
-        elif choice in ("<", "i"):
+        elif action == "manual_import":
             _import_profile(tool_key, input_func, output)
-        elif choice in ("^", "e"):
+        elif action == "export":
             _export_profile(tool_key, input_func, output)
-        elif choice in ("x", "b"):
+        elif action == "back":
             return
         _pause(input_func, output)
 
 
 def _tool_menu(tool_key, input_func, output):
+    menu_items = interactive_model.WINDOWS_TOOL_MENU
     while True:
         _banner(output, TOOLS[tool_key]["name"].upper())
         for line in _profile_status_lines(tool_key):
             _print(output, line)
         _print(output, "")
-        _menu_item(output, ">", "Launch Account", selected=True)
-        _menu_item(output, "+", "Login / Re-authenticate")
-        _menu_item(output, "i", "Detailed Account Status")
-        _menu_item(output, "#", "Set Profile Label")
-        _menu_item(output, "~", "Credential Sync / Recovery")
-        _menu_item(output, "-", "Clear / Logout Profile")
-        _menu_item(output, "x", "Back")
+        for idx, item in enumerate(menu_items):
+            _menu_item(output, item.marker, item.label, selected=(idx == 0))
         _hint(output, "Use symbols/shortcuts, Enter confirms typed command.")
         choice = _choice(
             f"{CLR_RED}>{CLR_RESET} ",
-            {">", "+", "a", "l", "i", "s", "#", "~", "*", "r", "-", "c", "x", "b", "1", "2", "3", "4", "5", "6"},
+            interactive_model.choice_keys(menu_items),
             input_func,
             output,
         )
-        if choice in (">", "1"):
+        action = interactive_model.action_for_choice(menu_items, choice)
+        if action == "launch":
             _launch_profile(tool_key, input_func, output)
-        elif choice in ("+", "a", "l", "2"):
+        elif action == "login":
             _login_profile(tool_key, input_func, output)
-        elif choice in ("i", "s", "3"):
+        elif action == "status":
             for line in _profile_status_lines(tool_key, include_quota=True):
                 _print(output, line)
-        elif choice in ("#", "4"):
+        elif action == "label":
             _label_profile(tool_key, input_func, output)
-        elif choice in ("~", "*", "r", "5"):
+        elif action == "credential_sync":
             _credential_sync_menu(tool_key, input_func, output)
-        elif choice in ("-", "c", "6"):
+        elif action == "clear":
             _clear_profile(tool_key, input_func, output)
-        elif choice in ("x", "b"):
+        elif action == "back":
             return
         _pause(input_func, output)
 
 
 def _sync_menu(input_func, output):
+    direction_items = interactive_model.SYNC_DIRECTION_MENU
+    mode_items = interactive_model.SYNC_MODE_MENU
     _banner(output, "SYNC PROFILES")
-    _menu_item(output, ">", "WSL -> Windows", selected=True)
-    _menu_item(output, "<", "Windows -> WSL")
-    _menu_item(output, "x", "Back")
-    direction_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", {">", "<", "x", "b", "1", "2"}, input_func, output)
-    if direction_choice in ("x", "b"):
+    for idx, item in enumerate(direction_items):
+        _menu_item(output, item.marker, item.label, selected=(idx == 0))
+    direction_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(direction_items), input_func, output)
+    direction_action = interactive_model.action_for_choice(direction_items, direction_choice)
+    if direction_action == "back":
         return
-    direction = "wsl" if direction_choice in (">", "1") else "windows"
-    _menu_item(output, "~", "Soft")
-    _menu_item(output, "!", "Hard")
-    mode_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", {"~", "!", "1", "2"}, input_func, output)
-    mode = "soft" if mode_choice in ("~", "1") else "hard"
+    direction = direction_action
+    for item in mode_items:
+        _menu_item(output, item.marker, item.label)
+    mode_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(mode_items), input_func, output)
+    mode = interactive_model.action_for_choice(mode_items, mode_choice)
     dry_run = _input("Dry run? [Y/n]: ", input_func).strip().lower() not in ("n", "no")
     yes = False
     if mode == "hard" and not dry_run:
@@ -296,28 +296,26 @@ def _settings_menu(input_func, output):
 
 def run_windows_interactive_main(input_func=input, output_func=print):
     load_metadata()
+    menu_items = interactive_model.ROOT_MENU
     while True:
         _banner(output_func, "UNIFIED PROFILE MANAGER", "AI-MAN")
-        _menu_item(output_func, "@", "Antigravity CLI (agy)", selected=True)
-        _menu_item(output_func, "$", "OpenAI Codex CLI")
-        _menu_item(output_func, "^", "Anthropic Claude CLI")
-        _menu_item(output_func, "~", "Sync Profiles (WSL <-> Windows)")
-        _menu_item(output_func, "!", "Settings")
-        _menu_item(output_func, "x", "Exit")
+        for idx, item in enumerate(menu_items):
+            _menu_item(output_func, item.marker, item.label, selected=(idx == 0))
         _hint(output_func, "Use @, $, ^, ~, !, x. Legacy digits still work.")
-        choice = _choice(f"{CLR_RED}>{CLR_RESET} ", {"@", "$", "^", "~", "!", "x", "1", "2", "3", "4", "5"}, input_func, output_func)
-        if choice in ("@", "1"):
+        choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(menu_items), input_func, output_func)
+        action = interactive_model.action_for_choice(menu_items, choice, cancelled_action="exit")
+        if action == "agy":
             _tool_menu("agy", input_func, output_func)
-        elif choice in ("$", "2"):
+        elif action == "codex":
             _tool_menu("codex", input_func, output_func)
-        elif choice in ("^", "3"):
+        elif action == "claude":
             _tool_menu("claude", input_func, output_func)
-        elif choice in ("~", "4"):
+        elif action == "sync":
             _sync_menu(input_func, output_func)
             _pause(input_func, output_func)
-        elif choice in ("!", "5"):
+        elif action == "settings":
             _settings_menu(input_func, output_func)
             _pause(input_func, output_func)
-        elif choice == "x":
+        elif action == "exit":
             _print(output_func, f"{CLR_RESET}Exiting Profile Manager.")
             return EXIT_OK

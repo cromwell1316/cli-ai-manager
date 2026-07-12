@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H53_Unified_Interactive_Renderer_For_Window
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -45,6 +45,26 @@ python3 -m pytest
 
 Acceptance target: changing a menu label, shortcut, or action route happens in
 one shared definition and is reflected on both WSL and native Windows.
+
+## Implementation Evidence
+
+- Added `cli_profile_manager/interactive_model.py` as the shared descriptor
+  model for root, tool, credential recovery, and sync menu actions.
+- Migrated WSL `interactive.py` root, tool, and credential recovery menus to
+  render options and shortcuts from the shared model.
+- Migrated native Windows `windows_interactive.py` root, tool, credential
+  recovery, and sync menus to the same model while keeping prompt-based Windows
+  input isolated from Unix raw terminal handling.
+- Added regression coverage proving WSL and Windows tool/recovery menus use the
+  shared descriptors and action IDs.
+
+## Completed Validation
+
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "interactive or windows_interactive"
+python3 scripts/horizon_governance.py --json
+python3 -m pytest
+```
 
 ## Files
 

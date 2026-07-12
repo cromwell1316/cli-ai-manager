@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H53_Unified_Interactive_Renderer_For_Window
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
