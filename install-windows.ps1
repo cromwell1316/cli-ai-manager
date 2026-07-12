@@ -1,16 +1,114 @@
 param(
-    [string]$BinDir = (Join-Path $env:LOCALAPPDATA "Programs\ai-man\bin"),
+    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "Programs\ai-man"),
+    [string]$BinDir,
+    [string]$AppDir,
     [string]$AgyHome = (Join-Path $env:USERPROFILE "agy-homes"),
     [switch]$NoPathUpdate,
-    [switch]$SkipProfileCheck
+    [switch]$SkipProfileCheck,
+    [switch]$DevSource,
+    [switch]$Rollback,
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = Split-Path -Parent $PSCommandPath
-$EntryPoint = Join-Path $ProjectDir "profile_manager.py"
+if (-not $BinDir) {
+    $BinDir = Join-Path $InstallRoot "bin"
+}
+if (-not $AppDir) {
+    $AppDir = Join-Path $InstallRoot "app"
+}
+$SourceEntryPoint = Join-Path $ProjectDir "profile_manager.py"
 
-if (-not (Test-Path -LiteralPath $EntryPoint)) {
+function Get-InstallBackupDir {
+    return Join-Path $InstallRoot ("app.rollback-{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+}
+
+function Get-LatestInstallBackup {
+    if (-not (Test-Path -LiteralPath $InstallRoot -PathType Container)) {
+        return $null
+    }
+    $backup = Get-ChildItem -LiteralPath $InstallRoot -Directory -Filter "app.rollback-*" -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if ($backup) {
+        return $backup.FullName
+    }
+    return $null
+}
+
+function Remove-InstalledCommands {
+    foreach ($name in @("ai-man", "profile-man", "pman")) {
+        Remove-Item -LiteralPath (Join-Path $BinDir "$name.ps1") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $BinDir "$name.cmd") -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if ($Uninstall) {
+    Remove-InstalledCommands
+    Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $AgyHome "ai-man-agy-credential.ps1") -Force -ErrorAction SilentlyContinue
+    Write-Host "Uninstalled ai-man shims, app files, and managed helper."
+    Write-Host "Profiles and credential backups were left in $AgyHome"
+    exit 0
+}
+
+if ($Rollback) {
+    $latestBackup = Get-LatestInstallBackup
+    if (-not $latestBackup) {
+        throw "no Windows app rollback backup found in $InstallRoot"
+    }
+    if (Test-Path -LiteralPath $AppDir) {
+        Remove-Item -LiteralPath $AppDir -Recurse -Force
+    }
+    Move-Item -LiteralPath $latestBackup -Destination $AppDir
+    Write-Host "Rolled back ai-man app files from $latestBackup to $AppDir"
+}
+
+$EntryPoint = if ($DevSource) { Join-Path $ProjectDir "profile_manager.py" } else { Join-Path $AppDir "profile_manager.py" }
+
+if (-not $Rollback -and -not (Test-Path -LiteralPath $SourceEntryPoint)) {
     throw "profile_manager.py was not found next to install-windows.ps1"
+}
+
+function Copy-InstallSource([string]$SourceDir, [string]$DestinationDir) {
+    $backupDir = $null
+    if (Test-Path -LiteralPath $DestinationDir -PathType Container) {
+        $backupDir = Get-InstallBackupDir
+        Move-Item -LiteralPath $DestinationDir -Destination $backupDir
+    }
+    New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+
+    foreach ($path in @("profile_manager.py", "README.md")) {
+        $source = Join-Path $SourceDir $path
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $DestinationDir $path) -Force
+        }
+    }
+    foreach ($dir in @("cli_profile_manager", "docs")) {
+        $source = Join-Path $SourceDir $dir
+        if (Test-Path -LiteralPath $source -PathType Container) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $DestinationDir $dir) -Recurse -Force
+        }
+    }
+    $scriptsSource = Join-Path $SourceDir "scripts"
+    if (Test-Path -LiteralPath $scriptsSource -PathType Container) {
+        $scriptsDest = Join-Path $DestinationDir "scripts"
+        New-Item -ItemType Directory -Force -Path $scriptsDest | Out-Null
+        Copy-Item -LiteralPath (Join-Path $scriptsSource "repair_windows_profile.ps1") -Destination $scriptsDest -Force -ErrorAction SilentlyContinue
+        Copy-Item -LiteralPath (Join-Path $scriptsSource "verify_install_windows.ps1") -Destination $scriptsDest -Force -ErrorAction SilentlyContinue
+    }
+    if ($backupDir) {
+        Write-Host "Previous app files backed up to $backupDir"
+    }
+}
+
+if (-not $DevSource -and -not $Rollback) {
+    Copy-InstallSource $ProjectDir $AppDir
+}
+
+if (-not (Test-Path -LiteralPath $EntryPoint -PathType Leaf)) {
+    throw "installed entrypoint was not found: $EntryPoint"
 }
 
 function Test-PythonCandidate([object]$Command, [string[]]$Arguments) {

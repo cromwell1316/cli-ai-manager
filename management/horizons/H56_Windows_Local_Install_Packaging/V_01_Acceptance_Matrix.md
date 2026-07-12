@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Area | Acceptance |
 | --- | --- |
@@ -13,3 +13,5 @@ Status: planned.
 | Shims | `ai-man`, `profile-man`, and `pman` survive source repo moves. |
 | Updates | Reinstall updates the local package predictably. |
 | Rollback | Uninstall/rollback removes generated files without deleting profiles. |
+| Dev mode | UNC/current checkout shims require explicit `-DevSource`. |
+| Verification | Windows smoke validates temporary local app/bin install paths. |

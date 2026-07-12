@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -22,3 +22,9 @@ shims.
 
 `Get-Command ai-man` resolves to a shim that points at Windows-local files.
 
+## Implementation Notes
+
+- Installer copies `profile_manager.py`, `cli_profile_manager`, docs, and
+  Windows support scripts into the configured app directory.
+- Generated PowerShell and CMD shims point at the installed app entrypoint unless
+  `-DevSource` is explicitly selected.

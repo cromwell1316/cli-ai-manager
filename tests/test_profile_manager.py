@@ -4944,11 +4944,14 @@ def test_windows_install_verifier_static_contract():
     verifier = ROOT / "scripts" / "verify_install_windows.ps1"
     text = verifier.read_text(encoding="utf-8")
 
+    assert "[string]$InstallRoot" in text
     assert "[string]$BinDir" in text
+    assert "[string]$AppDir" in text
     assert "[string]$AgyHome" in text
     assert "[switch]$SkipPathCheck" in text
     assert "[switch]$SkipCredentialCheck" in text
     assert "[switch]$SkipProfileCheck" in text
+    assert "[switch]$DevSource" in text
     assert '$Commands = @("ai-man", "profile-man", "pman")' in text
     assert "profile_manager.py" in text
     assert "ai-man-agy-credential.ps1" in text
@@ -4962,6 +4965,8 @@ def test_windows_install_verifier_static_contract():
     assert "Test-PowerShellProfileConflicts" in text
     assert "Test-CommandResolution" in text
     assert "Test-ExecutionPolicyContext" in text
+    assert "app source is Windows-local" in text
+    assert "development source mode selected" in text
 
 
 def test_windows_profile_repair_script_has_safe_cleanup_contract():
@@ -4987,8 +4992,30 @@ def test_windows_installer_and_verifier_use_same_shim_names():
     expected = '@("ai-man", "profile-man", "pman")'
     assert expected in installer
     assert expected in verifier
+    assert "[string]$InstallRoot" in installer
+    assert "[string]$AppDir" in installer
     assert "[switch]$SkipProfileCheck" in installer
+    assert "[switch]$DevSource" in installer
+    assert "[switch]$Rollback" in installer
+    assert "[switch]$Uninstall" in installer
+    assert "Copy-InstallSource" in installer
+    assert "app.rollback-" in installer
     assert "repair_windows_profile.ps1 -Apply -ConfirmCleanup" in installer
+
+
+def test_windows_local_install_packaging_contract_is_static():
+    installer = (ROOT / "install-windows.ps1").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts" / "verify_install_windows.ps1").read_text(encoding="utf-8")
+    smoke = (ROOT / "scripts" / "windows_ci_smoke.ps1").read_text(encoding="utf-8")
+
+    assert 'Join-Path $InstallRoot "app"' in installer
+    assert 'Join-Path $InstallRoot "bin"' in installer
+    assert 'Copy-Item -LiteralPath $source -Destination (Join-Path $DestinationDir $path) -Force' in installer
+    assert 'foreach ($dir in @("cli_profile_manager", "docs"))' in installer
+    assert 'Join-Path $InstallSourceDir "profile_manager.py"' in verifier
+    assert "app source is a UNC path" in verifier
+    assert "Windows-local app package contract" in smoke
+    assert "-AppDir $AppDir" in smoke
 
 
 def test_windows_ci_smoke_contract_is_token_safe():
@@ -5003,6 +5030,8 @@ def test_windows_ci_smoke_contract_is_token_safe():
 
     assert 'python -m pytest tests\\test_profile_manager.py -k "windows"' in smoke
     assert ".\\install-windows.ps1" in smoke
+    assert "-InstallRoot $InstallRoot" in smoke
+    assert "-AppDir $AppDir" in smoke
     assert "-NoPathUpdate" in smoke
     assert ".\\scripts\\verify_install_windows.ps1" in smoke
     assert "-SkipPathCheck" in smoke

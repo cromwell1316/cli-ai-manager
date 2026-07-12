@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -24,3 +24,7 @@ python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
+## Completed Evidence
+
+- Static Windows tests cover installer/verifier/smoke local packaging contracts.
+- Governance validates this completed horizon documentation.

@@ -66,11 +66,21 @@ rm -f ~/.local/bin/ai-man ~/.local/bin/profile-man ~/.local/bin/pman
 
 Native Windows install creates PowerShell and CMD shims in
 `%LOCALAPPDATA%\Programs\ai-man\bin` by default and installs the managed AGY
-Credential Manager helper into `%USERPROFILE%\agy-homes`.
+Credential Manager helper into `%USERPROFILE%\agy-homes`. By default it also
+copies the application source into `%LOCALAPPDATA%\Programs\ai-man\app`, so
+day-to-day native Windows use does not depend on a WSL UNC path.
 
 ```powershell
 .\install-windows.ps1
 .\scripts\verify_install_windows.ps1
+```
+
+Developer mode can keep shims pointed at the current checkout, including a WSL
+UNC path. Use this only while actively developing from that checkout:
+
+```powershell
+.\install-windows.ps1 -DevSource
+.\scripts\verify_install_windows.ps1 -DevSource
 ```
 
 Native Windows update is idempotent:
@@ -78,6 +88,15 @@ Native Windows update is idempotent:
 ```powershell
 git pull
 .\install-windows.ps1
+.\scripts\verify_install_windows.ps1
+```
+
+Each Windows-local update backs up the previous app directory as
+`%LOCALAPPDATA%\Programs\ai-man\app.rollback-YYYYMMDD-HHMMSS`. Roll back to the
+latest backup without touching profiles:
+
+```powershell
+.\install-windows.ps1 -Rollback
 .\scripts\verify_install_windows.ps1
 ```
 
@@ -100,7 +119,15 @@ To roll back a profile cleanup, copy the generated
 `*.ai-man-backup-YYYYMMDD-HHMMSS` file back over the PowerShell profile path
 shown by the repair command.
 
-Native Windows rollback removes generated shims and the managed helper:
+Native Windows uninstall removes generated shims, local app files, and the
+managed helper. It leaves managed profiles and credential backups in
+`%USERPROFILE%\agy-homes`:
+
+```powershell
+.\install-windows.ps1 -Uninstall
+```
+
+Manual Native Windows rollback removes generated shims and the managed helper:
 
 ```powershell
 Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\bin\ai-man.ps1" -Force -ErrorAction SilentlyContinue
@@ -109,6 +136,7 @@ Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\bin\profile-man.ps1"
 Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\bin\profile-man.cmd" -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\bin\pman.ps1" -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\bin\pman.cmd" -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\Programs\ai-man\app" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath "$env:USERPROFILE\agy-homes\ai-man-agy-credential.ps1" -Force -ErrorAction SilentlyContinue
 ```
 
@@ -315,6 +343,8 @@ Common failures:
 - Stale Windows helper: rerun `.\install-windows.ps1`.
 - Stale Windows PATH: open a new PowerShell window or use `-SkipPathCheck` for
   temporary validation.
+- Stale or moved WSL checkout: rerun `.\install-windows.ps1` without
+  `-DevSource` so shims point at `%LOCALAPPDATA%\Programs\ai-man\app`.
 - Stale Windows PowerShell profile: run
   `.\scripts\repair_windows_profile.ps1`, then apply
   `.\scripts\repair_windows_profile.ps1 -Apply -ConfirmCleanup` after reviewing

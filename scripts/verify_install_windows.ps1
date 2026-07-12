@@ -1,18 +1,28 @@
 param(
-    [string]$BinDir = (Join-Path $env:LOCALAPPDATA "Programs\ai-man\bin"),
+    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "Programs\ai-man"),
+    [string]$BinDir,
+    [string]$AppDir,
     [string]$AgyHome = (Join-Path $env:USERPROFILE "agy-homes"),
     [switch]$SkipPathCheck,
     [switch]$SkipCredentialCheck,
-    [switch]$SkipProfileCheck
+    [switch]$SkipProfileCheck,
+    [switch]$DevSource
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$EntryPoint = Join-Path $ProjectDir "profile_manager.py"
+if (-not $BinDir) {
+    $BinDir = Join-Path $InstallRoot "bin"
+}
+if (-not $AppDir) {
+    $AppDir = Join-Path $InstallRoot "app"
+}
+$InstallSourceDir = if ($DevSource) { $ProjectDir } else { $AppDir }
+$EntryPoint = Join-Path $InstallSourceDir "profile_manager.py"
 $HelperPath = Join-Path $AgyHome "ai-man-agy-credential.ps1"
 $Commands = @("ai-man", "profile-man", "pman")
 $ProfileConflictCommands = @("ai-man", "profile-man", "pman", "agy", "codex")
-$RepairProfileScript = Join-Path $ProjectDir "scripts\repair_windows_profile.ps1"
+$RepairProfileScript = Join-Path $InstallSourceDir "scripts\repair_windows_profile.ps1"
 $Failures = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
 
@@ -229,7 +239,7 @@ function Test-HelperFreshness([object]$Python) {
 
     $expectedPath = [System.IO.Path]::GetTempFileName()
     try {
-        Push-Location $ProjectDir
+        Push-Location $InstallSourceDir
         try {
             Invoke-Python $Python @(
                 "-c",
@@ -325,6 +335,7 @@ public static class AiManInstallVerifyCredNative {
 
 Write-Host "Verifying ai-man Windows install"
 Write-Host "Project: $ProjectDir"
+Write-Host "AppDir:  $InstallSourceDir"
 Write-Host "BinDir:  $BinDir"
 Write-Host "AgyHome: $AgyHome"
 
@@ -332,6 +343,14 @@ if (Test-Path -LiteralPath $EntryPoint -PathType Leaf) {
     Write-Ok "entrypoint exists: $EntryPoint"
 } else {
     Write-Fail "missing entrypoint: $EntryPoint"
+}
+
+if ($DevSource) {
+    Write-Warn "development source mode selected; shims may point at a WSL/UNC path"
+} elseif ($InstallSourceDir -like "\\*") {
+    Write-Fail "app source is a UNC path; rerun .\install-windows.ps1 without -DevSource for a Windows-local install"
+} else {
+    Write-Ok "app source is Windows-local: $InstallSourceDir"
 }
 
 $python = Find-Python

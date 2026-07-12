@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,4 +26,3 @@ location.
 
 Native Windows `ai-man` works from a Windows-local install even when WSL is not
 available.
-

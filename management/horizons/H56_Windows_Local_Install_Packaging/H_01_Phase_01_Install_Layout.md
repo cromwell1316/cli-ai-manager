@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Define the Windows-local application layout and ownership boundaries.
 
 Installer docs specify where application files, shims, helper, and profiles live.
 
+## Implementation Notes
+
+- Default Windows layout is `InstallRoot=%LOCALAPPDATA%\Programs\ai-man`,
+  `AppDir=<InstallRoot>\app`, `BinDir=<InstallRoot>\bin`, and
+  `AgyHome=%USERPROFILE%\agy-homes`.
+- Credentials and profiles remain outside the app package.

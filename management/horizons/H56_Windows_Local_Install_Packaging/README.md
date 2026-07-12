@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -41,8 +41,28 @@ day-to-day use.
 ai-man --help
 ```
 
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows"
+python3 scripts/horizon_governance.py --json
+```
+
 Acceptance target: native Windows `ai-man` continues to work after WSL is
 closed, unavailable, or the repo is moved inside WSL.
+
+## Implementation Evidence
+
+- `install-windows.ps1` now copies application files into
+  `%LOCALAPPDATA%\Programs\ai-man\app` by default and points shims at that
+  Windows-local entrypoint.
+- `-DevSource` preserves checkout/UNC shim behavior for active development.
+- `-Rollback` restores the latest `app.rollback-YYYYMMDD-HHMMSS` backup, and
+  `-Uninstall` removes generated app/shim/helper files without deleting managed
+  profiles.
+- `scripts/verify_install_windows.ps1` validates the configured `AppDir`,
+  distinguishes local installs from development source mode, and fails local
+  verification if the app source is UNC.
+- `scripts/windows_ci_smoke.ps1` installs into temporary Windows-local app/bin
+  paths and checks that shims point at the copied app.
 
 ## Files
 

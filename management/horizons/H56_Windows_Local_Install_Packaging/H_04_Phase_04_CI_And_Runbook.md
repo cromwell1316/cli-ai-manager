@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Add smoke coverage and documentation for Windows-local packaging.
 
 CI and docs cover both developer and day-to-day Windows install paths.
 
+## Implementation Notes
+
+- Windows smoke now installs to temporary app/bin paths and verifies local shim
+  targets.
+- README and runbook document default Windows-local installs, `-DevSource`,
+  rollback, uninstall, and moved-checkout recovery.

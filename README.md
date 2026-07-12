@@ -56,8 +56,10 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 The Windows installer creates `ai-man`, `profile-man`, and `pman` shims in
 `%LOCALAPPDATA%\Programs\ai-man\bin`, adds that directory to the user `Path`,
-and installs the managed `agy` Credential Manager helper into
-`%USERPROFILE%\agy-homes`.
+copies the application into `%LOCALAPPDATA%\Programs\ai-man\app`, and installs
+the managed `agy` Credential Manager helper into `%USERPROFILE%\agy-homes`.
+Use `.\install-windows.ps1 -DevSource` only when you intentionally want shims to
+point at the current checkout, including a WSL UNC path.
 
 The same CLI commands are available on both platforms. Runtime behavior differs
 where the native tools differ:

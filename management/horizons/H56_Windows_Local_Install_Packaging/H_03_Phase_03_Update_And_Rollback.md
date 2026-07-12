@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H56_Windows_Local_Install_Packaging/README.
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,10 @@ Make Windows-local installs updateable and reversible.
 
 Users can update or rollback the application without losing profiles or tokens.
 
+## Implementation Notes
+
+- Reinstalling backs up the previous app directory as
+  `app.rollback-YYYYMMDD-HHMMSS`.
+- `-Rollback` restores the latest app backup.
+- `-Uninstall` removes app/shims/helper while preserving managed profile and
+  credential backup directories.
