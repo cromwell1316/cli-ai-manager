@@ -94,3 +94,31 @@ def choice_keys(items):
         keys.add(item.marker)
         keys.update(item.aliases)
     return keys
+
+
+def contract_snapshot():
+    def snapshot_items(items):
+        return [
+            {
+                "action": item.action,
+                "marker": item.marker,
+                "label": item.label,
+                "aliases": list(item.aliases),
+                "option": item.option,
+            }
+            for item in items
+        ]
+
+    return {
+        "root": snapshot_items(ROOT_MENU),
+        "tool": snapshot_items(TOOL_MENU),
+        "windows_tool": snapshot_items(WINDOWS_TOOL_MENU),
+        "credential_sync": snapshot_items(CREDENTIAL_SYNC_MENU),
+        "sync_direction": snapshot_items(SYNC_DIRECTION_MENU),
+        "sync_mode": snapshot_items(SYNC_MODE_MENU),
+        "shortcuts_without_legacy_digits": {
+            "root": shortcuts(ROOT_MENU, include_digits=False),
+            "tool": shortcuts(TOOL_MENU, include_digits=False),
+            "credential_sync": shortcuts(CREDENTIAL_SYNC_MENU, include_digits=False),
+        },
+    }

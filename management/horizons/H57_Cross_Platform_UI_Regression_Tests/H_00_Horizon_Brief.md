@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -24,4 +24,3 @@ routes, and terminal hygiene.
 ## Expected Result
 
 Future UI changes fail tests when Windows and WSL diverge unexpectedly.
-

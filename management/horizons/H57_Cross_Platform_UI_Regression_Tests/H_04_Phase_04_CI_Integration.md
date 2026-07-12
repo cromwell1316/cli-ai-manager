@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Run cross-platform UI regression tests in regular local and CI validation.
 
 Windows and WSL UI parity has continuous automated signal.
 
+## Implementation Notes
+
+- Windows smoke now runs the focused selector
+  `windows_cross_platform_ui or windows_interactive_symbol_first`.
+- Full local validation continues to run the broader
+  `interactive or windows_interactive` selector and full pytest.

@@ -4,6 +4,7 @@ import io
 import importlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -3010,6 +3011,137 @@ def test_cross_platform_interactive_menus_share_action_model():
     ]
     assert interactive_model.shortcuts(interactive_model.TOOL_MENU, include_digits=False)["~"] == 4
     assert interactive_model.action_for_choice(interactive_model.ROOT_MENU, "@") == "agy"
+
+
+def test_windows_cross_platform_ui_contract_snapshot_is_stable():
+    from cli_profile_manager import interactive_model
+
+    snapshot = interactive_model.contract_snapshot()
+
+    assert [(item["marker"], item["action"], item["label"]) for item in snapshot["root"]] == [
+        ("@", "agy", "Antigravity CLI (agy)"),
+        ("$", "codex", "OpenAI Codex CLI"),
+        ("^", "claude", "Anthropic Claude CLI"),
+        ("~", "sync", "Sync Profiles (WSL <-> Windows)"),
+        ("!", "settings", "Settings"),
+        ("x", "exit", "Exit"),
+    ]
+    assert [(item["marker"], item["action"]) for item in snapshot["tool"]] == [
+        (">", "launch"),
+        ("+", "login"),
+        ("i", "status"),
+        ("#", "label"),
+        ("~", "credential_sync"),
+        ("-", "clear"),
+        ("x", "back"),
+    ]
+    assert snapshot["windows_tool"][:-1] == snapshot["tool"][:-1]
+    assert snapshot["windows_tool"][-1]["option"] == "[x] Back"
+    assert snapshot["credential_sync"] == [
+        {
+            "action": "magic_import",
+            "marker": "*",
+            "label": "Magic Import from Windows",
+            "aliases": ["m"],
+            "option": "[*] Magic Import from Windows",
+        },
+        {
+            "action": "manual_import",
+            "marker": "<",
+            "label": "Import Windows Credential (Manual)",
+            "aliases": ["i"],
+            "option": "[<] Import Windows Credential (Manual)",
+        },
+        {
+            "action": "export",
+            "marker": "^",
+            "label": "Export Credential to Windows",
+            "aliases": ["e"],
+            "option": "[^] Export Credential to Windows",
+        },
+        {
+            "action": "back",
+            "marker": "x",
+            "label": "Back",
+            "aliases": ["b"],
+            "option": "[x] Back",
+        },
+    ]
+    assert "1" not in snapshot["shortcuts_without_legacy_digits"]["root"]
+    assert snapshot["shortcuts_without_legacy_digits"]["root"]["@"] == 0
+    assert snapshot["shortcuts_without_legacy_digits"]["tool"]["~"] == 4
+
+
+def test_windows_cross_platform_ui_action_routes_are_complete():
+    from cli_profile_manager import interactive_model
+
+    expected_root = {
+        "@": "agy",
+        "$": "codex",
+        "^": "claude",
+        "~": "sync",
+        "!": "settings",
+        "x": "exit",
+        "1": "agy",
+        "5": "settings",
+    }
+    for choice, action in expected_root.items():
+        assert interactive_model.action_for_choice(interactive_model.ROOT_MENU, choice, cancelled_action="exit") == action
+
+    expected_tool = {
+        ">": "launch",
+        "+": "login",
+        "i": "status",
+        "#": "label",
+        "~": "credential_sync",
+        "-": "clear",
+        "x": "back",
+        "l": "login",
+        "s": "status",
+        "6": "clear",
+    }
+    for choice, action in expected_tool.items():
+        assert interactive_model.action_for_choice(interactive_model.TOOL_MENU, choice) == action
+        assert interactive_model.action_for_choice(interactive_model.WINDOWS_TOOL_MENU, choice) == action
+
+    expected_credential = {
+        "*": "magic_import",
+        "<": "manual_import",
+        "^": "export",
+        "x": "back",
+        "m": "magic_import",
+        "i": "manual_import",
+        "e": "export",
+    }
+    for choice, action in expected_credential.items():
+        assert interactive_model.action_for_choice(interactive_model.CREDENTIAL_SYNC_MENU, choice) == action
+
+
+def test_windows_interactive_symbol_first_menu_snapshot(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    prompts = iter(["@", "x", "x"])
+    output = []
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    rendered = "\n".join(output)
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", rendered)
+    assert rc == 0
+    assert "UNIFIED PROFILE MANAGER" in plain
+    assert "[@] Antigravity CLI (agy)" in plain
+    assert "[$] OpenAI Codex CLI" in plain
+    assert "[^] Anthropic Claude CLI" in plain
+    assert "[~] Sync Profiles (WSL <-> Windows)" in plain
+    assert "[>] Launch Account" in plain
+    assert "[+] Login / Re-authenticate" in plain
+    assert "[~] Credential Sync / Recovery" in plain
+    assert "[*] Magic Import from Windows" not in plain
+    assert "Import Windows Credential (Manual)" not in plain
 
 
 def test_show_startup_splash_waits_for_enter(monkeypatch):

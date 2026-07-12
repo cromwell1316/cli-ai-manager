@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -44,6 +44,17 @@ python3 -m pytest
 
 Acceptance target: future UI changes cannot silently regress Windows parity,
 symbol shortcuts, or credential submenu placement.
+
+## Implementation Evidence
+
+- Added `interactive_model.contract_snapshot()` as a terminal-neutral menu
+  contract for root, tool, Windows tool, credential sync, and sync menus.
+- Added regression tests for symbol-first labels, hidden legacy digit aliases,
+  action-route coverage, and credential submenu placement.
+- Added Windows interactive symbol-first snapshot coverage that strips ANSI and
+  avoids terminal-emulator-specific assertions.
+- Extended `scripts/windows_ci_smoke.ps1` with a focused cross-platform UI
+  regression pytest selector.
 
 ## Files
 

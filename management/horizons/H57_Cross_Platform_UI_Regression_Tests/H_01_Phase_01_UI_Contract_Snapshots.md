@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Define stable UI contract snapshots for cross-platform menus.
 
 Tests can detect accidental menu label or shortcut drift.
 
+## Implementation Notes
+
+- `interactive_model.contract_snapshot()` captures labels, markers, actions,
+  aliases, options, and non-digit shortcut maps.
+- Snapshot assertions are ANSI-neutral and avoid terminal-emulator-specific
+  rendering details.

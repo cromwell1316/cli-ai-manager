@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Verify menu choices dispatch to the expected operations on both platforms.
 
 Incorrect action routing fails automated tests before release.
 
+## Implementation Notes
+
+- Route tests cover root menu, WSL tool menu, Windows tool menu, credential sync
+  menu, symbol choices, and legacy aliases.
+- Existing operation dispatch tests keep credential import/export in the
+  recovery submenu rather than the main tool menu.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -24,3 +24,8 @@ python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
+## Completed Evidence
+
+- Focused UI tests validate shared menu snapshots, route coverage, Windows
+  symbol-first menus, and terminal hygiene behavior.
+- Governance validates this completed horizon documentation.

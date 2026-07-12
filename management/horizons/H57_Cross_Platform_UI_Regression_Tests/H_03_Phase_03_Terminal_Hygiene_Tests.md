@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H57_Cross_Platform_UI_Regression_Tests/READ
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,8 @@ Protect shell reset and child CLI theme behavior.
 
 Terminal state regressions are covered by automated tests.
 
+## Implementation Notes
+
+- Existing tests cover exit reset, prompt line erase-to-edge behavior, child CLI
+  theme release, renderer cursor restore, non-TTY output, and Windows no-args
+  startup without Unix interactive imports.
