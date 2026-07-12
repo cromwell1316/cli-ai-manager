@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -26,4 +26,3 @@ verification that reports actionable remediation steps.
 
 Opening PowerShell and running `ai-man` uses the installed application without
 profile startup errors or stale aliases.
-

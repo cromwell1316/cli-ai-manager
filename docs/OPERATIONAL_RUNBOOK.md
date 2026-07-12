@@ -81,6 +81,25 @@ git pull
 .\scripts\verify_install_windows.ps1
 ```
 
+If the verifier reports stale PowerShell profile functions, aliases, or missing
+dot-sourced files, inspect the proposed repair first:
+
+```powershell
+.\scripts\repair_windows_profile.ps1
+```
+
+Apply cleanup only when the dry-run output matches the stale entries you want to
+disable. The repair command writes a profile backup before commenting any
+conflicting lines:
+
+```powershell
+.\scripts\repair_windows_profile.ps1 -Apply -ConfirmCleanup
+```
+
+To roll back a profile cleanup, copy the generated
+`*.ai-man-backup-YYYYMMDD-HHMMSS` file back over the PowerShell profile path
+shown by the repair command.
+
 Native Windows rollback removes generated shims and the managed helper:
 
 ```powershell
@@ -97,6 +116,12 @@ If PowerShell blocks scripts:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+For one current shell only, especially when running from a WSL UNC path:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 If `ai-man` is not found after Windows install, open a new PowerShell window or
@@ -264,6 +289,7 @@ Install verification:
 
 ```powershell
 .\scripts\verify_install_windows.ps1
+.\scripts\repair_windows_profile.ps1
 .\scripts\windows_ci_smoke.ps1 -BinDir "$env:TEMP\ai-man-bin" -AgyHome "$env:TEMP\agy-homes"
 ```
 
@@ -281,6 +307,10 @@ Common failures:
 - Stale Windows helper: rerun `.\install-windows.ps1`.
 - Stale Windows PATH: open a new PowerShell window or use `-SkipPathCheck` for
   temporary validation.
+- Stale Windows PowerShell profile: run
+  `.\scripts\repair_windows_profile.ps1`, then apply
+  `.\scripts\repair_windows_profile.ps1 -Apply -ConfirmCleanup` after reviewing
+  the dry-run output.
 - Logged out profile: run `ai-man login <tool> pN` or import a valid credential.
 - Invalid AGY backup: restore from another `cred-pN.json` or run native login
   again.

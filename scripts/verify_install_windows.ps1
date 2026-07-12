@@ -2,7 +2,8 @@ param(
     [string]$BinDir = (Join-Path $env:LOCALAPPDATA "Programs\ai-man\bin"),
     [string]$AgyHome = (Join-Path $env:USERPROFILE "agy-homes"),
     [switch]$SkipPathCheck,
-    [switch]$SkipCredentialCheck
+    [switch]$SkipCredentialCheck,
+    [switch]$SkipProfileCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +11,8 @@ $ProjectDir = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $EntryPoint = Join-Path $ProjectDir "profile_manager.py"
 $HelperPath = Join-Path $AgyHome "ai-man-agy-credential.ps1"
 $Commands = @("ai-man", "profile-man", "pman")
+$ProfileConflictCommands = @("ai-man", "profile-man", "pman", "agy", "codex")
+$RepairProfileScript = Join-Path $ProjectDir "scripts\repair_windows_profile.ps1"
 $Failures = New-Object System.Collections.Generic.List[string]
 $Warnings = New-Object System.Collections.Generic.List[string]
 
@@ -40,6 +43,120 @@ function Test-ContainsPath([string]$PathValue, [string]$Expected) {
         } catch {}
     }
     return $false
+}
+
+function Test-SamePath([string]$Left, [string]$Right) {
+    try {
+        $leftFull = [System.IO.Path]::GetFullPath($Left).TrimEnd("\")
+        $rightFull = [System.IO.Path]::GetFullPath($Right).TrimEnd("\")
+        return [string]::Equals($leftFull, $rightFull, [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Get-ProfilePaths {
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($name in @("CurrentUserCurrentHost", "CurrentUserAllHosts")) {
+        try {
+            $value = $PROFILE.$name
+            if ($value -and -not $paths.Contains($value)) {
+                $paths.Add($value)
+            }
+        } catch {}
+    }
+    if ($PROFILE -is [string] -and -not $paths.Contains($PROFILE)) {
+        $paths.Add($PROFILE)
+    }
+    return $paths.ToArray()
+}
+
+function Expand-ProfileString([string]$Value) {
+    try {
+        return $ExecutionContext.InvokeCommand.ExpandString($Value)
+    } catch {
+        return $Value
+    }
+}
+
+function Test-MissingDotSource([string]$Line) {
+    if ($Line -match '^\s*\.\s+["'']([^"'']+)["'']') {
+        $expanded = Expand-ProfileString $Matches[1]
+        return ($expanded -and -not (Test-Path -LiteralPath $expanded))
+    }
+    return $false
+}
+
+function Test-PowerShellProfileConflicts {
+    $profilePaths = @(Get-ProfilePaths)
+    $namePattern = (($ProfileConflictCommands | ForEach-Object { [regex]::Escape($_) }) -join "|")
+    $found = $false
+
+    foreach ($path in $profilePaths) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            continue
+        }
+        $lines = @(Get-Content -LiteralPath $path -Encoding UTF8)
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            $lineNumber = $i + 1
+            if ($line -match "^\s*function\s+($namePattern)\b") {
+                Write-Fail "$path`:$lineNumber defines function '$($Matches[1])' that can shadow the installed shim; run .\scripts\repair_windows_profile.ps1"
+                $found = $true
+                continue
+            }
+            if ($line -match "^\s*Set-Alias\s+($namePattern)\b") {
+                Write-Fail "$path`:$lineNumber defines alias '$($Matches[1])' that can shadow the installed shim; run .\scripts\repair_windows_profile.ps1"
+                $found = $true
+                continue
+            }
+            if (Test-MissingDotSource $line) {
+                Write-Fail "$path`:$lineNumber dot-sources a missing file; run .\scripts\repair_windows_profile.ps1"
+                $found = $true
+                continue
+            }
+            if ($line -match "ai-man-tui-win|agy-multiaccount\.ps1|codex-multiaccount\.ps1") {
+                Write-Warn "$path`:$lineNumber contains a legacy ai-man/agy/codex profile reference; review .\scripts\repair_windows_profile.ps1"
+            }
+        }
+    }
+
+    if (-not $found) {
+        Write-Ok "PowerShell profile has no blocking ai-man command conflicts"
+    }
+}
+
+function Test-CommandResolution([string]$Name) {
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if (-not $command) {
+        Write-Warn "Get-Command $Name did not resolve in the current shell; open a new PowerShell window after install"
+        return
+    }
+    if ($command.CommandType -eq "Function" -or $command.CommandType -eq "Alias") {
+        Write-Fail "Get-Command $Name resolves to $($command.CommandType), not the installed shim; run .\scripts\repair_windows_profile.ps1"
+        return
+    }
+    $expectedPs1 = Join-Path $BinDir "$Name.ps1"
+    $expectedCmd = Join-Path $BinDir "$Name.cmd"
+    if ($command.Source -and ((Test-SamePath $command.Source $expectedPs1) -or (Test-SamePath $command.Source $expectedCmd))) {
+        Write-Ok "Get-Command $Name resolves to installed shim"
+    } else {
+        Write-Warn "Get-Command $Name resolves to $($command.Source); expected $expectedPs1 or $expectedCmd"
+    }
+}
+
+function Test-ExecutionPolicyContext {
+    try {
+        $processPolicy = Get-ExecutionPolicy -Scope Process
+        $currentUserPolicy = Get-ExecutionPolicy -Scope CurrentUser
+        $effectivePolicy = Get-ExecutionPolicy
+        Write-Ok "ExecutionPolicy effective=$effectivePolicy process=$processPolicy currentUser=$currentUserPolicy"
+    } catch {
+        Write-Warn "could not read ExecutionPolicy: $($_.Exception.Message)"
+    }
+    if ($ProjectDir -like "\\*") {
+        Write-Warn "project is running from a UNC path; if PowerShell blocks scripts, run Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass before install/verify"
+    }
 }
 
 function Invoke-Python([object]$Python, [string[]]$Arguments) {
@@ -233,6 +350,7 @@ $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
 $powershell = Get-Command powershell.exe -ErrorAction SilentlyContinue
 if ($PSVersionTable -or $pwsh -or $powershell) {
     Write-Ok "PowerShell is available"
+    Test-ExecutionPolicyContext
 } else {
     Write-Fail "PowerShell was not found"
 }
@@ -261,6 +379,20 @@ if (-not $SkipPathCheck) {
     }
 } else {
     Write-Warn "PATH check skipped by -SkipPathCheck"
+}
+
+if (-not $SkipProfileCheck) {
+    Test-PowerShellProfileConflicts
+    foreach ($name in $Commands) {
+        Test-CommandResolution $name
+    }
+    if (Test-Path -LiteralPath $RepairProfileScript -PathType Leaf) {
+        Write-Ok "profile repair helper exists: $RepairProfileScript"
+    } else {
+        Write-Fail "missing profile repair helper: $RepairProfileScript"
+    }
+} else {
+    Write-Warn "PowerShell profile check skipped by -SkipProfileCheck"
 }
 
 if ($python) {

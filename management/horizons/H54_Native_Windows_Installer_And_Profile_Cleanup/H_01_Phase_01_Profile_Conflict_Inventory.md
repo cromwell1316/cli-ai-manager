@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,9 @@ application.
 Diagnostics can explain why `Get-Command ai-man` is not resolving to the
 installed shim.
 
+## Implementation Notes
+
+- `scripts/repair_windows_profile.ps1` inventories stale functions, aliases,
+  missing dot-sourced files, and legacy ai-man/agy/codex profile references.
+- `scripts/verify_install_windows.ps1` reports blocking profile conflicts and
+  current `Get-Command` resolution for installed shims.

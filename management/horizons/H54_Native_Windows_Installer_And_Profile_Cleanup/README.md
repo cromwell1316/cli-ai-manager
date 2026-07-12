@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -42,11 +42,31 @@ present.
 ```powershell
 .\install-windows.ps1
 .\scripts\verify_install_windows.ps1
+.\scripts\repair_windows_profile.ps1
 ai-man diagnostics --json
+```
+
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows or operational_runbook"
+python3 scripts/horizon_governance.py --json
 ```
 
 Acceptance target: a fresh or previously customized Windows PowerShell profile
 can run `ai-man` without stale function conflicts or startup errors.
+
+## Implementation Evidence
+
+- Added `scripts/repair_windows_profile.ps1` with dry-run-by-default output,
+  explicit `-Apply -ConfirmCleanup`, profile backups, stale function/alias
+  detection, missing dot-source detection, and legacy profile reference
+  detection.
+- Integrated profile conflict reporting into `install-windows.ps1` without
+  mutating user profile files automatically.
+- Extended `scripts/verify_install_windows.ps1` with PowerShell profile checks,
+  `Get-Command` shim resolution checks, execution policy/UNC diagnostics, and
+  profile repair helper verification.
+- Updated `docs/OPERATIONAL_RUNBOOK.md` with cleanup, rollback, execution
+  policy, and verification commands.
 
 ## Files
 

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -24,3 +24,8 @@ python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
+## Completed Evidence
+
+- Static Windows contract tests cover verifier profile checks and repair helper
+  safety guarantees.
+- Governance validates the completed horizon documentation.

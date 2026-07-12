@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Area | Acceptance |
 | --- | --- |
@@ -13,3 +13,4 @@ Status: planned.
 | Profile cleanup | Stale PowerShell functions are detected and remediated safely. |
 | Installer | Re-running install is idempotent and updates shims/helpers. |
 | Verification | Failures include actionable repair commands. |
+| Rollback | Profile cleanup writes backups and the runbook documents restoration. |

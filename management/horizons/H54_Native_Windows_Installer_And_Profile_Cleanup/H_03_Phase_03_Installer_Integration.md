@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,11 @@ Integrate profile conflict checks into Windows install and verification.
 
 `verify_install_windows.ps1` reports profile conflicts with repair commands.
 
+## Implementation Notes
+
+- Installer still chooses only working Python launchers and writes fresh
+  shims/helpers idempotently.
+- Installer reports possible profile conflicts with dry-run/apply repair
+  commands.
+- Verifier reports execution policy context, UNC path implications, helper
+  freshness, profile conflicts, and command resolution.

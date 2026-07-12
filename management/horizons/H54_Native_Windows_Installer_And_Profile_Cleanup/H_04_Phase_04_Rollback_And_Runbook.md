@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,8 @@ Document rollback and operational recovery for Windows install/profile cleanup.
 
 The runbook covers install, cleanup, rollback, and verification in one path.
 
+## Implementation Notes
+
+- `docs/OPERATIONAL_RUNBOOK.md` documents Windows repair dry-run, confirmed
+  cleanup, backup restore, process-scoped execution policy bypass, and verifier
+  usage.

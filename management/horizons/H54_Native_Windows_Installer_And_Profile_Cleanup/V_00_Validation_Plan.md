@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
@@ -17,6 +17,7 @@ diagnostics, and rollback behavior.
 ```powershell
 .\install-windows.ps1
 .\scripts\verify_install_windows.ps1
+.\scripts\repair_windows_profile.ps1
 ai-man diagnostics --json
 ```
 
@@ -30,3 +31,5 @@ python3 scripts/horizon_governance.py --json
 - Installer chooses a working Python launcher.
 - Verification reports PATH, helper, and profile conflicts clearly.
 - Cleanup dry-run never mutates profile files without confirmation.
+- Confirmed cleanup requires `-Apply -ConfirmCleanup` and writes profile backup
+  files before commenting stale entries.

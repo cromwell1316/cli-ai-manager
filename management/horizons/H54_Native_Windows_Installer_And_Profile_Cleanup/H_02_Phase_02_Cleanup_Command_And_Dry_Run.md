@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H54_Native_Windows_Installer_And_Profile_Cl
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Provide a safe cleanup workflow for stale profile entries.
 
 Users can repair stale profile conflicts without manual file surgery.
 
+## Implementation Notes
+
+- Cleanup is dry-run by default.
+- Mutating cleanup requires `-Apply -ConfirmCleanup`.
+- The script writes `*.ai-man-backup-YYYYMMDD-HHMMSS` before commenting any
+  profile lines and preserves unrelated content.

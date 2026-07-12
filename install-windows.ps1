@@ -1,7 +1,8 @@
 param(
     [string]$BinDir = (Join-Path $env:LOCALAPPDATA "Programs\ai-man\bin"),
     [string]$AgyHome = (Join-Path $env:USERPROFILE "agy-homes"),
-    [switch]$NoPathUpdate
+    [switch]$NoPathUpdate,
+    [switch]$SkipProfileCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,6 +41,34 @@ function Find-Python {
         }
     }
     return $null
+}
+
+function Get-ProfilePaths {
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($name in @("CurrentUserCurrentHost", "CurrentUserAllHosts")) {
+        try {
+            $value = $PROFILE.$name
+            if ($value -and -not $paths.Contains($value)) {
+                $paths.Add($value)
+            }
+        } catch {}
+    }
+    if ($PROFILE -is [string] -and -not $paths.Contains($PROFILE)) {
+        $paths.Add($PROFILE)
+    }
+    return $paths.ToArray()
+}
+
+function Test-WindowsProfileHasConflict([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    return (
+        $text -match "(?m)^\s*function\s+(ai-man|profile-man|pman|agy|codex)\b" -or
+        $text -match "(?m)^\s*Set-Alias\s+(ai-man|profile-man|pman|agy|codex)\b" -or
+        $text -match "ai-man-tui-win|agy-multiaccount\.ps1|codex-multiaccount\.ps1"
+    )
 }
 
 $Python = Find-Python
@@ -98,4 +127,15 @@ if (-not $NoPathUpdate) {
 
 Write-Host "Installed ai-man Windows shims in $BinDir"
 Write-Host "Installed agy Credential Manager helper in $AgyHome"
+if (-not $SkipProfileCheck) {
+    $conflicts = @(Get-ProfilePaths | Where-Object { Test-WindowsProfileHasConflict $_ })
+    if ($conflicts.Count -gt 0) {
+        Write-Host "[WARN] PowerShell profile entries may shadow ai-man shims or reference missing legacy files:"
+        foreach ($path in $conflicts) {
+            Write-Host "  - $path"
+        }
+        Write-Host "Review without changing files: .\scripts\repair_windows_profile.ps1"
+        Write-Host "Apply safe cleanup with backup: .\scripts\repair_windows_profile.ps1 -Apply -ConfirmCleanup"
+    }
+}
 Write-Host "Open a new PowerShell window, then run: ai-man --help"

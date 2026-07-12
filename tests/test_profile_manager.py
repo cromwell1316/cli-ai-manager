@@ -4849,6 +4849,7 @@ def test_windows_install_verifier_static_contract():
     assert "[string]$AgyHome" in text
     assert "[switch]$SkipPathCheck" in text
     assert "[switch]$SkipCredentialCheck" in text
+    assert "[switch]$SkipProfileCheck" in text
     assert '$Commands = @("ai-man", "profile-man", "pman")' in text
     assert "profile_manager.py" in text
     assert "ai-man-agy-credential.ps1" in text
@@ -4858,6 +4859,26 @@ def test_windows_install_verifier_static_contract():
     assert "CredDelete" in text
     assert "ai-man-install-verify-" in text
     assert "gemini:antigravity" not in text
+    assert "repair_windows_profile.ps1" in text
+    assert "Test-PowerShellProfileConflicts" in text
+    assert "Test-CommandResolution" in text
+    assert "Test-ExecutionPolicyContext" in text
+
+
+def test_windows_profile_repair_script_has_safe_cleanup_contract():
+    repair = ROOT / "scripts" / "repair_windows_profile.ps1"
+    text = repair.read_text(encoding="utf-8")
+
+    assert "[switch]$Apply" in text
+    assert "[switch]$ConfirmCleanup" in text
+    assert "Dry run only" in text
+    assert "Refusing to edit profile files without -ConfirmCleanup" in text
+    assert "Copy-Item -LiteralPath $Path -Destination $backup -Force" in text
+    assert "ai-man cleanup disabled" in text
+    assert '"ai-man", "profile-man", "pman", "agy", "codex"' in text
+    assert "missing_dot_source" in text
+    assert "stale_function" in text
+    assert "legacy_profile_reference" in text
 
 
 def test_windows_installer_and_verifier_use_same_shim_names():
@@ -4867,6 +4888,8 @@ def test_windows_installer_and_verifier_use_same_shim_names():
     expected = '@("ai-man", "profile-man", "pman")'
     assert expected in installer
     assert expected in verifier
+    assert "[switch]$SkipProfileCheck" in installer
+    assert "repair_windows_profile.ps1 -Apply -ConfirmCleanup" in installer
 
 
 def test_windows_ci_smoke_contract_is_token_safe():
