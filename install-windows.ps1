@@ -12,14 +12,39 @@ if (-not (Test-Path -LiteralPath $EntryPoint)) {
     throw "profile_manager.py was not found next to install-windows.ps1"
 }
 
-$Python = (Get-Command py.exe -ErrorAction SilentlyContinue)
-$PythonArgs = @("-3")
-if (-not $Python) {
-    $Python = (Get-Command python.exe -ErrorAction SilentlyContinue)
-    $PythonArgs = @()
+function Test-PythonCandidate([object]$Command, [string[]]$Arguments) {
+    if (-not $Command) {
+        return $false
+    }
+    & $Command.Source @Arguments --version *> $null
+    return ($LASTEXITCODE -eq 0)
 }
+
+function Find-Python {
+    $candidates = @(
+        [pscustomobject]@{
+            Command = (Get-Command py.exe -ErrorAction SilentlyContinue)
+            Args = @("-3")
+        },
+        [pscustomobject]@{
+            Command = (Get-Command python.exe -ErrorAction SilentlyContinue)
+            Args = @()
+        }
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-PythonCandidate $candidate.Command $candidate.Args) {
+            return [pscustomobject]@{
+                Source = $candidate.Command.Source
+                Args = $candidate.Args
+            }
+        }
+    }
+    return $null
+}
+
+$Python = Find-Python
 if (-not $Python) {
-    throw "Python 3 was not found in PATH. Install Python or run from a shell where python.exe is available."
+    throw "Python 3 was not found or could not run. Install Python 3 for Windows or open a shell where py.exe/python.exe works."
 }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -32,14 +57,14 @@ foreach ($name in $commands) {
 
     @"
 `$env:PYTHONUTF8 = "1"
-& "$($Python.Source)" $($PythonArgs -join " ") "$EntryPoint" @args
+& "$($Python.Source)" $($Python.Args -join " ") "$EntryPoint" @args
 exit `$LASTEXITCODE
 "@ | Set-Content -LiteralPath $ps1 -Encoding UTF8
 
     @"
 @echo off
 set PYTHONUTF8=1
-"$($Python.Source)" $($PythonArgs -join " ") "$EntryPoint" %*
+"$($Python.Source)" $($Python.Args -join " ") "$EntryPoint" %*
 exit /b %ERRORLEVEL%
 "@ | Set-Content -LiteralPath $cmd -Encoding ASCII
 }
@@ -50,7 +75,7 @@ try {
 from cli_profile_manager.windows_support import ensure_windows_agy_helper
 ensure_windows_agy_helper(r'''$AgyHome''')
 "@
-    & $Python.Source @PythonArgs -c $code
+    & $Python.Source @($Python.Args) -c $code
     if ($LASTEXITCODE -ne 0) {
         throw "failed to install Windows agy Credential Manager helper"
     }

@@ -42,24 +42,42 @@ function Test-ContainsPath([string]$PathValue, [string]$Expected) {
     return $false
 }
 
-function Find-Python {
-    $py = Get-Command py.exe -ErrorAction SilentlyContinue
-    if ($py) {
-        return [pscustomobject]@{ Source = $py.Source; Args = @("-3") }
-    }
-    $python = Get-Command python.exe -ErrorAction SilentlyContinue
-    if ($python) {
-        return [pscustomobject]@{ Source = $python.Source; Args = @() }
-    }
-    return $null
-}
-
 function Invoke-Python([object]$Python, [string[]]$Arguments) {
     $allArgs = @($Python.Args) + $Arguments
     & $Python.Source @allArgs
     if ($LASTEXITCODE -ne 0) {
         throw "Python command failed with exit code $LASTEXITCODE"
     }
+}
+
+function Test-PythonCandidate([object]$Command, [string[]]$Arguments) {
+    if (-not $Command) {
+        return $false
+    }
+    & $Command.Source @Arguments --version *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Find-Python {
+    $candidates = @(
+        [pscustomobject]@{
+            Command = (Get-Command py.exe -ErrorAction SilentlyContinue)
+            Args = @("-3")
+        },
+        [pscustomobject]@{
+            Command = (Get-Command python.exe -ErrorAction SilentlyContinue)
+            Args = @()
+        }
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-PythonCandidate $candidate.Command $candidate.Args) {
+            return [pscustomobject]@{
+                Source = $candidate.Command.Source
+                Args = $candidate.Args
+            }
+        }
+    }
+    return $null
 }
 
 function Test-Shim([string]$Name) {
@@ -92,11 +110,21 @@ function Test-HelperFreshness([object]$Python) {
         return
     }
 
-    Push-Location $ProjectDir
+    $expectedPath = [System.IO.Path]::GetTempFileName()
     try {
-        $expected = Invoke-Python $Python @("-c", "from cli_profile_manager.windows_support import windows_agy_helper_source; print(windows_agy_helper_source(), end='')")
+        Push-Location $ProjectDir
+        try {
+            Invoke-Python $Python @(
+                "-c",
+                "from pathlib import Path; import sys; from cli_profile_manager.windows_support import windows_agy_helper_source; Path(sys.argv[1]).write_text(windows_agy_helper_source(), encoding='utf-8', newline='')",
+                $expectedPath
+            )
+        } finally {
+            Pop-Location
+        }
+        $expected = Get-Content -LiteralPath $expectedPath -Raw -Encoding UTF8
     } finally {
-        Pop-Location
+        Remove-Item -LiteralPath $expectedPath -Force -ErrorAction SilentlyContinue
     }
     $current = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
     if (($current -replace "`r`n", "`n") -ne ($expected -replace "`r`n", "`n")) {

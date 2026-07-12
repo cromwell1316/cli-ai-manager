@@ -4147,9 +4147,11 @@ def test_windows_interactive_main_renders_selector_without_unix_interactive(monk
     )
 
     assert rc == 0
-    assert "UNIFIED PROFILE MANAGER" in output
-    assert "[1] Antigravity CLI (agy)" in output
-    assert "Exiting Profile Manager." in output
+    rendered = "\n".join(output)
+    assert "UNIFIED PROFILE MANAGER" in rendered
+    assert "[@]" in rendered
+    assert "Antigravity CLI (agy)" in rendered
+    assert "Exiting Profile Manager." in rendered
     assert "cli_profile_manager.interactive" not in sys.modules
 
 
@@ -4159,7 +4161,7 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
     import cli_profile_manager.windows_interactive as windows_interactive
 
     captured = {}
-    prompts = iter(["1", "1", "1", "", "b", "x"])
+    prompts = iter(["@", ">", "1", "", "x", "x"])
     output = []
 
     class FakeStatus:
@@ -4187,6 +4189,49 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
 
     assert rc == 0
     assert captured["launch"] == ("agy", 1, None, False)
+
+
+def test_windows_interactive_tool_menu_keeps_credentials_in_submenu(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    prompts = iter(["@", "x", "x"])
+    output = []
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    rendered = "\n".join(output)
+    assert rc == 0
+    assert "[~]" in rendered
+    assert "Credential Sync / Recovery" in rendered
+    assert "Import Windows Credential" not in rendered
+    assert "Export Credential to Windows" not in rendered
+
+
+def test_windows_interactive_credential_sync_submenu_routes_manual_actions(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    calls = []
+    prompts = iter(["<", "", "x"])
+    output = []
+
+    monkeypatch.setattr(windows_interactive, "_import_profile", lambda tool, input_func, output_func: calls.append(("import", tool)))
+
+    windows_interactive._credential_sync_menu(
+        "agy",
+        input_func=lambda prompt="": next(prompts),
+        output=output.append,
+    )
+
+    rendered = "\n".join(output)
+    assert calls == [("import", "agy")]
+    assert "[*]" in rendered
+    assert "[<]" in rendered
+    assert "[^]" in rendered
 
 
 def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path):
