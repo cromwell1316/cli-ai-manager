@@ -974,7 +974,7 @@ def quota_progress_bar(done, total, width=24):
         filled = 0
     else:
         filled = min(width, max(0, int((done / total) * width)))
-    return f"[{'#' * filled}{'-' * (width - filled)}]"
+    return f"[{'█' * filled}{'░' * (width - filled)}]"
 
 
 def quota_progress_line(statuses, now=None):
@@ -997,7 +997,7 @@ def quota_progress_line(statuses, now=None):
         details += f", failed {progress['failed']}"
     if progress["pending"]:
         details += f", pending {progress['pending']}"
-    return f"Quota refresh {spinner} {CLR_CYAN}{bar}{CLR_RESET} {details}"
+    return f"Quota refresh {spinner} {CLR_BRIGHT_RED}{bar}{CLR_RESET} {details}"
 
 
 def agy_quota_cell_map(status):
@@ -1188,14 +1188,13 @@ def render_status_row(tool_key, status, quota_columns, widths, now=None):
 
     stat_str = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
     lbl_str = f"({status['label']})" if status["label"] else ""
-    email_color = CLR_CYAN if status["has_token"] else CLR_RED
     profile = status_profile_text(status)
     display_email = status["email"]
     quota_account = (status.get("quota") or {}).get("account")
     if quota_account and (tool_key == "agy" or display_email in ("logged in", "(no login)")):
         display_email = quota_account
-    email = color_email_parts(display_email) if status["has_token"] else f"{email_color}{display_email}{CLR_RESET}"
-    label = f"{CLR_YELLOW}{lbl_str}{CLR_RESET}" if lbl_str else ""
+    email = f"{CLR_WHITE}{display_email}{CLR_RESET}" if status["has_token"] else f"{CLR_RED}{display_email}{CLR_RESET}"
+    label = f"{CLR_DARK_RED}{lbl_str}{CLR_RESET}" if lbl_str else ""
     if tool_key == "agy":
         quota = " ".join(
             visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
@@ -1546,8 +1545,10 @@ def get_key(timeout=None):
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def header_lines(title=""):
-    width = min(max(42, visible_len(title) + 10), terminal_size()[0])
+def header_lines(title="", width=None):
+    term_width = terminal_size()[0]
+    width = width or min(max(42, visible_len(title) + 10), term_width)
+    width = max(1, min(width, term_width))
     divider = "━" * width
     subtitle = f" {title}" if title else ""
     return [
@@ -1576,6 +1577,11 @@ def themed_screen_lines(lines, width=None, height=None, top_padding=1, left_padd
     while len(themed) < height:
         themed.append(themed_line(width=width))
     return themed
+
+
+def status_screen_left_padding(width=None):
+    columns = width or terminal_size(fallback=(120, 24))[0]
+    return 4 if columns >= 100 else 2
 
 
 def reset_status_screen_render():
@@ -1620,7 +1626,7 @@ def status_screen_snapshot_key(
 
 def status_screen_width():
     columns, _ = terminal_size(fallback=(120, 24))
-    return max(60, columns)
+    return max(60, columns - status_screen_left_padding(columns))
 
 
 def status_screen_fast_key(tool_key, status_message, base_statuses):
@@ -1688,14 +1694,17 @@ def status_screen_layout(tool_key, statuses, max_width=None):
 def render_status_screen_frame(tool_key, status_message=None, base_statuses=None):
     now = time.time()
     tool_name = TOOLS[tool_key]["name"]
-    lines = header_lines(f"STATUS: {tool_name.upper()}")
-    lines.append("")
 
     if base_statuses is None:
         base_statuses = collect_status_snapshot(tool_key)
     statuses = [status_with_auto_quota_snapshot(tool_key, status) for status in base_statuses]
+    terminal_width = terminal_size(fallback=(120, 24))[0]
+    left_padding = status_screen_left_padding(terminal_width)
     screen_width = status_screen_width()
     quota_columns, widths, quota_header, total_width = status_screen_layout(tool_key, statuses, screen_width)
+    header_width = min(screen_width, max(total_width, visible_len(f"AI-MAN STATUS: {tool_name.upper()}") + 2))
+    lines = header_lines(f"STATUS: {tool_name.upper()}", width=header_width)
+    lines.append("")
     layout_key = (screen_width, tuple(quota_columns), tuple(sorted(widths.items())), total_width)
     progress_line = quota_progress_line(statuses, now)
     developer_mode = interactive_developer_mode_enabled()
@@ -1750,6 +1759,7 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
     if status_message:
         lines.append(f"{CLR_YELLOW}{status_message}{CLR_RESET}")
     if progress_line:
+        lines.append("")
         lines.append(progress_line)
     if developer_mode:
         lines.append("")
@@ -1761,7 +1771,7 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
         f"{CLR_BRIGHT_RED}Enter/q{CLR_RESET}{CLR_BG_BLACK}\033[90m return, "
         f"{CLR_RED}r{CLR_RESET}{CLR_BG_BLACK}\033[90m refresh quota now{CLR_RESET}"
     )
-    return snapshot_key, themed_screen_lines(lines, width=screen_width, left_padding=0)
+    return snapshot_key, themed_screen_lines(lines, width=terminal_width, left_padding=left_padding)
 
 
 def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):

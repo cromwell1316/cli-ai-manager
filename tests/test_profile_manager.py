@@ -2606,7 +2606,9 @@ def test_agy_status_screen_fits_all_quota_columns_in_terminal(monkeypatch):
     assert "Opus" in rendered
     assert "p12" in rendered
     assert "p12!" not in rendered
-    assert all(interactive.visible_len(line) <= 100 for line in lines)
+    assert all(line.startswith(interactive.CLR_BG_BLACK) for line in lines)
+    assert all(interactive.visible_len(line) <= interactive.terminal_size()[0] for line in lines)
+    assert all(len(line) <= interactive.terminal_size()[0] for line in plain_lines)
 
 
 def test_interactive_status_row_cache_reuses_formatted_rows(monkeypatch):
@@ -2632,6 +2634,8 @@ def test_interactive_status_row_cache_reuses_formatted_rows(monkeypatch):
 
     assert first == second
     assert len(interactive.STATUS_ROW_RENDER_CACHE) == 1
+    assert interactive.CLR_CYAN not in first
+    assert interactive.CLR_MAGENTA not in first
 
 
 def test_interactive_menu_lines_mark_selection_and_fit_footer():
