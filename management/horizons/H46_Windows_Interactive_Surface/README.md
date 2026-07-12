@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H46_Windows_Interactive_Surface/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -46,6 +46,19 @@ python3 -m pytest
 
 Acceptance target: running `ai-man` with no arguments on native Windows opens a
 usable selector instead of falling back to direct-command help.
+
+## Completion Notes
+
+- Added `cli_profile_manager/windows_interactive.py`, a native Windows console
+  selector that avoids `termios`, `tty`, and Unix-only `select` usage.
+- `cli.main()` now routes native Windows no-argument startup to the Windows
+  selector instead of printing direct-command fallback help.
+- The Windows selector supports launch, login/add, import, export, label,
+  clear, sync, and settings workflows through the shared operations layer.
+- WSL/Linux continues to use the existing interactive renderer unchanged.
+- Added tests proving native Windows startup calls the Windows selector without
+  importing `cli_profile_manager.interactive`, and that a launch workflow
+  reaches the shared launcher.
 
 ## Files
 

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H46_Windows_Interactive_Surface/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -27,3 +27,11 @@ Windows adapter while preserving the WSL/Linux renderer.
 
 Native Windows users can navigate the same core workflows from `ai-man` without
 losing direct-command compatibility.
+
+## Result
+
+Native Windows now has a dedicated console selector. It uses numbered prompts
+instead of Unix raw-mode keyboard handling, which keeps startup free of
+Unix-only terminal imports while still exposing the core profile workflows.
+Direct commands remain available and WSL/Linux continues to use the existing
+keyboard renderer.

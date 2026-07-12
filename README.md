@@ -242,7 +242,7 @@ python3 scripts/validate_agy_quota_live.py --concurrency 2 --timeout 60
 
 ## Interactive Selector
 
-Launching `ai-man` opens the keyboard selector:
+Launching `ai-man` opens the interactive selector:
 
 ```text
 [1] Antigravity CLI (agy)
@@ -253,7 +253,7 @@ Launching `ai-man` opens the keyboard selector:
 [x] Exit
 ```
 
-Keys:
+On WSL/Linux, the selector supports keyboard navigation:
 
 ```text
 digits  select visible item
@@ -267,6 +267,10 @@ s       status
 c       clear
 q/Esc   back or exit
 ```
+
+On native Windows, `ai-man` opens a console selector that uses numbered prompts
+for the same core workflows: launch, login/add, import, export, label, clear,
+sync, and settings. Direct commands remain available on both platforms.
 
 Settings currently includes the quota refresh interval used by the interactive
 quota status cache. Values can be entered in seconds or with `s`, `m`, or `h`

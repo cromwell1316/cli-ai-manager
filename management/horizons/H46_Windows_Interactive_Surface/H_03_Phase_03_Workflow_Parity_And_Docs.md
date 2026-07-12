@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H46_Windows_Interactive_Surface/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,10 @@ Bring core interactive workflows to parity on Windows.
 
 - Core workflows are reachable and call shared operations.
 - Direct commands still work exactly as before.
+
+## Result
+
+The Windows selector routes launch/login to the shared launcher and routes
+import, export, label, clear, sync, and settings through shared operation
+functions. README now documents that native Windows uses numbered prompts while
+WSL/Linux keeps the keyboard selector.

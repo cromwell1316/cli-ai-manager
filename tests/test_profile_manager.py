@@ -3798,11 +3798,19 @@ def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
     assert captured["run"][-1] == "Login"
 
 
-def test_native_windows_empty_main_uses_direct_command_fallback(monkeypatch, tmp_path):
+def test_native_windows_empty_main_uses_windows_selector(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.cli as cli
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    called = {}
+
+    def fake_windows_main():
+        called["ran"] = True
+        return 0
 
     monkeypatch.setattr(cli, "is_native_windows", lambda: True)
+    monkeypatch.setattr(windows_interactive, "run_windows_interactive_main", fake_windows_main)
     sys.modules.pop("cli_profile_manager.interactive", None)
 
     stdout_buffer = io.StringIO()
@@ -3813,9 +3821,66 @@ def test_native_windows_empty_main_uses_direct_command_fallback(monkeypatch, tmp
     stderr = stderr_buffer.getvalue()
 
     assert rc == 0
-    assert "use direct commands" in stdout
+    assert called["ran"] is True
     assert "cli_profile_manager.interactive" not in sys.modules
+    assert stdout == ""
     assert stderr == ""
+
+
+def test_windows_interactive_main_renders_selector_without_unix_interactive(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    sys.modules.pop("cli_profile_manager.interactive", None)
+    prompts = iter(["x"])
+    output = []
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    assert rc == 0
+    assert "UNIFIED PROFILE MANAGER" in output
+    assert "[1] Antigravity CLI (agy)" in output
+    assert "Exiting Profile Manager." in output
+    assert "cli_profile_manager.interactive" not in sys.modules
+
+
+def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    captured = {}
+    prompts = iter(["1", "1", "1", "", "b", "x"])
+    output = []
+
+    class FakeStatus:
+        payload = {
+            "has_token": True,
+            "token_state": "valid",
+        }
+
+    monkeypatch.setattr(
+        windows_interactive,
+        "profile_status_operation",
+        lambda tool, profile: FakeStatus(),
+    )
+
+    def fake_run_cli_tool(tool, profile, extra_args=None, login=False):
+        captured["launch"] = (tool, profile, extra_args, login)
+        return 0
+
+    monkeypatch.setattr(cli, "run_cli_tool", fake_run_cli_tool)
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    assert rc == 0
+    assert captured["launch"] == ("agy", 1, None, False)
 
 
 def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path):

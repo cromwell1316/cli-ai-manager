@@ -1825,13 +1825,9 @@ def main(argv=None):
         return result
 
     if is_native_windows():
-        print("ai-man is installed. On native Windows, use direct commands:")
-        print("  ai-man list agy")
-        print("  ai-man login agy p1")
-        print("  ai-man launch agy p1")
-        print("  ai-man import agy C:\\path\\to\\cred-p1.json p1")
-        print("  ai-man --help")
-        return EXIT_OK
+        from cli_profile_manager.windows_interactive import run_windows_interactive_main
+
+        return run_windows_interactive_main()
 
     from cli_profile_manager.interactive import run_interactive_main
 

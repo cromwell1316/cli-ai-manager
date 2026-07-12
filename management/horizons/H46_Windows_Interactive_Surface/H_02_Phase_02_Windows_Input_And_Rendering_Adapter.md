@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H46_Windows_Interactive_Surface/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -22,3 +22,10 @@ Implement native Windows keyboard input and rendering support.
 
 - Menu navigation works without Unix raw-mode APIs.
 - Text output remains readable in common Windows shells.
+
+## Result
+
+The Windows adapter is a console prompt selector with numbered commands and
+plain text rendering. It provides a graceful baseline for Windows Terminal,
+PowerShell, and limited terminals without adding GUI or third-party
+dependencies.

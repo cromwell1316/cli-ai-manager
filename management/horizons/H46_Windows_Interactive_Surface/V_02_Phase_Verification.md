@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H46_Windows_Interactive_Surface/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -21,3 +21,11 @@ Status: planned.
 python3 -m pytest tests/test_profile_manager.py -k "interactive or windows"
 python3 scripts/horizon_governance.py --json
 ```
+
+## Results
+
+- Phase 01 complete: native Windows selector is isolated from Unix interactive
+  imports.
+- Phase 02 complete: prompt-based Windows adapter renders and exits under test.
+- Phase 03 complete: launch workflow dispatch and documentation updates are in
+  place.
