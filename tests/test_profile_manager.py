@@ -4335,6 +4335,34 @@ def test_install_script_is_idempotent_and_verifiable(tmp_path):
     assert "install verification passed" in verified.stdout
 
 
+def test_windows_install_verifier_static_contract():
+    verifier = ROOT / "scripts" / "verify_install_windows.ps1"
+    text = verifier.read_text(encoding="utf-8")
+
+    assert "[string]$BinDir" in text
+    assert "[string]$AgyHome" in text
+    assert "[switch]$SkipPathCheck" in text
+    assert "[switch]$SkipCredentialCheck" in text
+    assert '$Commands = @("ai-man", "profile-man", "pman")' in text
+    assert "profile_manager.py" in text
+    assert "ai-man-agy-credential.ps1" in text
+    assert "windows_agy_helper_source" in text
+    assert "CredWrite" in text
+    assert "CredRead" in text
+    assert "CredDelete" in text
+    assert "ai-man-install-verify-" in text
+    assert "gemini:antigravity" not in text
+
+
+def test_windows_installer_and_verifier_use_same_shim_names():
+    installer = (ROOT / "install-windows.ps1").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts" / "verify_install_windows.ps1").read_text(encoding="utf-8")
+
+    expected = '@("ai-man", "profile-man", "pman")'
+    assert expected in installer
+    assert expected in verifier
+
+
 def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

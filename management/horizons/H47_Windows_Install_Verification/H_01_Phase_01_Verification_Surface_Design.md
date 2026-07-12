@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,11 @@ Define the Windows verification command contract.
 
 - Verification can run without real AGY credentials.
 - Failures are actionable and non-destructive.
+
+## Result
+
+The verifier contract is `scripts/verify_install_windows.ps1` with optional
+`-BinDir`, `-AgyHome`, `-SkipPathCheck`, and `-SkipCredentialCheck` arguments.
+It returns exit code 0 on success and 1 when install checks fail. PATH staleness
+in the current shell is reported as a warning when the user PATH is already
+configured.

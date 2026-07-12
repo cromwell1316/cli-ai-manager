@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
@@ -31,3 +31,15 @@ ai-man list agy
 ```bash
 python3 scripts/horizon_governance.py --json
 ```
+
+## Results
+
+- Static tests verify the Windows verifier contract, Credential Manager safety
+  target, and shim-name parity with `install-windows.ps1`.
+- `python3 scripts/horizon_governance.py --json`: passed.
+- `python3 -m pytest tests/test_profile_manager.py -k "install"`: passed.
+- `python3 -m pytest`: passed.
+
+Native Windows live execution of `.\scripts\verify_install_windows.ps1` is
+documented for post-install validation and is not run in this Linux/WSL test
+environment.

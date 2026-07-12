@@ -48,6 +48,7 @@ On Windows PowerShell, run:
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\install-windows.ps1
+.\scripts\verify_install_windows.ps1
 ```
 
 The Windows installer creates `ai-man`, `profile-man`, and `pman` shims in
@@ -216,8 +217,8 @@ redacted.
 
 ## Install Verification And Rollback
 
-The installer is idempotent: running it again replaces the same local aliases
-with symlinks to the current checkout.
+The installers are idempotent: running them again replaces the same local
+aliases or shims with links to the current checkout.
 
 ```bash
 ./install.sh
@@ -227,10 +228,52 @@ with symlinks to the current checkout.
 Set `AI_MAN_INSTALL_BIN_DIR=/path/to/bin` to install and verify aliases outside
 `~/.local/bin`.
 
-Manual rollback removes only the command aliases created by the installer:
+On native Windows, verify the PowerShell/CMD shims, user `Path`, Python,
+PowerShell, the managed AGY helper, and safe Credential Manager access:
+
+```powershell
+.\install-windows.ps1
+.\scripts\verify_install_windows.ps1
+```
+
+The verifier accepts the same install locations plus explicit skips for
+managed environments:
+
+```powershell
+.\scripts\verify_install_windows.ps1 `
+  -BinDir "$env:LOCALAPPDATA\Programs\ai-man\bin" `
+  -AgyHome "$env:USERPROFILE\agy-homes"
+.\scripts\verify_install_windows.ps1 -SkipPathCheck
+.\scripts\verify_install_windows.ps1 -SkipCredentialCheck
+```
+
+If verification reports that the current shell PATH is stale, open a new
+PowerShell window. If PowerShell blocks scripts, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Manual WSL/Linux rollback removes only the command aliases created by the
+installer:
 
 ```bash
 rm -f ~/.local/bin/ai-man ~/.local/bin/profile-man ~/.local/bin/pman
+```
+
+Manual Windows rollback removes only the shims and helper created by the
+installer. Remove the bin directory from the user `Path` if you no longer want
+the commands discoverable:
+
+```powershell
+$BinDir = Join-Path $env:LOCALAPPDATA "Programs\ai-man\bin"
+Remove-Item -LiteralPath (Join-Path $BinDir "ai-man.ps1") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $BinDir "ai-man.cmd") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $BinDir "profile-man.ps1") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $BinDir "profile-man.cmd") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $BinDir "pman.ps1") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $BinDir "pman.cmd") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $env:USERPROFILE "agy-homes\ai-man-agy-credential.ps1") -Force -ErrorAction SilentlyContinue
 ```
 
 Optional live AGY validation is available for local troubleshooting:
@@ -382,6 +425,7 @@ cli-profile-manager/
 │   ├── benchmark_runtime.py
 │   ├── horizon_governance.py
 │   ├── validate_agy_quota_live.py
+│   ├── verify_install_windows.ps1
 │   ├── verify_install.sh
 │   └── verify_no_tui_surface.sh
 ├── management/

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -20,3 +20,12 @@ Status: planned.
 ```bash
 python3 scripts/horizon_governance.py --json
 ```
+
+## Results
+
+- Phase 01 complete: verification command contract and non-destructive safety
+  behavior are documented.
+- Phase 02 complete: PowerShell verifier implementation is present and covered
+  by static tests in this Linux/WSL environment.
+- Phase 03 complete: README includes Windows verification, troubleshooting,
+  and rollback paths.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -26,3 +26,10 @@ generation, and safe Credential Manager access.
 
 Windows users can validate or troubleshoot installation without manually
 inspecting generated files.
+
+## Result
+
+Native Windows installs now have a deterministic PowerShell verifier. It checks
+the generated shims, PATH state, Python/PowerShell availability, managed AGY
+helper freshness, and Credential Manager API access while avoiding real profile
+credentials.

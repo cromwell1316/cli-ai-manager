@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Document Windows verification and rollback.
 
 - A user can install, verify, and rollback from documented commands.
 - Verification output does not expose secrets.
+
+## Result
+
+README now includes native Windows verification commands, custom verifier
+arguments, troubleshooting for execution policy and stale shell PATH, and manual
+rollback commands for generated Windows shims and the managed AGY helper.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H47_Windows_Install_Verification/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -49,6 +49,20 @@ ai-man list agy
 
 Acceptance target: Windows users have a deterministic post-install command that
 reports actionable failures without exposing tokens.
+
+## Completion Notes
+
+- Added `scripts/verify_install_windows.ps1` for native Windows post-install
+  verification.
+- The verifier checks `ai-man`, `profile-man`, and `pman` PowerShell/CMD
+  shims, user PATH, current shell PATH freshness, Python, PowerShell, AGY helper
+  freshness, and Credential Manager API access.
+- Credential Manager verification uses a temporary `ai-man-install-verify-*`
+  target and deletes it, so real `gemini:antigravity` credentials are not read
+  or modified.
+- README now documents Windows verification, troubleshooting, and rollback.
+- Static tests cover the verifier contract and shim-name parity with
+  `install-windows.ps1`.
 
 ## Files
 
