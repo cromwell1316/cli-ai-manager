@@ -762,6 +762,8 @@ def run_cli_tool(tool_key, n, extra_args=None, login=False):
         switcher = _windows_support().ensure_windows_agy_helper(tool["base_dir"])
         os.makedirs(profile_home(tool_key, n), exist_ok=True)
         action = "Login" if login else "Launch"
+        concurrency_policy = _windows_support().windows_agy_concurrency_policy(native_windows=True)
+        print_error(concurrency_policy["warning"])
         argv = _windows_support().windows_agy_launch_argv(
             powershell,
             switcher,
@@ -781,7 +783,11 @@ def run_cli_tool(tool_key, n, extra_args=None, login=False):
             backend="powershell",
             result="succeeded" if completed.returncode == 0 else "failed",
             exit_code=completed.returncode,
-            details={"action": action, "helper": switcher},
+            details={
+                "action": action,
+                "helper": switcher,
+                "concurrency_policy": concurrency_policy,
+            },
         )
         return completed.returncode
 

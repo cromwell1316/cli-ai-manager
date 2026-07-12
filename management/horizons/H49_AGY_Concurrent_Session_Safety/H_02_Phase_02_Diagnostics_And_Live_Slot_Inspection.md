@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,12 @@ Improve diagnostics for the live Windows AGY credential slot.
 
 - Diagnostics redact token material.
 - Missing or unreadable live slot states are actionable.
+
+## Completion Evidence
+
+- Diagnostics now include `agy_windows_concurrency` with the shared target,
+  mutex, policy, true-isolation guidance, token-safe live-slot inspection status,
+  and recovery commands.
+- The helper continues to use Credential Manager APIs without exposing token
+  blobs in diagnostics.
+- Native Windows launch audit records include the concurrency policy details.

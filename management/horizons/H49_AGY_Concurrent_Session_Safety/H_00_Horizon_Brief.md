@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -27,3 +27,10 @@ guardrails or warnings that match the evidence.
 
 Windows AGY concurrency has a documented policy, diagnostic support, and a
 clear recovery path.
+
+## Result
+
+Implemented a conservative `serialized_shared_slot` policy. Native Windows AGY
+launch/login flows in one Windows user are guarded by a named mutex, diagnostics
+surface the policy and recovery commands, and docs state that true parallel
+isolation requires separate Windows users.

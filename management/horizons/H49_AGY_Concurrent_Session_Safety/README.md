@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -36,6 +36,25 @@ sessions that share the single Credential Manager target `gemini:antigravity`.
 - Add user-facing warning text for native Windows concurrent AGY launches.
 - Evaluate a lock, stagger, or confirmation policy for risky launches.
 
+## Policy Decision
+
+Native Windows AGY is not treated as parallel-isolated inside one Windows user.
+The live Credential Manager target `gemini:antigravity` is shared, so `ai-man`
+serializes AGY `launch`, `login`, `set`, `save`, and `clear` operations with a
+named Windows mutex. A second concurrent operation fails with a recovery message
+instead of switching the shared slot under an active session. True parallel AGY
+isolation requires separate Windows users.
+
+## Implementation Evidence
+
+- Added `serialized_shared_slot` policy metadata through diagnostics.
+- Added a named mutex to the managed PowerShell helper around every live slot
+  mutation and native AGY process lifetime.
+- Added native Windows launch warning/audit metadata for the concurrency policy.
+- Added `scripts/agy_windows_concurrency_drill.ps1` for repeatable staggered
+  local drills.
+- Documented recovery commands and separate-user guidance.
+
 ## Validation
 
 ```powershell
@@ -48,6 +67,14 @@ ai-man diagnostics agy --json --show-accounts
 
 Acceptance target: the project has an evidence-backed policy for parallel AGY
 sessions on Windows, including clear user warnings and recovery commands.
+
+Completed validation:
+
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows_agy or diagnostics"
+python3 scripts/horizon_governance.py --json
+python3 -m pytest
+```
 
 ## Files
 

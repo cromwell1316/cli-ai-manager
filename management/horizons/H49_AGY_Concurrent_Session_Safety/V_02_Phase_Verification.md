@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -18,5 +18,12 @@ Status: planned.
 ## Commands
 
 ```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows_agy or diagnostics"
 python3 scripts/horizon_governance.py --json
+python3 -m pytest
 ```
+
+## Completion Evidence
+
+All phases are backed by the H49 drill script, diagnostics policy payload,
+helper mutex contract, README recovery guidance, and horizon governance checks.

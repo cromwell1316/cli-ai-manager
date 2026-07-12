@@ -13,6 +13,7 @@ from .quota import (
     resolve_quota_backend,
     tmux_path,
 )
+from .windows_support import windows_agy_concurrency_policy, windows_agy_recovery_commands
 
 
 TOKEN_LIKE_RE = re.compile(
@@ -299,6 +300,15 @@ def diagnostics_payload(
     except QuotaProbeError as e:
         agy_backend["resolved"] = e.state
         agy_backend["warning"] = str(e)
+    native_windows = os.name == "nt"
+    agy_concurrency = windows_agy_concurrency_policy(native_windows=native_windows)
+    agy_concurrency["recovery_commands"] = windows_agy_recovery_commands("pN")
+    agy_concurrency["live_slot_inspection"] = {
+        "available": native_windows,
+        "method": "managed PowerShell helper and Credential Manager APIs" if native_windows else "native Windows only",
+        "token_safe": True,
+        "target": agy_concurrency["target"],
+    }
     payload = {
         "ok": True,
         "mode": mode,
@@ -324,5 +334,6 @@ def diagnostics_payload(
         "quota_runtime": quota_runtime,
         "persistent_sessions": persistent_quota_sessions_snapshot(tool_key),
         "agy_quota_backend": agy_backend,
+        "agy_windows_concurrency": agy_concurrency,
     }
     return redact_sensitive(payload, show_accounts)

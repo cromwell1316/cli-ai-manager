@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
@@ -23,10 +23,19 @@ sessions.
 
 ```powershell
 ai-man diagnostics agy --json --show-accounts
+.\scripts\agy_windows_concurrency_drill.ps1
 ai-man launch agy p1
 ai-man launch agy p2
 ```
 
 ```bash
+python3 -m pytest tests/test_profile_manager.py -k "windows_agy or diagnostics"
 python3 scripts/horizon_governance.py --json
+python3 -m pytest
 ```
+
+## Completion Evidence
+
+Local automated validation covers the static helper mutex contract, diagnostics
+policy payload, warning/audit path, and token redaction. Native live drill
+commands remain explicit because they require real Windows AGY accounts.

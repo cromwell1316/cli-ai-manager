@@ -385,6 +385,18 @@ target before launching and saves the resulting live credential back to
 Antigravity limitation: the file profile is isolated per directory, while the
 Windows Credential Manager slot is shared per Windows user.
 
+Because that live slot is shared, native Windows AGY sessions are intentionally
+treated as not parallel-isolated inside one Windows user. The managed helper uses
+a named Windows mutex around `launch`, `login`, `set`, `save`, and `clear` so a
+second concurrent AGY launch fails with a recovery message instead of silently
+switching the shared slot under an active session. Use separate Windows users
+for true parallel AGY isolation. To inspect the policy and recovery commands:
+
+```powershell
+ai-man diagnostics agy --json --show-accounts
+.\scripts\agy_windows_concurrency_drill.ps1
+```
+
 Credential formats and Windows/WSL parity are tracked in:
 
 ```text

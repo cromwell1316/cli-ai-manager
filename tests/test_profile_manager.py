@@ -3888,6 +3888,14 @@ def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
             captured["helper_args"] = (powershell, helper, action, profile_num, base_dir, command, list(extra_args or []))
             return [powershell, "-File", helper, "-Action", action]
 
+        @staticmethod
+        def windows_agy_concurrency_policy(native_windows=False):
+            captured["native_windows"] = native_windows
+            return {
+                "warning": "Native Windows AGY uses one Credential Manager slot per Windows user.",
+                "policy": "serialized_shared_slot",
+            }
+
     class FakeCompleted:
         returncode = 0
 
@@ -3909,6 +3917,7 @@ def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
     assert captured["helper_args"][5] == "agy"
     assert captured["helper_args"][6] == ["--prompt", "hi"]
     assert captured["run"][-1] == "Login"
+    assert captured["native_windows"] is True
 
 
 def test_native_windows_empty_main_uses_windows_selector(monkeypatch, tmp_path):
@@ -4005,7 +4014,24 @@ def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path)
     assert "CredWrite" in text
     assert "CredRead" in text
     assert "cred-p{0}.json" in text
+    assert "Global\\ai-man-agy-credential-slot" in text
+    assert "Invoke-WithAgyCredentialSlotLock" in text
+    assert "true parallel isolation" in text
     assert '"Login" { Invoke-AgyProfile $Profile $true }' in text
+
+
+def test_windows_agy_concurrency_policy_is_exposed_in_diagnostics(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+
+    payload = pm.diagnostics_payload("agy", status_provider=lambda tool, num: None, mode="fast")
+    policy = payload["agy_windows_concurrency"]
+
+    assert policy["target"] == "gemini:antigravity"
+    assert policy["policy"] == "serialized_shared_slot"
+    assert policy["parallel_same_windows_user"] == "unsupported"
+    assert policy["true_parallel_isolation"] == "use_separate_windows_users"
+    assert policy["live_slot_inspection"]["token_safe"] is True
+    assert "ai-man launch agy pN" in policy["recovery_commands"]
 
 
 def test_clear_agy_profile_removes_windows_credential_backup(monkeypatch, tmp_path):

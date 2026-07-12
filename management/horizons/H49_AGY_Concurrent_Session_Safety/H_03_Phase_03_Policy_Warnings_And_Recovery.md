@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H49_AGY_Concurrent_Session_Safety/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,13 @@ Add user-facing policy, warnings, and recovery commands.
 
 - Warnings are shown only where relevant.
 - Recovery path is auditable and token-safe.
+
+## Completion Evidence
+
+- Native Windows AGY launch/login emits a shared-slot warning before invoking
+  the managed helper.
+- The managed helper serializes `launch`, `login`, `set`, `save`, and `clear`
+  with `Global\ai-man-agy-credential-slot`.
+- Recovery is documented as closing active AGY sessions, restoring a selected
+  profile with `ai-man launch agy pN`, refreshing with `ai-man login agy pN`,
+  and checking `ai-man diagnostics agy --json --show-accounts`.
