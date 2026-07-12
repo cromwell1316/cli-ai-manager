@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: completed.
 
 ## Context
 
@@ -27,4 +27,3 @@ directly in the Windows AGY workflows.
 
 Windows AGY launches are understandable, serialized where needed, and recoverable
 without exposing token material.
-

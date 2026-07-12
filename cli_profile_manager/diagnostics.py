@@ -13,7 +13,11 @@ from .quota import (
     resolve_quota_backend,
     tmux_path,
 )
-from .windows_support import windows_agy_concurrency_policy, windows_agy_recovery_commands
+from .windows_support import (
+    windows_agy_concurrency_policy,
+    windows_agy_recovery_commands,
+    windows_agy_session_state,
+)
 
 
 TOKEN_LIKE_RE = re.compile(
@@ -314,10 +318,20 @@ def diagnostics_payload(
         "target": agy_concurrency["target"],
     }
     agy_recovery = None
+    agy_session_guardrails = None
     if "agy" in selected_tools:
         from .operations import agy_windows_backups_payload
 
         agy_recovery = agy_windows_backups_payload()
+        guardrails = []
+        for num in get_display_profiles("agy"):
+            guardrails.append(windows_agy_session_state(TOOLS["agy"]["base_dir"], num, login=False, native_windows=native_windows))
+        agy_session_guardrails = {
+            "token_safe": True,
+            "profiles": guardrails,
+            "lock_timeout_env": "AI_MAN_AGY_SLOT_LOCK_TIMEOUT_SECONDS",
+            "true_parallel_isolation": "use_separate_windows_users",
+        }
     payload = {
         "ok": True,
         "mode": mode,
@@ -345,5 +359,6 @@ def diagnostics_payload(
         "agy_quota_backend": agy_backend,
         "agy_windows_concurrency": agy_concurrency,
         "agy_credential_recovery": agy_recovery,
+        "agy_windows_session_guardrails": agy_session_guardrails,
     }
     return redact_sensitive(payload, show_accounts)

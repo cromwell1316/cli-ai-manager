@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,11 @@ operation.
 Common Windows AGY failures produce next-step guidance instead of raw helper
 errors.
 
+## Implementation Notes
+
+- Missing or invalid launch backups are blocked before invoking the PowerShell
+  helper and include login/restore/diagnostics recovery commands.
+- Existing helper mutex contention messaging remains explicit about same-user
+  serialization and separate Windows users for true parallel isolation.
+- `AI_MAN_AGY_SLOT_LOCK_TIMEOUT_SECONDS` is documented as a configurable
+  same-user wait, not parallel isolation.

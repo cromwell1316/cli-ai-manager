@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
@@ -16,6 +16,7 @@ guidance, and token-safe diagnostics.
 
 ```bash
 python3 -m pytest tests/test_profile_manager.py -k "agy and windows"
+python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
@@ -24,3 +25,4 @@ python3 -m pytest
 - Launch/login flows explain serialized shared-slot behavior.
 - Recovery paths identify missing backups, stale live slots, and lock contention.
 - Tests do not expose real credential blobs.
+- Direct CLI blocks missing-backup launch before invoking PowerShell.

@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -24,3 +24,8 @@ python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
+## Completed Evidence
+
+- Focused Windows AGY tests cover session state, direct CLI guardrails,
+  interactive warnings, diagnostics, and helper policy contracts.
+- Full pytest and governance validate the completed horizon state.

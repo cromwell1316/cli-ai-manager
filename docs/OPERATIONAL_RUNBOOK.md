@@ -151,6 +151,11 @@ backup files. They do not print OAuth token blobs. Native Windows `launch` and
 `login` use the managed helper to write one selected `cred-pN.json` backup into
 the shared live Credential Manager slot before AGY runs.
 
+Before native Windows AGY launch/login, `ai-man` prints a shared-slot summary.
+Launch requires a valid managed `cred-pN.json` backup and stops before invoking
+PowerShell if the backup is missing or invalid. Login is allowed without a
+backup because it creates a fresh live slot and saves it afterward.
+
 ## First Login And Daily Operation
 
 Create first profiles:
@@ -268,6 +273,9 @@ Recovery rules:
   blobs.
 - If a live Windows slot is wrong, close active AGY sessions, run
   `ai-man agy-credential set pN --yes`, then run diagnostics.
+- If launch reports `missing_backup`, run `ai-man login agy pN` or restore a
+  known-good `cred-pN.json` with
+  `ai-man agy-credential restore <cred-backup.json> pN --yes`.
 
 ## Diagnostics And Troubleshooting
 
@@ -314,6 +322,9 @@ Common failures:
 - Logged out profile: run `ai-man login <tool> pN` or import a valid credential.
 - Invalid AGY backup: restore from another `cred-pN.json` or run native login
   again.
+- Native Windows AGY lock contention: close the active AGY session, retry the
+  selected launch/login, or use a separate Windows user for true parallel
+  isolation.
 
 ## Known Limitations
 
@@ -322,6 +333,9 @@ Common failures:
 - Same-user parallel native Windows AGY sessions are not true isolation.
   `ai-man` serializes live slot operations with a named mutex and documents
   separate Windows users as the isolation boundary.
+- `AI_MAN_AGY_SLOT_LOCK_TIMEOUT_SECONDS=<seconds>` can make scripted native
+  Windows AGY recovery wait for the shared-slot mutex, but this is still
+  serialization inside one Windows user.
 - Native Windows AGY quota uses a prompt/helper path and can be slower than
   WSL/Linux terminal quota probing.
 - CI smoke checks are token-safe and do not prove live account quota behavior.

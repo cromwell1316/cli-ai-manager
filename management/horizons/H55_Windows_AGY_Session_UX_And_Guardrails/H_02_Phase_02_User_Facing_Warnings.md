@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,9 @@ Make shared-slot behavior visible before risky Windows AGY actions.
 
 Users see the Windows AGY limitation at the point where it affects their action.
 
+## Implementation Notes
+
+- Direct CLI and Windows interactive launch/login print shared-slot warnings at
+  the point of action.
+- Launch explains which managed backup will be restored; login explains that a
+  fresh backup will be saved after AGY exits.

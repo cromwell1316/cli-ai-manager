@@ -762,8 +762,33 @@ def run_cli_tool(tool_key, n, extra_args=None, login=False):
         switcher = _windows_support().ensure_windows_agy_helper(tool["base_dir"])
         os.makedirs(profile_home(tool_key, n), exist_ok=True)
         action = "Login" if login else "Launch"
-        concurrency_policy = _windows_support().windows_agy_concurrency_policy(native_windows=True)
-        print_error(concurrency_policy["warning"])
+        session_state = _windows_support().windows_agy_session_state(tool["base_dir"], n, login=login, native_windows=True)
+        concurrency_policy = session_state["concurrency"]
+        for line in _windows_support().windows_agy_guardrail_lines(session_state):
+            print_error(line)
+        if not session_state["ready"]:
+            for blocker in session_state["blockers"]:
+                print_error(blocker)
+            for line in _windows_support().windows_agy_recovery_hint_lines(session_state):
+                print_error(line)
+            _audit().record(
+                "subprocess",
+                "blocked",
+                command="launch",
+                tool=tool_key,
+                profile=f"p{n}",
+                backend="powershell",
+                result="blocked",
+                details={
+                    "action": action,
+                    "blockers": session_state["blockers"],
+                    "backup": {
+                        key: session_state["backup"].get(key)
+                        for key in ("profile", "exists", "valid", "error")
+                    },
+                },
+            )
+            return EXIT_NOT_FOUND
         argv = _windows_support().windows_agy_launch_argv(
             powershell,
             switcher,
@@ -787,6 +812,11 @@ def run_cli_tool(tool_key, n, extra_args=None, login=False):
                 "action": action,
                 "helper": switcher,
                 "concurrency_policy": concurrency_policy,
+                "session_state": {
+                    "ready": session_state["ready"],
+                    "backup_valid": session_state["backup"].get("valid"),
+                    "live_slot": session_state["live_slot"],
+                },
             },
         )
         return completed.returncode

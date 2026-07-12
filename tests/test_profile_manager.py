@@ -4108,6 +4108,27 @@ def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
                 "policy": "serialized_shared_slot",
             }
 
+        @staticmethod
+        def windows_agy_session_state(base_dir, profile_num, login=False, native_windows=False):
+            captured["session_state"] = (base_dir, profile_num, login, native_windows)
+            return {
+                "ready": True,
+                "blockers": [],
+                "backup": {"profile": f"p{profile_num}", "exists": True, "valid": True, "error": None},
+                "live_slot": {"target": "gemini:antigravity"},
+                "concurrency": FakeWindowsSupport.windows_agy_concurrency_policy(native_windows=native_windows),
+                "action": "login" if login else "launch",
+                "profile": f"p{profile_num}",
+            }
+
+        @staticmethod
+        def windows_agy_guardrail_lines(state):
+            return ["Native Windows AGY uses one shared Credential Manager slot per Windows user."]
+
+        @staticmethod
+        def windows_agy_recovery_hint_lines(state):
+            return ["Recovery for p2:"]
+
     class FakeCompleted:
         returncode = 0
 
@@ -4130,6 +4151,59 @@ def test_run_cli_tool_uses_managed_windows_agy_helper(monkeypatch, tmp_path):
     assert captured["helper_args"][6] == ["--prompt", "hi"]
     assert captured["run"][-1] == "Login"
     assert captured["native_windows"] is True
+    assert captured["session_state"][1:] == (2, True, True)
+
+
+def test_run_cli_tool_blocks_native_windows_agy_launch_without_backup(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+
+    class FakeWindowsSupport:
+        @staticmethod
+        def powershell_executable(shutil_module):
+            return "powershell.exe"
+
+        @staticmethod
+        def ensure_windows_agy_helper(base_dir):
+            return str(tmp_path / "agy-homes" / "ai-man-agy-credential.ps1")
+
+        @staticmethod
+        def windows_agy_session_state(base_dir, profile_num, login=False, native_windows=False):
+            return {
+                "ready": False,
+                "blockers": ["valid Windows AGY backup is required before launch: missing_backup"],
+                "backup": {"profile": f"p{profile_num}", "exists": False, "valid": False, "error": "missing_backup"},
+                "live_slot": {"target": "gemini:antigravity"},
+                "concurrency": {"policy": "serialized_shared_slot"},
+                "action": "launch",
+                "profile": f"p{profile_num}",
+            }
+
+        @staticmethod
+        def windows_agy_guardrail_lines(state):
+            return ["Cannot launch p3: valid managed backup is missing or invalid (missing_backup)."]
+
+        @staticmethod
+        def windows_agy_recovery_hint_lines(state):
+            return ["Recovery for p3:", "  ai-man login agy p3"]
+
+    class FakeSubprocess:
+        @staticmethod
+        def run(command):
+            raise AssertionError("PowerShell helper should not run without a valid backup")
+
+    monkeypatch.setattr(cli, "is_native_windows", lambda: True)
+    monkeypatch.setattr(cli, "_windows_support", lambda: FakeWindowsSupport)
+    monkeypatch.setattr(cli, "_subprocess", lambda: FakeSubprocess)
+
+    stderr_buffer = io.StringIO()
+    with contextlib.redirect_stderr(stderr_buffer):
+        rc = pm.run_cli_tool("agy", 3)
+
+    assert rc == 3
+    rendered = stderr_buffer.getvalue()
+    assert "missing_backup" in rendered
+    assert "ai-man login agy p3" in rendered
 
 
 def test_native_windows_empty_main_uses_windows_selector(monkeypatch, tmp_path):
@@ -4184,10 +4258,11 @@ def test_windows_interactive_main_renders_selector_without_unix_interactive(monk
 
 
 def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, tmp_path):
-    load_pm(monkeypatch, tmp_path)
+    pm = load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.cli as cli
     import cli_profile_manager.windows_interactive as windows_interactive
 
+    write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "r"}, "win@example.com"))
     captured = {}
     prompts = iter(["@", ">", "1", "", "x", "x"])
     output = []
@@ -4217,6 +4292,7 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
 
     assert rc == 0
     assert captured["launch"] == ("agy", 1, None, False)
+    assert "Native Windows AGY uses one shared Credential Manager slot" in "\n".join(output)
 
 
 def test_windows_interactive_tool_menu_keeps_credentials_in_submenu(monkeypatch, tmp_path):
@@ -4277,6 +4353,27 @@ def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path)
     assert '"Login" { Invoke-AgyProfile $Profile $true }' in text
 
 
+def test_windows_agy_session_state_classifies_backup_and_recovery(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    from cli_profile_manager import windows_support
+
+    missing = windows_support.windows_agy_session_state(pm.TOOLS["agy"]["base_dir"], 4, login=False, native_windows=True)
+    assert missing["ready"] is False
+    assert missing["backup"]["error"] == "missing_backup"
+    assert "ai-man login agy p4" in windows_support.windows_agy_recovery_hint_lines(missing)[1]
+
+    write_json(Path(pm.agy_windows_credential_path(4)), pm.build_windows_agy_credential({"refresh_token": "r4"}, "slot@example.com"))
+    ready = windows_support.windows_agy_session_state(pm.TOOLS["agy"]["base_dir"], 4, login=False, native_windows=True)
+    rendered = "\n".join(windows_support.windows_agy_guardrail_lines(ready))
+
+    assert ready["ready"] is True
+    assert ready["backup"]["valid"] is True
+    assert ready["live_slot"]["target"] == "gemini:antigravity"
+    assert "shared Credential Manager slot" in rendered
+    assert "slot@example.com" in rendered
+    assert "refresh_token" not in json.dumps(ready)
+
+
 def test_windows_agy_concurrency_policy_is_exposed_in_diagnostics(monkeypatch, tmp_path):
     pm = load_pm(monkeypatch, tmp_path)
 
@@ -4289,6 +4386,8 @@ def test_windows_agy_concurrency_policy_is_exposed_in_diagnostics(monkeypatch, t
     assert policy["true_parallel_isolation"] == "use_separate_windows_users"
     assert policy["live_slot_inspection"]["token_safe"] is True
     assert "ai-man launch agy pN" in policy["recovery_commands"]
+    assert payload["agy_windows_session_guardrails"]["token_safe"] is True
+    assert payload["agy_windows_session_guardrails"]["true_parallel_isolation"] == "use_separate_windows_users"
 
 
 def test_diagnostics_reports_agy_credential_recovery_without_token_blob(monkeypatch, tmp_path):

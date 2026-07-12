@@ -1,5 +1,6 @@
 from .metadata import load_metadata
 from . import interactive_model
+from . import windows_support
 from .operations import (
     EXIT_OK,
     TOOLS,
@@ -103,6 +104,22 @@ def _profile_status_lines(tool_key, include_quota=False):
     return lines
 
 
+def _windows_agy_session_lines(profile_num, login=False):
+    state = windows_support.windows_agy_session_state(
+        TOOLS["agy"]["base_dir"],
+        profile_num,
+        login=login,
+        native_windows=True,
+    )
+    color = CLR_YELLOW if state["ready"] else CLR_RED
+    lines = [f"{CLR_WHITE_BOLD}Windows AGY shared slot:{CLR_RESET} {state['live_slot']['target']}"]
+    lines.extend(f"{color}{line}{CLR_RESET}" for line in windows_support.windows_agy_guardrail_lines(state))
+    if not state["ready"]:
+        lines.extend(f"{CLR_RED}{line}{CLR_RESET}" for line in state["blockers"])
+        lines.extend(f"{CLR_DIM}{line}{CLR_RESET}" for line in windows_support.windows_agy_recovery_hint_lines(state))
+    return state, lines
+
+
 def _select_profile(tool_key, input_func, output, default=None):
     default = first_free_profile(tool_key) if default is None else default
     raw = _input(f"{CLR_RED}Profile{CLR_RESET} [p{default}]: ", input_func)
@@ -117,6 +134,12 @@ def _launch_profile(tool_key, input_func, output):
     profile_num = _select_profile(tool_key, input_func, output, default=1)
     if profile_num is None:
         return
+    if tool_key == "agy":
+        state, lines = _windows_agy_session_lines(profile_num, login=False)
+        for line in lines:
+            _print(output, line)
+        if not state["ready"]:
+            return
     status = profile_status_operation(tool_key, f"p{profile_num}").payload
     if not status.get("has_token"):
         _print(output, f"{CLR_RED}profile p{profile_num} has no token; use login or import first{CLR_RESET}")
@@ -131,6 +154,10 @@ def _login_profile(tool_key, input_func, output):
     profile_num = _select_profile(tool_key, input_func, output)
     if profile_num is None:
         return
+    if tool_key == "agy":
+        _state, lines = _windows_agy_session_lines(profile_num, login=True)
+        for line in lines:
+            _print(output, line)
     from .cli import run_cli_tool
 
     code = run_cli_tool(tool_key, profile_num, [], login=True)

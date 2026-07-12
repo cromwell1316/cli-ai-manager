@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -22,3 +22,10 @@ diagnostics.
 
 Diagnostics can classify Windows AGY readiness without printing token material.
 
+## Implementation Notes
+
+- `windows_agy_session_state()` classifies managed backup readiness, live-slot
+  policy, action readiness, blockers, and recovery commands without exposing
+  credential blobs.
+- Diagnostics include `agy_windows_session_guardrails` with token-safe state for
+  visible AGY profiles.

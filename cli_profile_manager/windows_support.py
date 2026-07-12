@@ -21,6 +21,115 @@ def helper_path(base_dir):
     return os.path.join(str(base_dir), HELPER_NAME)
 
 
+def agy_windows_credential_path(base_dir, profile_num):
+    return os.path.join(str(base_dir), f"cred-p{int(profile_num)}.json")
+
+
+def windows_agy_backup_state(base_dir, profile_num):
+    path = agy_windows_credential_path(base_dir, profile_num)
+    payload = {
+        "profile": f"p{int(profile_num)}",
+        "path": os.path.abspath(path),
+        "exists": os.path.exists(path),
+        "valid": False,
+        "account": None,
+        "saved_at": None,
+        "blob_size": None,
+        "error": None,
+    }
+    if not payload["exists"]:
+        payload["error"] = "missing_backup"
+        return payload
+    try:
+        with open(path, "r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        if data.get("Target") and data.get("Target") != AGY_SHARED_SLOT_TARGET:
+            payload["error"] = "unexpected_target"
+            return payload
+        blob = data.get("BlobBase64")
+        if not blob:
+            payload["error"] = "missing_blob"
+            return payload
+        payload.update({
+            "valid": True,
+            "account": data.get("Account"),
+            "saved_at": data.get("SavedAt"),
+            "blob_size": data.get("BlobSize"),
+        })
+    except Exception as exc:
+        payload["error"] = str(exc).replace("BlobBase64", "credential blob")
+    return payload
+
+
+def windows_agy_live_slot_state(native_windows=False):
+    return {
+        "target": AGY_SHARED_SLOT_TARGET,
+        "native_windows": bool(native_windows),
+        "state": "not_inspected" if native_windows else "native_windows_only",
+        "token_safe": True,
+        "inspection": (
+            "live slot is managed by the PowerShell helper immediately before launch/login"
+            if native_windows
+            else "live Credential Manager slot can only be inspected on native Windows"
+        ),
+    }
+
+
+def windows_agy_session_state(base_dir, profile_num, login=False, native_windows=False):
+    backup = windows_agy_backup_state(base_dir, profile_num)
+    policy = windows_agy_concurrency_policy(native_windows=native_windows)
+    action = "login" if login else "launch"
+    ready = True
+    blockers = []
+    if not login and not backup["valid"]:
+        ready = False
+        blockers.append(f"valid Windows AGY backup is required before launch: {backup['error']}")
+    return {
+        "tool": "agy",
+        "profile": f"p{int(profile_num)}",
+        "action": action,
+        "ready": ready,
+        "blockers": blockers,
+        "backup": backup,
+        "live_slot": windows_agy_live_slot_state(native_windows=native_windows),
+        "concurrency": policy,
+        "recovery_commands": windows_agy_recovery_commands(f"p{int(profile_num)}"),
+    }
+
+
+def windows_agy_guardrail_lines(state):
+    profile = state["profile"]
+    action = state["action"]
+    backup = state["backup"]
+    lines = [
+        "Native Windows AGY uses one shared Credential Manager slot per Windows user.",
+        "ai-man serializes launch/login/set/save/clear for this Windows user; use separate Windows users for true parallel AGY isolation.",
+    ]
+    if action == "launch":
+        if backup["valid"]:
+            account = backup.get("account") or "(account unknown)"
+            lines.append(f"Launching {profile} will restore its managed backup to the live slot: {account}.")
+        else:
+            lines.append(f"Cannot launch {profile}: valid managed backup is missing or invalid ({backup.get('error')}).")
+    else:
+        lines.append(f"Login for {profile} will clear the live slot first, then save a fresh cred-{profile}.json backup after AGY exits.")
+    lock_timeout = os.environ.get("AI_MAN_AGY_SLOT_LOCK_TIMEOUT_SECONDS")
+    if lock_timeout:
+        lines.append(f"Shared-slot lock timeout: {lock_timeout}s.")
+    return lines
+
+
+def windows_agy_recovery_hint_lines(state):
+    profile = state["profile"]
+    return [
+        f"Recovery for {profile}:",
+        f"  ai-man login agy {profile}",
+        f"  ai-man agy-credential restore <cred-backup.json> {profile} --dry-run --json",
+        f"  ai-man agy-credential restore <cred-backup.json> {profile} --yes",
+        f"  ai-man diagnostics agy --json --show-accounts",
+    ]
+
+
 def ensure_windows_agy_helper(base_dir):
     os.makedirs(base_dir, exist_ok=True)
     path = helper_path(base_dir)
@@ -78,6 +187,7 @@ def windows_agy_concurrency_policy(native_windows=False):
             "Close active native Windows AGY sessions for this Windows user.",
             "Run ai-man launch agy pN to restore the selected profile backup to the live slot.",
             "Use ai-man login agy pN if the selected backup must be refreshed.",
+            "Use separate Windows users for true parallel native Windows AGY isolation.",
         ],
     }
 

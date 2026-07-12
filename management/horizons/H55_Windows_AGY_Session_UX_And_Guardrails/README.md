@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -38,11 +38,26 @@ Manager slot while preserving the best available profile workflow.
 
 ```bash
 python3 -m pytest tests/test_profile_manager.py -k "agy and windows"
+python3 scripts/horizon_governance.py --json
 python3 -m pytest
 ```
 
 Acceptance target: users understand when Windows AGY is serialized, how to
 recover the live slot, and when separate Windows users are required.
+
+## Implementation Evidence
+
+- Added token-safe Windows AGY session state helpers in `windows_support.py` for
+  managed backup readiness, live-slot policy, guardrail text, and recovery
+  commands.
+- Direct native Windows `ai-man launch agy pN` now preflights `cred-pN.json` and
+  blocks before PowerShell when the managed backup is missing or invalid.
+- Windows interactive launch/login surfaces show the same shared-slot warning
+  and recovery guidance as the direct CLI.
+- Diagnostics now include token-safe `agy_windows_session_guardrails` alongside
+  the existing concurrency policy.
+- Runbook documents shared-slot behavior, missing backup recovery, lock
+  contention, and separate Windows users as the true isolation boundary.
 
 ## Files
 

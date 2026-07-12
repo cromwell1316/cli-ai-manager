@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H55_Windows_AGY_Session_UX_And_Guardrails/R
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Area | Acceptance |
 | --- | --- |
@@ -13,3 +13,5 @@ Status: planned.
 | Recovery | Missing or stale credential state has an actionable recovery path. |
 | Locking | Concurrent shared-slot attempts produce clear guidance. |
 | Safety | No token blobs are printed in UI, logs, or tests. |
+| Diagnostics | Token-safe guardrail state is available in diagnostics. |
+| Interactive UX | Windows interactive and direct CLI use the same guardrail model. |
