@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H45_Windows_AGY_Quota_Backend/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Scope
 
@@ -25,3 +25,10 @@ python3 -m py_compile profile_manager.py cli_profile_manager/cli.py cli_profile_
 python3 -m pytest tests/test_profile_manager.py -k "quota or windows_agy"
 python3 -m pytest
 ```
+
+## Results
+
+- `python3 -m py_compile profile_manager.py cli_profile_manager/cli.py cli_profile_manager/operations.py cli_profile_manager/quota.py cli_profile_manager/windows_support.py`: passed.
+- `python3 -m pytest tests/test_profile_manager.py -k "quota or windows_agy"`: 92 passed.
+- `python3 -m pytest tests/test_profile_manager.py`: 204 passed.
+- `python3 scripts/horizon_governance.py --json`: ok, no issues, no warnings.

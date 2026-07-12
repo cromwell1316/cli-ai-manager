@@ -5,12 +5,21 @@ import re
 import select
 import signal
 import subprocess
-import fcntl
 import logging
 import struct
-import termios
 import threading
 import time
+import shutil
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - native Windows import path
+    fcntl = None
+
+try:
+    import termios
+except ImportError:  # pragma: no cover - native Windows import path
+    termios = None
 
 from .process_policy import prepare_popen
 from . import audit
@@ -36,6 +45,7 @@ DEFAULT_TMUX_POLL_INTERVAL_SECONDS = 0.1
 DEFAULT_TMUX_COLD_START_CONCURRENCY = 2
 DEFAULT_TMUX_WARM_SNAPSHOT_CONCURRENCY = 4
 DIRECT_AGY_PROMPT_SUCCESS_MARKER = "__AI_MAN_DIRECT_AGY_PROMPT_SUCCEEDED__"
+WINDOWS_AGY_QUOTA_PROMPT = "review this code in one sentence"
 PARSER_MISS_SESSION_INVALIDATION_THRESHOLD = 3
 DEFAULT_PERSISTENT_SESSION_TTL_SECONDS = 1800.0
 DEFAULT_PERSISTENT_SESSION_MAX = 24
@@ -136,6 +146,10 @@ class QuotaProbeError(RuntimeError):
         super().__init__(message)
         self.state = state
         self.raw_output = raw_output
+
+
+def is_native_windows():
+    return os.name == "nt"
 
 
 def quota_command_for(tool_key):
@@ -795,6 +809,8 @@ def terminate_process(proc, master_fd, output):
 
 def quota_pty_preexec(slave_fd, policy_preexec):
     def preexec():
+        if fcntl is None or termios is None:
+            os._exit(126)
         try:
             os.setsid()
             fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
@@ -807,8 +823,10 @@ def quota_pty_preexec(slave_fd, policy_preexec):
 
 
 def start_quota_pty_process(tool_key, command, env, cwd, backend):
-    if os.name == "nt":
+    if is_native_windows():
         raise QuotaProbeError("unsupported", "PTY quota probing is not supported on Windows yet")
+    if fcntl is None or termios is None:
+        raise QuotaProbeError("unsupported", "PTY support is not available")
     try:
         import pty
     except ImportError as e:
@@ -872,6 +890,8 @@ def tmux_path():
 def resolve_quota_backend(tool_key):
     if tool_key != "agy":
         return "persistent_pty"
+    if is_native_windows():
+        return "windows-helper"
     configured = agy_quota_backend_configured()
     found_tmux = tmux_path()
     if configured == "pty":
@@ -1743,8 +1763,89 @@ def run_direct_cli_prompt_snapshot(tool_key, command, env, cwd, timeout_seconds=
     return output
 
 
+def windows_agy_profile_num_from_cwd(cwd):
+    name = os.path.basename(os.path.normpath(str(cwd)))
+    if name.startswith("p") and name[1:].isdigit():
+        return int(name[1:])
+    raise QuotaProbeError("unsupported", f"cannot determine AGY profile from cwd: {cwd}")
+
+
+def run_windows_agy_quota_snapshot(tool_key, command, env, cwd, timeout_seconds=DEFAULT_TIMEOUT_SECONDS, idle_seconds=DEFAULT_IDLE_SECONDS):
+    if tool_key != "agy":
+        raise QuotaProbeError("unsupported", f"Windows helper quota backend is not configured for {tool_key}")
+    if not command:
+        raise QuotaProbeError("missing_cli", "agy CLI is not configured")
+    if executable_path(command[0]) is None:
+        raise QuotaProbeError("missing_cli", f"{command[0]} CLI is not installed or not in PATH")
+
+    from cli_profile_manager import windows_support
+
+    powershell = windows_support.powershell_executable(shutil)
+    if powershell is None:
+        raise QuotaProbeError("unsupported", "PowerShell is required for Windows agy quota probing")
+
+    profile_num = windows_agy_profile_num_from_cwd(cwd)
+    base_dir = os.path.dirname(os.path.normpath(str(cwd)))
+    helper = windows_support.ensure_windows_agy_helper(base_dir)
+    os.makedirs(cwd, exist_ok=True)
+    extra_args = list(command[1:]) or ["-p", WINDOWS_AGY_QUOTA_PROMPT]
+    argv = windows_support.windows_agy_launch_argv(
+        powershell,
+        helper,
+        "Launch",
+        profile_num,
+        base_dir,
+        command[0],
+        extra_args,
+    )
+    audit.record(
+        "quota",
+        "started",
+        tool=tool_key,
+        backend="windows-helper",
+        details={"profile": f"p{profile_num}", "helper": helper, "command": [command[0], *extra_args]},
+    )
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raw_output = "".join(part for part in (e.stdout, e.stderr) if part)
+        raise QuotaProbeError("timeout", f"timeout waiting for {command[0]} Windows quota probe", raw_output) from e
+    output = "".join(part for part in (completed.stdout, completed.stderr) if part)
+    if completed.returncode != 0:
+        if re.search(r"\bMissing Windows agy credential backup\b", output, re.I):
+            raise QuotaProbeError("auth_required", "AGY Windows credential backup is missing for this profile", output)
+        classified = classify_agy_failure(output)
+        if classified:
+            state, message = classified
+            raise QuotaProbeError(state, message, output)
+        if detect_auth_required(output):
+            raise QuotaProbeError("auth_required", "AGY CLI reported that authentication is required", output)
+        raise QuotaProbeError("process_exit", f"{command[0]} Windows quota probe exited with code {completed.returncode}", output)
+    output = f"{output}\n{DIRECT_AGY_PROMPT_SUCCESS_MARKER}\n"
+    audit.record(
+        "quota",
+        "completed",
+        tool=tool_key,
+        backend="windows-helper",
+        result="succeeded",
+        details={"profile": f"p{profile_num}", "bytes": len(output)},
+    )
+    return output
+
+
 def source_command_for_payload(tool_key, command):
-    if tool_key == "agy" and command and re.fullmatch(r"agy\d+", str(command[0])):
+    if tool_key == "agy" and command and (
+        re.fullmatch(r"agy\d+", str(command[0]))
+        or "-p" in [str(part) for part in command]
+    ):
         return " ".join(str(part) for part in command)
     return quota_command_for(tool_key)
 

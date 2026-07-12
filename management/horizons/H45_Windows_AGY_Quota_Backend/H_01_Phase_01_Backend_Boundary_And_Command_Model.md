@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H45_Windows_AGY_Quota_Backend/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -23,3 +23,10 @@ Define the native Windows AGY quota execution boundary.
 - Command construction is deterministic.
 - Windows path does not import Unix PTY-only modules.
 - WSL/Linux quota behavior remains unchanged.
+
+## Result
+
+The backend boundary is explicit: `operations.quota_probe_runner()` selects the
+Windows helper runner only for native Windows AGY. The Windows command model is
+`["agy", "-p", "review this code in one sentence"]`; WSL/Linux continues to
+pass `["agy"]` into the existing persistent quota runner.

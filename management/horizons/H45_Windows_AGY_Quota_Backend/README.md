@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H45_Windows_AGY_Quota_Backend/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -49,6 +49,21 @@ python3 -m pytest
 Acceptance target: `ai-man status agy pN --quota` and `ai-man quota agy pN`
 return deterministic payloads on native Windows without importing Unix PTY-only
 code paths.
+
+## Completion Notes
+
+- Added `run_windows_agy_quota_snapshot`, a native Windows AGY quota runner that
+  invokes the managed PowerShell helper with `Action=Launch`.
+- Native Windows AGY quota now uses `agy -p "review this code in one sentence"`
+  through the helper after applying the selected `cred-pN.json` to the shared
+  `gemini:antigravity` Credential Manager slot.
+- WSL/Linux quota behavior remains on the existing persistent/tmux/PTY path.
+- `quota.py` can be imported on native Windows because Unix-only `fcntl` and
+  `termios` imports are optional.
+- Diagnostics resolve the AGY quota backend as `windows-helper` on native
+  Windows.
+- Added regression coverage for command selection, helper argv construction,
+  missing backup classification, timeout classification, and diagnostics.
 
 ## Files
 

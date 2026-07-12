@@ -34,6 +34,7 @@ RESULT_NO_TOKEN = "no_token"
 RESULT_RUNTIME_FAILURE = "runtime_failure"
 core_quota_payload = None
 run_persistent_cli_quota_snapshot = None
+run_windows_agy_quota_snapshot = None
 core_audit = None
 core_process_policy = None
 core_runtime_service = None
@@ -439,7 +440,20 @@ def _persistent_quota_runner():
     return run_persistent_cli_quota_snapshot
 
 
+def _windows_agy_quota_runner():
+    global run_windows_agy_quota_snapshot
+    if run_windows_agy_quota_snapshot is None:
+        from cli_profile_manager.quota import run_windows_agy_quota_snapshot as func
+
+        run_windows_agy_quota_snapshot = func
+    return run_windows_agy_quota_snapshot
+
+
 def quota_probe_command(tool_key, n):
+    if tool_key == "agy" and is_native_windows():
+        from cli_profile_manager.quota import WINDOWS_AGY_QUOTA_PROMPT
+
+        return [TOOLS[tool_key]["cmd"], "-p", WINDOWS_AGY_QUOTA_PROMPT]
     return [TOOLS[tool_key]["cmd"]]
 
 
@@ -454,6 +468,8 @@ def quota_probe_cwd(tool_key, n):
 def quota_probe_runner(tool_key, runner=None):
     if runner is not None:
         return runner
+    if tool_key == "agy" and is_native_windows():
+        return _windows_agy_quota_runner()
     return _persistent_quota_runner()
 
 

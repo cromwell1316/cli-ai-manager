@@ -1001,6 +1001,39 @@ def test_agy_quota_pty_default_timeout(monkeypatch, tmp_path):
     assert captured["timeout_seconds"] == 120
 
 
+def test_native_windows_agy_quota_uses_windows_helper_runner(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.operations as operations
+
+    captured = {}
+
+    def fake_core_quota_payload(tool_key, profile_name, command, env, cwd, **kwargs):
+        captured.update({
+            "tool_key": tool_key,
+            "profile_name": profile_name,
+            "command": command,
+            "env": env,
+            "cwd": cwd,
+            "runner": kwargs.get("runner"),
+        })
+        return {"tool": tool_key, "profile": profile_name, "quota": {"state": "available", "limits": {}}}
+
+    def fake_windows_runner(*args, **kwargs):
+        return "ok"
+
+    monkeypatch.setattr(operations, "is_native_windows", lambda: True)
+    monkeypatch.setattr(operations, "core_quota_payload", fake_core_quota_payload)
+    monkeypatch.setattr(operations, "run_windows_agy_quota_snapshot", fake_windows_runner)
+
+    payload = pm.quota_payload("agy", 2, timeout_seconds=12)
+
+    assert payload["quota"]["state"] == "available"
+    assert captured["command"] == ["agy", "-p", "review this code in one sentence"]
+    assert captured["cwd"] == captured["env"]["HOME"]
+    assert captured["runner"] is fake_windows_runner
+    assert captured["env"]["HOME"].endswith(os.path.join("agy-homes", "p2"))
+
+
 def test_agy_quota_backend_selection_auto_prefers_tmux(monkeypatch):
     import cli_profile_manager.quota as quota
 
@@ -1099,6 +1132,107 @@ def test_direct_prompt_runner_classifies_capacity_exhausted(monkeypatch, tmp_pat
     assert payload["quota"]["state"] == "resource_exhausted"
     assert payload["quota"]["source_command"] == "agy1 -p review this code in one sentence"
     assert "quota or resources are exhausted" in payload["quota"]["warnings"][0]
+
+
+def test_windows_agy_quota_runner_uses_managed_helper(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+    from cli_profile_manager import windows_support
+
+    profile_home = tmp_path / "agy-homes" / "p2"
+    profile_home.mkdir(parents=True)
+    captured = {}
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = "reviewed: ok\n"
+        stderr = ""
+
+    def fake_argv(powershell, helper, action, profile_num, base_dir, command, extra_args=None):
+        captured["helper_args"] = (powershell, helper, action, profile_num, base_dir, command, list(extra_args or []))
+        return [powershell, "-File", helper, "-Action", action]
+
+    def fake_run(argv, cwd=None, env=None, text=None, capture_output=None, timeout=None, check=None):
+        captured["run"] = {
+            "argv": argv,
+            "cwd": cwd,
+            "env": env,
+            "text": text,
+            "capture_output": capture_output,
+            "timeout": timeout,
+            "check": check,
+        }
+        return FakeCompleted()
+
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"C:/bin/{name}.exe")
+    monkeypatch.setattr(windows_support, "powershell_executable", lambda shutil_module: "powershell.exe")
+    monkeypatch.setattr(windows_support, "ensure_windows_agy_helper", lambda base_dir: str(tmp_path / "agy-homes" / "ai-man-agy-credential.ps1"))
+    monkeypatch.setattr(windows_support, "windows_agy_launch_argv", fake_argv)
+    monkeypatch.setattr(quota.subprocess, "run", fake_run)
+
+    screen = quota.run_windows_agy_quota_snapshot(
+        "agy",
+        ["agy", "-p", "review this code in one sentence"],
+        {"HOME": str(profile_home)},
+        str(profile_home),
+        timeout_seconds=9,
+    )
+
+    assert quota.DIRECT_AGY_PROMPT_SUCCESS_MARKER in screen
+    assert captured["helper_args"][2] == "Launch"
+    assert captured["helper_args"][3] == 2
+    assert captured["helper_args"][4] == str(tmp_path / "agy-homes")
+    assert captured["helper_args"][5] == "agy"
+    assert captured["helper_args"][6] == ["-p", "review this code in one sentence"]
+    assert captured["run"]["timeout"] == 9
+    assert captured["run"]["capture_output"] is True
+
+
+def test_windows_agy_quota_runner_classifies_missing_backup(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+    from cli_profile_manager import windows_support
+
+    profile_home = tmp_path / "agy-homes" / "p3"
+    profile_home.mkdir(parents=True)
+
+    class FakeCompleted:
+        returncode = 1
+        stdout = ""
+        stderr = "Missing Windows agy credential backup: C:\\Users\\Me\\agy-homes\\cred-p3.json"
+
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"C:/bin/{name}.exe")
+    monkeypatch.setattr(windows_support, "powershell_executable", lambda shutil_module: "powershell.exe")
+    monkeypatch.setattr(windows_support, "ensure_windows_agy_helper", lambda base_dir: str(profile_home.parent / "ai-man-agy-credential.ps1"))
+    monkeypatch.setattr(windows_support, "windows_agy_launch_argv", lambda *args, **kwargs: ["powershell.exe", "-File", "helper.ps1"])
+    monkeypatch.setattr(quota.subprocess, "run", lambda *args, **kwargs: FakeCompleted())
+
+    with pytest.raises(quota.QuotaProbeError) as exc_info:
+        quota.run_windows_agy_quota_snapshot("agy", ["agy", "-p", "review this code in one sentence"], {}, str(profile_home))
+
+    assert exc_info.value.state == "auth_required"
+    assert "credential backup is missing" in str(exc_info.value)
+
+
+def test_windows_agy_quota_runner_classifies_timeout(monkeypatch, tmp_path):
+    import cli_profile_manager.quota as quota
+    from cli_profile_manager import windows_support
+
+    profile_home = tmp_path / "agy-homes" / "p4"
+    profile_home.mkdir(parents=True)
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"), output="partial", stderr="still running")
+
+    monkeypatch.setattr(quota, "executable_path", lambda name: f"C:/bin/{name}.exe")
+    monkeypatch.setattr(windows_support, "powershell_executable", lambda shutil_module: "powershell.exe")
+    monkeypatch.setattr(windows_support, "ensure_windows_agy_helper", lambda base_dir: str(profile_home.parent / "ai-man-agy-credential.ps1"))
+    monkeypatch.setattr(windows_support, "windows_agy_launch_argv", lambda *args, **kwargs: ["powershell.exe", "-File", "helper.ps1"])
+    monkeypatch.setattr(quota.subprocess, "run", fake_run)
+
+    with pytest.raises(quota.QuotaProbeError) as exc_info:
+        quota.run_windows_agy_quota_snapshot("agy", ["agy", "-p", "review this code in one sentence"], {}, str(profile_home), timeout_seconds=1)
+
+    assert exc_info.value.state == "timeout"
+    assert "Windows quota probe" in str(exc_info.value)
 
 
 def test_interactive_uses_longer_agy_quota_timeout(monkeypatch):
@@ -3981,6 +4115,21 @@ def test_diagnostics_reports_process_limits(monkeypatch, tmp_path):
     assert payload["process_limits"]["supported"] in (True, False)
     assert "launch" in payload["process_limits"]["policies"]
     assert "quota" in payload["process_limits"]["policies"]
+
+
+def test_diagnostics_reports_windows_agy_quota_backend(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.quota as quota
+    import cli_profile_manager.diagnostics as diagnostics
+
+    monkeypatch.setattr(quota, "is_native_windows", lambda: True)
+    monkeypatch.setattr(diagnostics, "tmux_path", lambda: None)
+
+    payload = pm.diagnostics_payload("agy", status_provider=lambda tool, num: None, mode="fast")
+
+    assert payload["agy_quota_backend"]["configured"] == "auto"
+    assert payload["agy_quota_backend"]["resolved"] == "windows-helper"
+    assert payload["agy_quota_backend"]["tmux_path"] is None
 
 
 def test_runtime_benchmark_quota_parser_outputs_json():

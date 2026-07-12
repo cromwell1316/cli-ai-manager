@@ -159,11 +159,14 @@ AI_MAN_CODEX_QUOTA_COMMAND              Codex quota command override
 AI_MAN_CLAUDE_QUOTA_COMMAND             Claude quota command override
 ```
 
-Quota probing uses the native CLI for each profile. AGY profiles are checked with
-profile-specific commands such as `agy1 -p "review this code in one sentence"`
-and `agy2 -p "review this code in one sentence"`; a successful prompt marks the
-profile as available, while eligibility/auth failures are reported explicitly.
-Codex and Claude still use terminal quota commands (`/status` and `/usage`).
+Quota probing uses the native CLI for each profile. On native Windows, AGY
+profiles are checked through the managed Credential Manager helper with a direct
+prompt probe such as `agy -p "review this code in one sentence"` after
+`cred-pN.json` is written into the shared `gemini:antigravity` slot. A
+successful prompt marks the profile as available, while eligibility/auth
+failures are reported explicitly. On WSL/Linux, AGY still uses the configured
+terminal quota backend. Codex and Claude still use terminal quota commands
+(`/status` and `/usage`).
 If a profile is logged out, the quota payload reports `auth_required` or
 `no_token` instead of returning partial numbers.
 
@@ -178,10 +181,11 @@ timeout. AGY prompt probes default to `120` seconds and support
 more startup time before slash commands are accepted; AGY can be tuned separately
 with `AI_MAN_AGY_QUOTA_STARTUP_SECONDS=<seconds>` and defaults to a longer
 readiness window. Persistent quota sessions are bounded by
-`AI_MAN_QUOTA_SESSION_TTL_SECONDS` and `AI_MAN_QUOTA_SESSION_MAX`. AGY quota
-startup uses a real controlling terminal and a `6144 MB` quota-process memory
-cap by default; override the cap with `AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy
-requires a different ceiling.
+`AI_MAN_QUOTA_SESSION_TTL_SECONDS` and `AI_MAN_QUOTA_SESSION_MAX`. WSL/Linux AGY
+quota startup uses a real controlling terminal and a `6144 MB` quota-process
+memory cap by default; override the cap with
+`AI_MAN_QUOTA_PROCESS_MEMORY_MB` if your WSL memory policy requires a different
+ceiling.
 Developer mode can be enabled from Settings or with `AI_MAN_DEVELOPER_MODE=1`;
 status screens then show a live tail of relevant quota/network/error log lines.
 
