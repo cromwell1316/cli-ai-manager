@@ -68,7 +68,7 @@ CLR_ROYAL = "\033[38;5;33m"
 CLR_VIOLET = "\033[38;5;99m"
 CLR_MINT = "\033[38;5;48m"
 CLR_ORANGE = "\033[38;5;208m"
-CLR_BG_BLACK = "\033[40m"
+CLR_BG_BLACK = "\033[48;5;0m"
 CLR_DARK_RED = "\033[38;5;88m"
 CLR_BRIGHT_RED = "\033[38;5;196m"
 
@@ -1547,20 +1547,35 @@ def get_key(timeout=None):
 
 
 def header_lines(title=""):
-    width = 62
-    border = "═" * (width - 2)
-    lines = [f"{CLR_BOLD}{CLR_CYAN}╔{border}╗{CLR_RESET}"]
-    if title:
-        padding = (width - 2 - len(title)) // 2
-        pad_str = " " * padding
-        extra = " " if (width - 2 - len(title)) % 2 != 0 else ""
-        lines.append(
-            f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}{pad_str}"
-            f"{CLR_BOLD}{CLR_WHITE}{title}{CLR_RESET}{pad_str}{extra}"
-            f"{CLR_BOLD}{CLR_CYAN}║{CLR_RESET}"
-        )
-    lines.append(f"{CLR_BOLD}{CLR_CYAN}╚{border}╝{CLR_RESET}")
-    return lines
+    width = min(max(42, visible_len(title) + 10), terminal_size()[0])
+    divider = "━" * width
+    subtitle = f" {title}" if title else ""
+    return [
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}AI-MAN{CLR_RESET}{CLR_WHITE}{subtitle}{CLR_RESET}",
+        f"{CLR_DARK_RED}{divider}{CLR_RESET}",
+    ]
+
+
+def themed_line(text="", width=None):
+    width = max(1, width or terminal_size()[0])
+    body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
+    padding = " " * max(0, width - visible_len(body))
+    return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
+
+
+def themed_screen_lines(lines, width=None, height=None, top_padding=1, left_padding=None):
+    term_width, term_height = terminal_size()
+    width = max(1, width or term_width)
+    height = max(1, height or term_height)
+    if left_padding is None:
+        left_padding = 4 if width >= 100 else 2
+    left = " " * max(0, min(left_padding, max(0, width - 1)))
+    themed = [themed_line(width=width) for _ in range(max(0, top_padding))]
+    for line in lines:
+        themed.append(themed_line(left + str(line), width))
+    while len(themed) < height:
+        themed.append(themed_line(width=width))
+    return themed
 
 
 def reset_status_screen_render():
@@ -1727,7 +1742,7 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
             f"{visible_fit('Label', widths['label'])}"
             f"{CLR_RESET}"
         )
-    lines.append("-" * total_width)
+    lines.append(f"{CLR_DARK_RED}{'─' * total_width}{CLR_RESET}")
 
     for status in statuses:
         lines.append(render_status_row(tool_key, status, quota_columns, widths, now))
@@ -1742,10 +1757,11 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
         for log_line in log_lines:
             lines.append(f"  {CLR_WHITE}{log_line}{CLR_RESET}")
     lines.append(
-        f"Next auto refresh: {CLR_CYAN}{countdown}{CLR_RESET}. "
-        "Press Enter/q to return, r to refresh quota now..."
+        f"\033[90mNext auto refresh: {CLR_RED}{countdown}{CLR_RESET}{CLR_BG_BLACK}\033[90m. "
+        f"{CLR_BRIGHT_RED}Enter/q{CLR_RESET}{CLR_BG_BLACK}\033[90m return, "
+        f"{CLR_RED}r{CLR_RESET}{CLR_BG_BLACK}\033[90m refresh quota now{CLR_RESET}"
     )
-    return snapshot_key, lines
+    return snapshot_key, themed_screen_lines(lines, width=screen_width, left_padding=0)
 
 
 def render_status_screen_lines(tool_key, status_message=None, base_statuses=None):
@@ -1810,7 +1826,7 @@ def clear_screen():
     STATUS_RENDERER.previous_lines = None
     STATUS_RENDERER.previous_size = None
     STATUS_RENDERER.cursor_hidden = False
-    sys.stdout.write("\033[?25h\033[H\033[2J\033[3J")
+    sys.stdout.write(f"\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J")
     sys.stdout.flush()
 
 
@@ -1819,16 +1835,9 @@ def print_header(title=""):
         print(line)
 
 
-def _black_splash_line(text="", width=None):
-    width = max(1, width or terminal_size()[0])
-    body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
-    padding = " " * max(0, width - visible_len(body))
-    return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
-
-
 def _center_splash_line(text, width):
     pad = max(0, (width - visible_len(text)) // 2)
-    return _black_splash_line((" " * pad) + text, width)
+    return themed_line((" " * pad) + text, width)
 
 
 def pilot_splash_lines(size=None):
@@ -1857,10 +1866,10 @@ def pilot_splash_lines(size=None):
         ]
     )
     top_padding = max(1, (height - len(content)) // 3)
-    lines = [_black_splash_line(width=width) for _ in range(top_padding)]
-    lines.extend(_center_splash_line(line, width) if line else _black_splash_line(width=width) for line in content)
+    lines = [themed_line(width=width) for _ in range(top_padding)]
+    lines.extend(_center_splash_line(line, width) if line else themed_line(width=width) for line in content)
     while len(lines) < height:
-        lines.append(_black_splash_line(width=width))
+        lines.append(themed_line(width=width))
     return lines[:height]
 
 
@@ -1886,16 +1895,16 @@ def render_menu_lines(options, title="", selected_idx=0, pre_lines=None):
         lines.extend(str(line) for line in pre_lines)
     for idx, option in enumerate(options):
         if idx == selected_idx:
-            lines.append(f"  {CLR_BOLD}{CLR_CYAN}--> \033[40m\033[1;37m{option}{CLR_RESET}")
+            lines.append(f"{CLR_BRIGHT_RED}▌{CLR_RESET} {CLR_BOLD}{CLR_WHITE}{option}{CLR_RESET}")
         else:
-            lines.append(f"      \033[90m{option}{CLR_RESET}")
+            lines.append(f"  \033[90m{option}{CLR_RESET}")
     lines.append("")
     lines.append(
-        f"{CLR_WHITE}Use {CLR_BOLD}↑/↓{CLR_RESET}{CLR_WHITE}, digits/shortcuts, "
-        f"{CLR_BOLD}Enter{CLR_RESET}{CLR_WHITE} to confirm, "
-        f"{CLR_BOLD}Esc/q{CLR_RESET}{CLR_WHITE} to go back.{CLR_RESET}"
+        f"\033[90m↑/↓ move   digits/shortcuts   "
+        f"{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m select   "
+        f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}"
     )
-    return lines
+    return themed_screen_lines(lines)
 
 
 def run_menu(options, title="", shortcuts=None, pre_lines=None):
@@ -2541,13 +2550,12 @@ def settings_menu_action_lines(selected_idx=0):
     ]
     lines = []
     for idx, (label, value) in enumerate(actions):
-        marker = ">" if idx == selected_idx else " "
-        value_text = f"    {value}" if value else ""
-        line = f"  {marker} {label:<22}{value_text}"
+        value_text = f"{value:<18}" if value else ""
+        line = f"▌ {label:<24}{value_text}" if idx == selected_idx else f"  {label:<24}{value_text}"
         if idx == selected_idx:
-            line = f"{CLR_BOLD}{CLR_CYAN}{line}{CLR_RESET}"
+            line = f"{CLR_BOLD}{CLR_BRIGHT_RED}{line}{CLR_RESET}"
         else:
-            line = f"{CLR_WHITE}{line}{CLR_RESET}"
+            line = f"\033[90m{line}{CLR_RESET}"
         lines.append(line)
     return lines
 
@@ -2556,24 +2564,26 @@ def settings_menu_lines(selected_idx=0):
     current = interactive_quota_fresh_seconds()
     source = "environment" if "AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS" in os.environ else "saved/default"
     dev_mode = "on" if interactive_developer_mode_enabled() else "off"
-    dev_indicator = f"{CLR_GREEN}● on{CLR_RESET}" if dev_mode == "on" else f"{CLR_WHITE}○ off{CLR_RESET}"
+    dev_indicator = f"{CLR_GREEN}on{CLR_RESET}" if dev_mode == "on" else f"\033[90moff{CLR_RESET}"
     dev_note = "live logs enabled" if dev_mode == "on" else "live logs hidden"
-    return [
-        f"{CLR_BOLD}{CLR_WHITE}SETTINGS{CLR_RESET}",
+    refresh_value = f"{CLR_BRIGHT_RED}{format_duration(current)}{CLR_RESET}"
+    lines = [
+        *header_lines("SETTINGS"),
         "",
         f"{CLR_BOLD}{CLR_WHITE}Runtime{CLR_RESET}",
-        f"  Quota refresh        {CLR_CYAN}{format_duration(current):<4}{CLR_RESET} ({current:g}s)       {source}",
-        f"  Developer mode       {dev_indicator:<16} {dev_note}",
+        f"  {'Quota refresh':<18}{visible_ljust(refresh_value, 10)}{f'{current:g}s':<10}{source}",
+        f"  {'Developer mode':<18}{visible_ljust(dev_indicator, 10)}{'':<10}{dev_note}",
         "",
         f"{CLR_BOLD}{CLR_WHITE}Environment{CLR_RESET}",
-        f"  Quota refresh env    AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
-        f"  Developer mode env   AI_MAN_DEVELOPER_MODE",
+        f"  {'Quota refresh env':<22}AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS",
+        f"  {'Developer mode env':<22}AI_MAN_DEVELOPER_MODE",
         "",
         f"{CLR_BOLD}{CLR_WHITE}Actions{CLR_RESET}",
         *settings_menu_action_lines(selected_idx),
         "",
-        f"{CLR_WHITE}Enter select · ↑/↓ move · Esc/q back{CLR_RESET}",
+        f"\033[90m↑/↓ move   {CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m select   {CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}",
     ]
+    return themed_screen_lines(lines)
 
 
 def edit_quota_refresh_interval():

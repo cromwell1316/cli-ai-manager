@@ -2638,13 +2638,14 @@ def test_interactive_menu_lines_mark_selection_and_fit_footer():
     import cli_profile_manager.interactive as interactive
 
     lines = interactive.render_menu_lines(["First", "Second"], "MENU", selected_idx=1)
-    rendered = "\n".join(lines)
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
 
     assert "MENU" in rendered
-    assert "-->" in lines[5]
-    assert "First" in lines[4]
-    assert "Second" in lines[5]
+    assert "▌ Second" in rendered
+    assert "First" in rendered
+    assert "Second" in rendered
     assert "Enter" in rendered
+    assert all(line.startswith(interactive.CLR_BG_BLACK) for line in lines)
 
 
 def test_interactive_menu_lines_can_render_table_header():
@@ -2656,11 +2657,11 @@ def test_interactive_menu_lines_can_render_table_header():
         selected_idx=0,
         pre_lines=["      Profile Account Quota", "      ---------------------"],
     )
-    rendered = "\n".join(lines)
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
 
     assert "Profile Account Quota" in rendered
     assert "p1" in rendered
-    assert "-->" in rendered
+    assert "▌ p1" in rendered
 
 
 def test_interactive_settings_duration_parsing_and_formatting():
