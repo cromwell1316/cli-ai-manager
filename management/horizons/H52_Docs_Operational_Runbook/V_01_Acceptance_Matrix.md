@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H52_Docs_Operational_Runbook/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 | Area | Acceptance |
 |------|------------|
@@ -13,3 +13,9 @@ Status: planned.
 | Operation | Login, launch, import, export, sync, and diagnostics examples are present. |
 | Recovery | Rollback and credential recovery paths are documented. |
 | Limits | Known limitations are explicit and current. |
+
+## Result
+
+Accepted through `docs/OPERATIONAL_RUNBOOK.md`, README cross-linking, and static
+tests that verify setup, operation, recovery, diagnostics, and limitations stay
+documented.

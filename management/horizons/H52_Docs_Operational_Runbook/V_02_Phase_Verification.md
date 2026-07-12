@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H52_Docs_Operational_Runbook/README.md
 Lifecycle: living
 Document Class: validation
 
-Status: planned.
+Status: completed.
 
 ## Verification Matrix
 
@@ -18,6 +18,14 @@ Status: planned.
 ## Commands
 
 ```bash
+python3 -m pytest tests/test_profile_manager.py -k "runbook or docs"
 python3 scripts/horizon_governance.py --json
 python3 profile_manager.py --help
+python3 profile_manager.py config show --json
+python3 -m pytest
 ```
+
+## Completion Evidence
+
+All phases are backed by runbook content, README discoverability, static
+documentation regression tests, horizon governance, and CLI smoke checks.

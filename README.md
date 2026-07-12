@@ -8,6 +8,9 @@ The supported local interface is `profile_manager.py`, installed as `ai-man`,
 `profile-man`, and `pman`. Legacy alternate entrypoints have been removed; use
 `ai-man` for all profile operations.
 
+For complete Windows and WSL setup, sync, recovery, diagnostics, and limitation
+procedures, use [docs/OPERATIONAL_RUNBOOK.md](docs/OPERATIONAL_RUNBOOK.md).
+
 ## Features
 
 - Manage `agy`, `codex`, and `claude` profiles from one terminal command.
@@ -486,10 +489,14 @@ and `management/RELEASE_NOTES.md`.
 cli-profile-manager/
 ├── profile_manager.py
 ├── install.sh
+├── docs/
+│   └── OPERATIONAL_RUNBOOK.md
 ├── scripts/
+│   ├── agy_windows_concurrency_drill.ps1
 │   ├── benchmark_runtime.py
 │   ├── horizon_governance.py
 │   ├── validate_agy_quota_live.py
+│   ├── windows_ci_smoke.ps1
 │   ├── verify_install_windows.ps1
 │   ├── verify_install.sh
 │   └── verify_no_tui_surface.sh

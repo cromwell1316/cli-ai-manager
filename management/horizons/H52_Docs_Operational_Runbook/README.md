@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H52_Docs_Operational_Runbook/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -37,6 +37,17 @@ both Windows and WSL.
   diagnostics.
 - Cross-link relevant horizon documents.
 
+## Implementation Evidence
+
+- Added `docs/OPERATIONAL_RUNBOOK.md` as the repository-native Windows and WSL
+  operations guide.
+- Linked the runbook from `README.md` and added it to the project structure.
+- The runbook covers install, update, verification, rollback, credential
+  authority, first-login flows for `p1`, `p2`, and `p3`, sync direction, AGY
+  credential recovery, diagnostics, live validation, and known limitations.
+- Added a static regression test that verifies required runbook sections and
+  token-safe command examples remain present.
+
 ## Validation
 
 ```bash
@@ -47,6 +58,16 @@ python3 profile_manager.py config show --json
 
 Acceptance target: a user can complete Windows and WSL setup from the docs
 without relying on the external AGY multi-account notes.
+
+Completed validation:
+
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "runbook or docs"
+python3 scripts/horizon_governance.py --json
+python3 profile_manager.py --help
+python3 profile_manager.py config show --json
+python3 -m pytest
+```
 
 ## Files
 

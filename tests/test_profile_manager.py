@@ -4634,6 +4634,48 @@ def test_windows_ci_smoke_contract_is_token_safe():
     assert "Invoke-WithAgyCredentialSlotLock" in smoke
 
 
+def test_operational_runbook_covers_required_windows_wsl_workflows():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    runbook_path = ROOT / "docs" / "OPERATIONAL_RUNBOOK.md"
+    runbook = runbook_path.read_text(encoding="utf-8")
+
+    assert "docs/OPERATIONAL_RUNBOOK.md" in readme
+    required_sections = (
+        "## Quickstart",
+        "## Install, Update, Verify, Roll Back",
+        "## Profile Roots And Credential Authority",
+        "## First Login And Daily Operation",
+        "## Sync Between WSL And Windows",
+        "## Credential Recovery",
+        "## Diagnostics And Troubleshooting",
+        "## Known Limitations",
+    )
+    for section in required_sections:
+        assert section in runbook
+    required_commands = (
+        "./install.sh",
+        "./scripts/verify_install.sh",
+        ".\\install-windows.ps1",
+        ".\\scripts\\verify_install_windows.ps1",
+        "ai-man login agy p1",
+        "ai-man login agy p2",
+        "ai-man login agy p3",
+        "ai-man launch agy p1",
+        "ai-man import agy",
+        "ai-man export agy",
+        "ai-man sync --from wsl --mode soft --dry-run --json",
+        "ai-man sync --from windows --mode soft --dry-run --json",
+        "ai-man agy-credential restore",
+        "ai-man diagnostics agy --json --show-accounts",
+        "python3 scripts/horizon_governance.py --json",
+    )
+    for command in required_commands:
+        assert command in runbook
+    forbidden = ("refresh_token\":", "BlobBase64\":", "sk-test")
+    for tokenish in forbidden:
+        assert tokenish not in runbook
+
+
 def test_import_export_dry_run_json_does_not_write(monkeypatch, tmp_path):
     env = os.environ.copy()
     env.update({

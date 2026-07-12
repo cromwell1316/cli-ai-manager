@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H52_Docs_Operational_Runbook/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -26,3 +26,9 @@ limitations into maintained project documentation.
 
 Users can install and operate the manager on Windows and WSL from repository
 docs alone.
+
+## Result
+
+Implemented `docs/OPERATIONAL_RUNBOOK.md` and linked it from the README. The
+runbook consolidates setup, profile workflows, sync, recovery, diagnostics, and
+known limitations for Windows and WSL.
