@@ -1840,6 +1840,15 @@ def clear_screen():
     sys.stdout.flush()
 
 
+def clear_screen_for_shell():
+    STATUS_SCREEN_RENDER_CACHE.clear()
+    STATUS_RENDERER.previous_lines = None
+    STATUS_RENDERER.previous_size = None
+    STATUS_RENDERER.cursor_hidden = False
+    sys.stdout.write("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    sys.stdout.flush()
+
+
 def print_themed_line(text=""):
     body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
     sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_RESET}\n")
@@ -2727,7 +2736,7 @@ def run_interactive_main():
             elif sel == 4:
                 settings_menu()
             elif sel in (5, -1):
-                clear_screen()
+                clear_screen_for_shell()
                 print("Exiting Profile Manager. Goodbye!")
                 break
         return EXIT_OK

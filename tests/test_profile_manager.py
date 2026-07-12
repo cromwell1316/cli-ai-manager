@@ -2820,15 +2820,20 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     monkeypatch.setattr(interactive, "close_persistent_quota_sessions", lambda: closed.append(True))
     monkeypatch.setattr(interactive, "show_startup_splash", lambda: splash.append(True))
     monkeypatch.setattr(interactive, "run_menu", lambda *args, **kwargs: 5)
-    monkeypatch.setattr(interactive, "clear_screen", lambda: None)
 
-    assert interactive.run_interactive_main() == interactive.EXIT_OK
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        assert interactive.run_interactive_main() == interactive.EXIT_OK
 
     assert splash == [True]
     assert scheduler.calls == [(False, 2.0), ("wait", 2.0)]
     assert closed == [True]
     assert restored == [{"handlers": True}]
     assert interactive.INTERACTIVE_QUOTA_SCHEDULER is None
+    rendered = output.getvalue()
+    assert rendered.startswith("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    assert interactive.CLR_BG_BLACK not in rendered
+    assert "Exiting Profile Manager. Goodbye!" in rendered
 
 
 def test_pilot_splash_lines_brand_startup():
