@@ -3121,6 +3121,119 @@ def test_sync_dry_run_json_shape_and_hard_delete_preflight(monkeypatch, tmp_path
         pm.sync_profiles_noninteractive("wsl", "hard", dry_run=False, yes=False)
 
 
+def test_cross_platform_sync_e2e_wsl_to_windows_preserves_all_managed_roots(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    wsl = tmp_path / "wsl"
+    windows = tmp_path / "windows"
+    token = {"refresh_token": "wsl-refresh", "scope": "email"}
+    write_json(wsl / "agy-homes" / "p1" / ".gemini" / "oauth_creds.json", token)
+    write_json(wsl / "agy-homes" / "p1" / ".gemini" / "google_accounts.json", {"active": "wsl@example.com"})
+    write_json(wsl / "codex-homes" / "p2" / "auth.json", {"OPENAI_API_KEY": "sk-wsl"})
+    write_json(wsl / "claude-homes" / "p3" / ".credentials.json", {"claude": "wsl"})
+    write_json(wsl / ".config" / "cli-profile-manager" / "profiles_metadata.json", {"agy": {"p1": {"label": "wsl agy"}}})
+    windows.mkdir()
+
+    dry_run = pm.sync_profiles_noninteractive("wsl", "soft", dry_run=True, yes=False)
+
+    assert dry_run["dry_run"] is True
+    assert dry_run["sync_roots"]["source"]["platform"] == "wsl"
+    assert dry_run["sync_roots"]["destination"]["platform"] == "windows"
+    assert dry_run["sync_roots"]["source"]["base"] == str(wsl)
+    assert dry_run["sync_roots"]["destination"]["base"] == str(windows)
+    assert set(dry_run["sync_roots"]["dirs"]) == {
+        "agy-homes",
+        "codex-homes",
+        "claude-homes",
+        ".config/cli-profile-manager",
+    }
+    assert dry_run["copied"] == 5
+    assert dry_run["converted"] == 1
+    assert dry_run["invalid"] == 0
+    assert not (windows / "agy-homes" / "cred-p1.json").exists()
+
+    applied = pm.sync_profiles_noninteractive("wsl", "soft", dry_run=False, yes=False)
+
+    assert applied["copied"] == 5
+    assert applied["converted"] == 1
+    converted, account = pm.decode_windows_agy_credential(str(windows / "agy-homes" / "cred-p1.json"))
+    assert converted == token
+    assert account == "wsl@example.com"
+    assert json.loads((windows / "codex-homes" / "p2" / "auth.json").read_text(encoding="utf-8")) == {"OPENAI_API_KEY": "sk-wsl"}
+    assert json.loads((windows / "claude-homes" / "p3" / ".credentials.json").read_text(encoding="utf-8")) == {"claude": "wsl"}
+    assert json.loads((windows / ".config" / "cli-profile-manager" / "profiles_metadata.json").read_text(encoding="utf-8")) == {
+        "agy": {"p1": {"label": "wsl agy"}}
+    }
+
+
+def test_cross_platform_sync_e2e_windows_to_wsl_hard_mode_and_invalid_reporting(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    wsl = tmp_path / "wsl"
+    windows = tmp_path / "windows"
+    token = {"refresh_token": "windows-refresh", "scope": "email profile"}
+    write_json(windows / "agy-homes" / "cred-p4.json", pm.build_windows_agy_credential(token, "win@example.com"))
+    write_json(windows / "agy-homes" / "cred-p5.json", {"Target": "gemini:antigravity", "BlobBase64": "not-base64"})
+    write_json(windows / "codex-homes" / "p6" / "auth.json", {"OPENAI_API_KEY": "sk-win"})
+    write_json(windows / "claude-homes" / "p7" / ".credentials.json", {"claude": "win"})
+    write_json(windows / ".config" / "cli-profile-manager" / "profiles_metadata.json", {"codex": {"p6": {"label": "win codex"}}})
+    write_json(wsl / "codex-homes" / "p9" / "auth.json", {"OPENAI_API_KEY": "old"})
+
+    dry_run = pm.sync_profiles_noninteractive("windows", "hard", dry_run=True, yes=False)
+
+    assert dry_run["dry_run"] is True
+    assert dry_run["sync_roots"]["source"]["platform"] == "windows"
+    assert dry_run["sync_roots"]["destination"]["platform"] == "wsl"
+    assert dry_run["copied"] == 3
+    assert dry_run["converted"] == 1
+    assert dry_run["invalid"] == 1
+    assert dry_run["would_delete"] == 1
+    assert str(wsl / "codex-homes" / "p9" / "auth.json") in dry_run["delete_paths"]
+    assert any(
+        item["status"] == "converted" and item["destination"].endswith("agy-homes/p4/.gemini/oauth_creds.json")
+        for item in dry_run["conversion_items"]
+    )
+    assert any(item["status"] == "invalid" and item["source"].endswith("cred-p5.json") for item in dry_run["conversion_items"])
+    assert not (wsl / "agy-homes" / "p4" / ".gemini" / "oauth_creds.json").exists()
+
+    with pytest.raises(PermissionError):
+        pm.sync_profiles_noninteractive("windows", "hard", dry_run=False, yes=False)
+
+    applied = pm.sync_profiles_noninteractive("windows", "hard", dry_run=False, yes=True)
+
+    assert applied["copied"] == 3
+    assert applied["converted"] == 1
+    assert applied["invalid"] == 1
+    assert json.loads((wsl / "agy-homes" / "p4" / ".gemini" / "oauth_creds.json").read_text(encoding="utf-8")) == token
+    assert json.loads((wsl / "agy-homes" / "p4" / ".gemini" / "google_accounts.json").read_text(encoding="utf-8")) == {
+        "active": "win@example.com"
+    }
+    assert json.loads((wsl / "codex-homes" / "p6" / "auth.json").read_text(encoding="utf-8")) == {"OPENAI_API_KEY": "sk-win"}
+    assert json.loads((wsl / "claude-homes" / "p7" / ".credentials.json").read_text(encoding="utf-8")) == {"claude": "win"}
+    assert json.loads((wsl / ".config" / "cli-profile-manager" / "profiles_metadata.json").read_text(encoding="utf-8")) == {
+        "codex": {"p6": {"label": "win codex"}}
+    }
+    assert not (wsl / "codex-homes" / "p9" / "auth.json").exists()
+    assert not (wsl / "agy-homes" / "p5").exists()
+
+
+def test_sync_cli_json_reports_explicit_root_overrides(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    (tmp_path / "wsl").mkdir()
+    (tmp_path / "windows").mkdir()
+
+    rc, stdout, stderr = run_in_process_command(pm, ["sync", "--from", "windows", "--mode", "soft", "--dry-run", "--json"])
+
+    assert rc == 0
+    assert stderr == ""
+    payload = json.loads(stdout)
+    assert payload["source_base"] == str(tmp_path / "windows")
+    assert payload["destination_base"] == str(tmp_path / "wsl")
+    assert payload["sync_roots"] == {
+        "source": {"platform": "windows", "base": str(tmp_path / "windows")},
+        "destination": {"platform": "wsl", "base": str(tmp_path / "wsl")},
+        "dirs": ["agy-homes", "codex-homes", "claude-homes", ".config/cli-profile-manager"],
+    }
+
+
 def test_find_windows_user_prefers_profile_home_over_first_directory(monkeypatch, tmp_path):
     from cli_profile_manager import paths
 

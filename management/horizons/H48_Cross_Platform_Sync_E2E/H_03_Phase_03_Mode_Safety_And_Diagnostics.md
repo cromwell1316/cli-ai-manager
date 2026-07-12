@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H48_Cross_Platform_Sync_E2E/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -22,3 +22,12 @@ Harden sync mode safety and diagnostics.
 
 - Hard sync refuses unsafe deletion without confirmation.
 - Dry-run has no writes.
+
+## Completion Evidence
+
+- Hard sync still refuses mutation without `--yes`; hard dry-run exposes delete
+  plans without writing converted credentials.
+- Sync JSON now includes `sync_roots.source`, `sync_roots.destination`, and the
+  managed directory list for diagnostics.
+- README examples document safe direction selection and recommend dry-run before
+  hard sync.

@@ -308,6 +308,17 @@ def sync_profiles_between_bases(src_base, dst_base, direction, mode, dry_run=Fal
         "dry_run": dry_run,
         "source_base": str(src_base),
         "destination_base": str(dst_base),
+        "sync_roots": {
+            "source": {
+                "platform": direction,
+                "base": str(src_base),
+            },
+            "destination": {
+                "platform": "windows" if direction == "wsl" else "wsl",
+                "base": str(dst_base),
+            },
+            "dirs": list(dirs_to_sync),
+        },
         "files": copied,
         "copied": copied,
         "skipped": skipped,

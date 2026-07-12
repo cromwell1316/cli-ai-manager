@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H48_Cross_Platform_Sync_E2E/README.md
 Lifecycle: living
 Document Class: horizon-phase
 
-Status: planned.
+Status: completed.
 
 ## Objective
 
@@ -21,3 +21,13 @@ Define the cross-platform sync scenario matrix.
 
 - Fixtures contain no real tokens.
 - Scenario names map directly to expected sync output.
+
+## Completion Evidence
+
+- `test_cross_platform_sync_e2e_wsl_to_windows_preserves_all_managed_roots`
+  builds synthetic WSL and Windows roots with AGY, Codex, Claude, and metadata.
+- `test_cross_platform_sync_e2e_windows_to_wsl_hard_mode_and_invalid_reporting`
+  covers hard-mode delete planning, invalid AGY backup reporting, and metadata
+  preservation.
+- `test_sync_cli_json_reports_explicit_root_overrides` validates explicit
+  `AI_MAN_WSL_HOME` and `AI_MAN_WINDOWS_HOME` root overrides in CLI JSON.

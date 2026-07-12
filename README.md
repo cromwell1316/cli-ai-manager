@@ -121,6 +121,17 @@ Exit codes:
 
 `clear` refuses to delete a profile unless `--yes` is supplied.
 
+Sync direction is always read as "copy from this side to the other side":
+
+```bash
+ai-man sync --from wsl --mode soft --dry-run --json
+ai-man sync --from windows --mode soft --dry-run --json
+```
+
+Use dry-run before hard mode. JSON output includes both legacy
+`source_base`/`destination_base` fields and a structured `sync_roots` block with
+source platform, destination platform, base paths, and managed directories.
+
 ## Configuration
 
 Inspect the effective configuration and supported environment variables with:
@@ -359,8 +370,11 @@ Importing an `agy` Windows `cred-pN.json` decodes `BlobBase64` and writes the
 WSL OAuth JSON file. Exporting an `agy` WSL profile wraps
 `.gemini/oauth_creds.json` into a Windows backup JSON with target
 `gemini:antigravity`. Sync performs the same conversion in the selected
-direction; it does not mutate the live Windows Credential Manager slot during
-dry-run validation.
+direction; it does not mutate the live Windows Credential Manager slot. During
+Windows-to-WSL sync, `cred-pN.json` files are converted into
+`.gemini/oauth_creds.json` plus `google_accounts.json` when account metadata is
+available. During WSL-to-Windows sync, `.gemini/oauth_creds.json` is wrapped into
+`cred-pN.json` and preserves the active account from `google_accounts.json`.
 
 On native Windows, `ai-man launch agy pN` first writes
 `%USERPROFILE%\agy-homes\cred-pN.json` into the single shared Credential Manager

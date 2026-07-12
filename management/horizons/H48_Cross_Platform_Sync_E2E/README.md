@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H48_Cross_Platform_Sync_E2E/README.md
 Lifecycle: living
 Document Class: horizon
 
-Status: planned.
+Status: implemented.
 
 ## Purpose
 
@@ -35,6 +35,17 @@ AGY, Codex, Claude, and metadata.
 - Add documentation for safe sync direction selection.
 - Add diagnostics output that explains source and destination roots.
 
+## Implementation Evidence
+
+- Added structured `sync_roots` diagnostics to sync JSON output while retaining
+  `source_base` and `destination_base` compatibility fields.
+- Added deterministic E2E fixture tests for WSL-to-Windows and
+  Windows-to-WSL sync across AGY, Codex, Claude, and manager metadata roots.
+- Covered soft sync, hard sync, dry-run, explicit root overrides, invalid AGY
+  credential reporting, and Windows user discovery regression behavior.
+- Verified AGY conversion preserves account metadata without touching the live
+  Windows Credential Manager slot.
+
 ## Validation
 
 ```bash
@@ -46,6 +57,14 @@ ai-man sync --from windows --mode soft --dry-run --json
 
 Acceptance target: sync can be validated in both directions without touching
 the live Windows Credential Manager slot.
+
+Completed validation:
+
+```bash
+python3 -m pytest tests/test_profile_manager.py -k "sync or windows"
+python3 scripts/horizon_governance.py --json
+python3 -m pytest
+```
 
 ## Files
 

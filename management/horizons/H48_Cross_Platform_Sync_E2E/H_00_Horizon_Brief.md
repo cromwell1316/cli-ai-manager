@@ -5,7 +5,7 @@ Source of Truth: management/horizons/H48_Cross_Platform_Sync_E2E/README.md
 Lifecycle: living
 Document Class: brief
 
-Status: planned.
+Status: implemented.
 
 ## Context
 
@@ -26,3 +26,10 @@ directions without mutating the live Windows Credential Manager slot.
 
 Profile roots can be synchronized safely in either direction with clear dry-run
 plans and predictable credential conversion.
+
+## Result
+
+Implemented through structured sync root diagnostics plus deterministic
+cross-platform E2E tests that validate both directions, mode safety, metadata
+parity, and invalid credential reporting without using the live Windows
+Credential Manager slot.
