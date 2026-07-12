@@ -2404,17 +2404,45 @@ def import_credential(tool_key):
 
     input("\nPress Enter to return...")
 
+def credential_sync_menu(tool_key):
+    tool = TOOLS[tool_key]
+    menu_options = [
+        "[*] Magic Import from Windows",
+        "[<] Import Windows Credential (Manual)",
+        "[^] Export Credential to Windows",
+        "[x] Back",
+    ]
+
+    while True:
+        shortcuts = {
+            "*": 0,
+            "m": 0,
+            "<": 1,
+            "i": 1,
+            "^": 2,
+            "e": 2,
+            "x": 3,
+        }
+        sel = run_menu(menu_options, f"{tool['name'].upper()} CREDENTIAL SYNC / RECOVERY", shortcuts)
+        if sel == 0:
+            magic_import(tool_key)
+        elif sel == 1:
+            import_credential(tool_key)
+        elif sel == 2:
+            export_credential(tool_key)
+        elif sel in (3, -1):
+            break
+
+
 def run_tool_manager(tool_key):
     tool = TOOLS[tool_key]
     menu_options = [
         "[>] Launch Account",
-        "[+] Add New Profile (OAuth)",
-        "[*] Magic Import from Windows",
-        "[<] Import Windows Credential (Manual)",
-        "[^] Export Credential to Windows",
-        "[-] Clear / Logout Profile",
-        "[#] Set Profile Label",
+        "[+] Login / Re-authenticate",
         "[i] Detailed Account Status",
+        "[#] Set Profile Label",
+        "[~] Credential Sync / Recovery",
+        "[-] Clear / Logout Profile",
         "[x] Back to main menu"
     ]
 
@@ -2423,16 +2451,16 @@ def run_tool_manager(tool_key):
             ">": 0,
             "+": 1,
             "a": 1,
-            "*": 2,
-            "i": 3,
-            "<": 3,
-            "e": 4,
-            "^": 4,
+            "l": 1,
+            "i": 2,
+            "s": 2,
+            "#": 3,
+            "~": 4,
+            "*": 4,
+            "r": 4,
             "c": 5,
             "-": 5,
-            "l": 6,
-            "#": 6,
-            "s": 7,
+            "x": 6,
         }
         sel = run_menu(menu_options, tool["name"].upper(), shortcuts)
         if sel == 0:
@@ -2440,18 +2468,14 @@ def run_tool_manager(tool_key):
         elif sel == 1:
             add_account(tool_key)
         elif sel == 2:
-            magic_import(tool_key)
+            view_status(tool_key)
         elif sel == 3:
-            import_credential(tool_key)
+            set_label(tool_key)
         elif sel == 4:
-            export_credential(tool_key)
+            credential_sync_menu(tool_key)
         elif sel == 5:
             clear_profile(tool_key)
-        elif sel == 6:
-            set_label(tool_key)
-        elif sel == 7:
-            view_status(tool_key)
-        elif sel in (8, -1):
+        elif sel in (6, -1):
             break
 
 def sync_profiles():

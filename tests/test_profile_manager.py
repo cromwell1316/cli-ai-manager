@@ -2917,6 +2917,73 @@ def test_launch_account_releases_theme_before_child_cli(monkeypatch, tmp_path):
     assert output.getvalue().endswith(interactive.CLR_RESET)
 
 
+def test_tool_manager_keeps_credential_actions_in_submenu(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+    menus = []
+    selections = iter([4, 6])
+
+    def fake_run_menu(options, title, shortcuts=None, pre_lines=None):
+        menus.append((title, list(options), dict(shortcuts or {})))
+        return next(selections)
+
+    monkeypatch.setattr(interactive, "run_menu", fake_run_menu)
+    monkeypatch.setattr(interactive, "credential_sync_menu", lambda tool: calls.append(("credential_sync", tool)))
+    monkeypatch.setattr(interactive, "launch_account", lambda tool: calls.append(("launch", tool)))
+    monkeypatch.setattr(interactive, "add_account", lambda tool: calls.append(("login", tool)))
+    monkeypatch.setattr(interactive, "view_status", lambda tool: calls.append(("status", tool)))
+    monkeypatch.setattr(interactive, "set_label", lambda tool: calls.append(("label", tool)))
+    monkeypatch.setattr(interactive, "clear_profile", lambda tool: calls.append(("clear", tool)))
+
+    interactive.run_tool_manager("agy")
+
+    title, options, shortcuts = menus[0]
+    rendered = "\n".join(options)
+    assert title == "ANTIGRAVITY CLI (AGY)"
+    assert "[>] Launch Account" in rendered
+    assert "[+] Login / Re-authenticate" in rendered
+    assert "[i] Detailed Account Status" in rendered
+    assert "[#] Set Profile Label" in rendered
+    assert "[~] Credential Sync / Recovery" in rendered
+    assert "Magic Import from Windows" not in rendered
+    assert "Import Windows Credential" not in rendered
+    assert "Export Credential to Windows" not in rendered
+    assert shortcuts["i"] == 2
+    assert shortcuts["~"] == 4
+    assert calls == [("credential_sync", "agy")]
+
+
+def test_credential_sync_menu_routes_windows_credential_actions(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+    menus = []
+    selections = iter([0, 1, 2, 3])
+
+    def fake_run_menu(options, title, shortcuts=None, pre_lines=None):
+        menus.append((title, list(options), dict(shortcuts or {})))
+        return next(selections)
+
+    monkeypatch.setattr(interactive, "run_menu", fake_run_menu)
+    monkeypatch.setattr(interactive, "magic_import", lambda tool: calls.append(("magic", tool)))
+    monkeypatch.setattr(interactive, "import_credential", lambda tool: calls.append(("manual_import", tool)))
+    monkeypatch.setattr(interactive, "export_credential", lambda tool: calls.append(("export", tool)))
+
+    interactive.credential_sync_menu("agy")
+
+    title, options, shortcuts = menus[0]
+    rendered = "\n".join(options)
+    assert title == "ANTIGRAVITY CLI (AGY) CREDENTIAL SYNC / RECOVERY"
+    assert "[*] Magic Import from Windows" in rendered
+    assert "[<] Import Windows Credential (Manual)" in rendered
+    assert "[^] Export Credential to Windows" in rendered
+    assert shortcuts["*"] == 0
+    assert shortcuts["<"] == 1
+    assert shortcuts["^"] == 2
+    assert calls == [("magic", "agy"), ("manual_import", "agy"), ("export", "agy")]
+
+
 def test_show_startup_splash_waits_for_enter(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
