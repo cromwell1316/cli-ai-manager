@@ -2853,6 +2853,33 @@ def test_pilot_splash_lines_brand_startup():
     assert "q/Esc to exit" in rendered
 
 
+def test_static_prompt_lines_erase_to_terminal_edge():
+    import cli_profile_manager.interactive as interactive
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        interactive.print_themed_line(f"{interactive.CLR_RED}Alert{interactive.CLR_RESET}")
+
+    rendered = output.getvalue()
+    assert rendered.startswith(interactive.CLR_BG_BLACK)
+    assert "\033[K" in rendered
+    assert f"{interactive.CLR_RESET}{interactive.CLR_BG_BLACK}" in rendered
+
+
+def test_launch_intro_lines_use_themed_header_and_black_fill(monkeypatch, tmp_path):
+    monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
+    import cli_profile_manager.paths as paths
+    import cli_profile_manager.interactive as interactive
+
+    paths.refresh_from_env()
+    lines = interactive.launch_intro_lines("agy", 1)
+    rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
+
+    assert "AI-MAN LAUNCHING p1 (agy)" in rendered
+    assert f"Config directory: {tmp_path / 'agy-homes' / 'p1'}" in rendered
+    assert "Running CLI" in rendered
+
+
 def test_show_startup_splash_waits_for_enter(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
@@ -3776,6 +3803,47 @@ def test_process_policy_builds_systemd_scope_command(monkeypatch):
     assert "CPUQuota=250%" in command
     assert "TasksMax=64" in command
     assert command[-2:] == ["agy", "--version"]
+
+
+def test_process_policy_launch_omits_thread_cap_by_default(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    monkeypatch.setattr(process_policy, "systemd_user_scope_available", lambda: True)
+    monkeypatch.delenv("AI_MAN_PROCESS_MAX_PROCESSES", raising=False)
+
+    command, preexec_fn, policy = process_policy.prepare_popen(["agy"], tier="launch")
+
+    assert policy["max_processes"] is None
+    assert preexec_fn is None
+    assert not any(str(part).startswith("TasksMax=") for part in command)
+
+
+def test_process_policy_launch_setrlimit_skips_nproc_by_default(monkeypatch):
+    from cli_profile_manager import process_policy
+
+    calls = []
+
+    class FakeResource:
+        RLIMIT_AS = "as"
+        RLIMIT_NPROC = "nproc"
+        RLIMIT_CPU = "cpu"
+
+        @staticmethod
+        def setrlimit(kind, value):
+            calls.append((kind, value))
+
+    monkeypatch.setattr(process_policy, "systemd_user_scope_available", lambda: False)
+    monkeypatch.setenv("AI_MAN_PROCESS_SYSTEMD", "0")
+    monkeypatch.delenv("AI_MAN_PROCESS_MAX_PROCESSES", raising=False)
+    monkeypatch.setitem(sys.modules, "resource", FakeResource)
+
+    _, preexec_fn, policy = process_policy.prepare_popen(["agy"], tier="launch")
+
+    assert policy["max_processes"] is None
+    assert callable(preexec_fn)
+    preexec_fn()
+    assert ("nproc", (256, 256)) not in calls
+    assert all(kind != "nproc" for kind, _ in calls)
 
 
 def test_process_policy_fallback_prepares_preexec(monkeypatch):

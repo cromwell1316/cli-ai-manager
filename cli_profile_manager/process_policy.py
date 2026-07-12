@@ -9,7 +9,7 @@ DEFAULTS = {
         "enabled": True,
         "memory_mb": 4096,
         "cpu_percent": 300,
-        "max_processes": 256,
+        "max_processes": None,
         "nice": 5,
         "ionice_class": 2,
         "ionice_level": 6,
@@ -112,6 +112,16 @@ def _tier_int(tier, suffix, default, minimum, maximum, warnings):
     return default
 
 
+def _tier_optional_int(tier, suffix, default, minimum, maximum, warnings):
+    primary = _tier_env_name(tier, suffix)
+    if primary in os.environ:
+        return _int_env(primary, default, minimum, maximum, warnings)
+    generic = f"AI_MAN_PROCESS_{suffix}"
+    if tier != "launch" and generic in os.environ:
+        return _int_env(generic, default, minimum, maximum, warnings)
+    return default
+
+
 def process_policy(tier="launch", resolve_backend=True):
     if tier not in DEFAULTS:
         raise ValueError(f"unknown process policy tier: {tier}")
@@ -127,7 +137,7 @@ def process_policy(tier="launch", resolve_backend=True):
         "enabled": enabled,
         "memory_mb": _tier_int(tier, "MEMORY_MB", defaults["memory_mb"], 128, 262144, warnings),
         "cpu_percent": _tier_int(tier, "CPU_PERCENT", defaults["cpu_percent"], 10, 10000, warnings),
-        "max_processes": _tier_int(tier, "MAX_PROCESSES", defaults["max_processes"], 1, 100000, warnings),
+        "max_processes": _tier_optional_int(tier, "MAX_PROCESSES", defaults["max_processes"], 1, 100000, warnings),
         "nice": _tier_int(tier, "NICE", defaults["nice"], -20, 19, warnings),
         "ionice_class": _tier_int(tier, "IONICE_CLASS", defaults["ionice_class"], 0, 3, warnings),
         "ionice_level": _tier_int(tier, "IONICE_LEVEL", defaults["ionice_level"], 0, 7, warnings),
@@ -190,9 +200,9 @@ def systemd_scope_command(command, policy, unit_name=None):
         f"MemoryMax={int(policy['memory_mb'])}M",
         "-p",
         f"CPUQuota={int(policy['cpu_percent'])}%",
-        "-p",
-        f"TasksMax={int(policy['max_processes'])}",
     ])
+    if policy.get("max_processes") is not None:
+        args.extend(["-p", f"TasksMax={int(policy['max_processes'])}"])
     return args + list(command)
 
 
@@ -215,7 +225,8 @@ def preexec_for_policy(policy):
 
                 memory_bytes = int(policy["memory_mb"]) * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
-                resource.setrlimit(resource.RLIMIT_NPROC, (int(policy["max_processes"]), int(policy["max_processes"])))
+                if policy.get("max_processes") is not None:
+                    resource.setrlimit(resource.RLIMIT_NPROC, (int(policy["max_processes"]), int(policy["max_processes"])))
                 cpu_seconds = max(1, int(policy["cpu_percent"]) // 100 * 3600)
                 resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
             except Exception:

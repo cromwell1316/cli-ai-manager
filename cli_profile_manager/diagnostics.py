@@ -182,7 +182,11 @@ def fast_process_policy_diagnostics():
             "backend": backend,
             "memory_mb": int_env(f"{prefix}PROCESS_MEMORY_MB", defaults["memory_mb"], warnings),
             "cpu_percent": int_env(f"{prefix}PROCESS_CPU_PERCENT", defaults["cpu_percent"], warnings),
-            "max_processes": int_env(f"{prefix}PROCESS_MAX_PROCESSES", defaults["max_processes"], warnings),
+            "max_processes": (
+                int_env(f"{prefix}PROCESS_MAX_PROCESSES", defaults["max_processes"], warnings)
+                if defaults["max_processes"] is not None or f"{prefix}PROCESS_MAX_PROCESSES" in os.environ
+                else None
+            ),
             "warnings": warnings,
         }
     return {

@@ -1840,9 +1840,32 @@ def clear_screen():
     sys.stdout.flush()
 
 
+def print_themed_line(text=""):
+    body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
+    sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_RESET}\n")
+
+
 def print_header(title=""):
     for line in header_lines(title):
-        print(line)
+        print_themed_line(line)
+
+
+def paint_static_screen(lines):
+    clear_screen()
+    for line in lines:
+        print_themed_line(line)
+
+
+def launch_intro_lines(tool_key, profile_num):
+    tool = TOOLS[tool_key]
+    return [
+        *header_lines(f"LAUNCHING p{profile_num} ({tool['cmd']})"),
+        "",
+        f"{CLR_BOLD}{CLR_WHITE}Config directory:{CLR_RESET} {profile_home(tool_key, profile_num)}",
+        "",
+        f"{CLR_DARK_RED}Running CLI... Exit the tool normally to return here.{CLR_RESET}",
+        "",
+    ]
 
 
 def _center_splash_line(text, width):
@@ -2061,14 +2084,15 @@ def launch_account(tool_key):
             input("\nPress Enter to continue...")
             continue
 
-        clear_screen()
-        print_header(f"LAUNCHING p{profile_num} ({tool['cmd']})")
-        print(f"\nConfig directory: {profile_home(tool_key, profile_num)}\n")
-        print(f"{CLR_YELLOW}Running CLI... Exit the tool normally to return here.{CLR_RESET}\n")
+        paint_static_screen(launch_intro_lines(tool_key, profile_num))
+        sys.stdout.write(CLR_BG_BLACK)
+        sys.stdout.flush()
         code = run_cli_tool(tool_key, profile_num)
+        sys.stdout.write(CLR_BG_BLACK)
+        sys.stdout.flush()
         invalidate_quota_cache(tool_key, profile_num)
         if code != EXIT_OK:
-            print(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
+            print_themed_line(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
             input("\nPress Enter to continue...")
 
         # Refresh metadata

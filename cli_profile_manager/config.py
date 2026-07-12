@@ -14,7 +14,7 @@ PROCESS_POLICY_DEFAULTS = {
         "enabled": True,
         "memory_mb": 4096,
         "cpu_percent": 300,
-        "max_processes": 256,
+        "max_processes": None,
         "nice": 5,
         "ionice_class": 2,
         "ionice_level": 6,
@@ -164,7 +164,7 @@ CONFIG_REGISTRY = (
     SettingDefinition("process.enabled", ("AI_MAN_PROCESS_LIMITS",), "enable foreground process resource limits", True, "bool", "process"),
     SettingDefinition("process.memory_mb", ("AI_MAN_PROCESS_MEMORY_MB",), "foreground launch memory cap in MB", 4096, "int", "process", minimum=128, maximum=262144),
     SettingDefinition("process.cpu_percent", ("AI_MAN_PROCESS_CPU_PERCENT",), "foreground launch CPU quota percent", 300, "int", "process", minimum=10, maximum=10000),
-    SettingDefinition("process.max_processes", ("AI_MAN_PROCESS_MAX_PROCESSES",), "foreground launch process count cap", 256, "int", "process", minimum=1, maximum=100000),
+    SettingDefinition("process.max_processes", ("AI_MAN_PROCESS_MAX_PROCESSES",), "optional foreground launch process/thread cap", None, "int", "process", minimum=1, maximum=100000),
     SettingDefinition("process.nice", ("AI_MAN_PROCESS_NICE",), "foreground launch nice adjustment", 5, "int", "process", minimum=-20, maximum=19),
     SettingDefinition("process.ionice_class", ("AI_MAN_PROCESS_IONICE_CLASS",), "foreground launch ionice class", 2, "int", "process", minimum=0, maximum=3),
     SettingDefinition("process.ionice_level", ("AI_MAN_PROCESS_IONICE_LEVEL",), "foreground launch ionice level", 6, "int", "process", minimum=0, maximum=7),
@@ -239,6 +239,8 @@ def _parse_value(definition, raw, warnings, source_name):
     if definition.value_type == "bool":
         return _parse_bool(raw, default, source_name, warnings)
     if definition.value_type in ("int", "float"):
+        if raw is None and default is None:
+            return None
         return _parse_number(raw, default, definition.value_type, definition.minimum, definition.maximum, source_name, warnings)
     if definition.value_type == "path":
         if raw is None:
