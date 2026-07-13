@@ -15,10 +15,9 @@ targets.
 ## Work
 
 - Add a common model for menu definitions and action IDs.
-- Preserve symbol-first navigation.
+- Preserve digit-first navigation with symbol aliases.
 - Keep legacy shortcuts explicit and testable.
 
 ## Exit Criteria
 
 Both Windows and WSL can render a representative screen from the same descriptor.
-

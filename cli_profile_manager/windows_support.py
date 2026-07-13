@@ -400,8 +400,8 @@ function Save-AgyCredential([int]$N) {
 function Invoke-AgyProfile([int]$N, [bool]$FreshLogin) {
     $operation = if ($FreshLogin) { "login" } else { "launch" }
     Invoke-WithAgyCredentialSlotLock {
-        $home = Get-ProfileHome $N
-        New-Item -ItemType Directory -Force -Path $home | Out-Null
+        $profileHome = Get-ProfileHome $N
+        New-Item -ItemType Directory -Force -Path $profileHome | Out-Null
         if ($FreshLogin) {
             Clear-AgyCredential
         } else {
@@ -410,8 +410,8 @@ function Invoke-AgyProfile([int]$N, [bool]$FreshLogin) {
         $oldUserProfile = $env:USERPROFILE
         $oldHome = $env:HOME
         try {
-            $env:USERPROFILE = $home
-            $env:HOME = $home
+            $env:USERPROFILE = $profileHome
+            $env:HOME = $profileHome
             & $CommandPath @ToolArgs
             $exitCode = $LASTEXITCODE
         } finally {

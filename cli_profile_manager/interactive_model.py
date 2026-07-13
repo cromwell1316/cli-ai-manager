@@ -14,22 +14,22 @@ class MenuItem:
 
 
 ROOT_MENU = (
-    MenuItem("agy", "@", "Antigravity CLI (agy)", ("1",)),
-    MenuItem("codex", "$", "OpenAI Codex CLI", ("2",)),
-    MenuItem("claude", "^", "Anthropic Claude CLI", ("3",)),
-    MenuItem("sync", "~", "Sync Profiles (WSL <-> Windows)", ("4",)),
-    MenuItem("settings", "!", "Settings", ("5",)),
-    MenuItem("exit", "x", "Exit"),
+    MenuItem("agy", "1", "Antigravity CLI (agy)", ("@",)),
+    MenuItem("codex", "2", "OpenAI Codex CLI", ("$",)),
+    MenuItem("claude", "3", "Anthropic Claude CLI", ("^",)),
+    MenuItem("sync", "4", "Sync Profiles (WSL <-> Windows)", ("~",)),
+    MenuItem("settings", "5", "Settings", ("!",)),
+    MenuItem("exit", "0", "Exit", ("x",)),
 )
 
 TOOL_MENU = (
-    MenuItem("launch", ">", "Launch Account", ("1",)),
-    MenuItem("login", "+", "Login / Re-authenticate", ("a", "l", "2")),
-    MenuItem("status", "i", "Detailed Account Status", ("s", "3")),
-    MenuItem("label", "#", "Set Profile Label", ("4",)),
-    MenuItem("credential_sync", "~", "Credential Sync / Recovery", ("*", "r", "5")),
-    MenuItem("clear", "-", "Clear / Logout Profile", ("c", "6")),
-    MenuItem("back", "x", "Back to main menu", ("b",)),
+    MenuItem("launch", "1", "Launch Account", (">",)),
+    MenuItem("login", "2", "Login / Re-authenticate", ("+", "a", "l")),
+    MenuItem("status", "3", "Detailed Account Status", ("i", "s")),
+    MenuItem("label", "4", "Set Profile Label", ("#",)),
+    MenuItem("credential_sync", "5", "Credential Sync / Recovery", ("~", "*", "r")),
+    MenuItem("clear", "6", "Clear / Logout Profile", ("-", "c")),
+    MenuItem("back", "0", "Back to main menu", ("x", "b")),
 )
 
 WINDOWS_TOOL_MENU = tuple(
@@ -38,21 +38,21 @@ WINDOWS_TOOL_MENU = tuple(
 )
 
 CREDENTIAL_SYNC_MENU = (
-    MenuItem("magic_import", "*", "Magic Import from Windows", ("m",)),
-    MenuItem("manual_import", "<", "Import Windows Credential (Manual)", ("i",)),
-    MenuItem("export", "^", "Export Credential to Windows", ("e",)),
-    MenuItem("back", "x", "Back", ("b",)),
+    MenuItem("magic_import", "1", "Magic Import from Windows", ("*", "m")),
+    MenuItem("manual_import", "2", "Import Windows Credential (Manual)", ("<", "i")),
+    MenuItem("export", "3", "Export Credential to Windows", ("^", "e")),
+    MenuItem("back", "0", "Back", ("x", "b")),
 )
 
 SYNC_DIRECTION_MENU = (
-    MenuItem("wsl", ">", "WSL -> Windows", ("1",)),
-    MenuItem("windows", "<", "Windows -> WSL", ("2",)),
-    MenuItem("back", "x", "Back", ("b",)),
+    MenuItem("wsl", "1", "WSL -> Windows", (">",)),
+    MenuItem("windows", "2", "Windows -> WSL", ("<",)),
+    MenuItem("back", "0", "Back", ("x", "b")),
 )
 
 SYNC_MODE_MENU = (
-    MenuItem("soft", "~", "Soft", ("1",)),
-    MenuItem("hard", "!", "Hard", ("2",)),
+    MenuItem("soft", "1", "Soft", ("~",)),
+    MenuItem("hard", "2", "Hard", ("!",)),
 )
 
 

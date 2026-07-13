@@ -17,7 +17,7 @@ sync as features and design evolve.
 - Snapshot key menu labels, symbols, and action routes.
 - Verify credential actions remain in the recovery submenu.
 - Verify shell reset and child CLI theme release behavior.
-- Add Windows-native smoke coverage for symbol-first menus.
+- Add Windows-native smoke coverage for digit-first menus with symbol aliases.
 - Keep tests token-safe and independent of live accounts.
 
 ## Non-Goals
@@ -43,15 +43,15 @@ python3 -m pytest
 ```
 
 Acceptance target: future UI changes cannot silently regress Windows parity,
-symbol shortcuts, or credential submenu placement.
+digit labels, symbol shortcuts, or credential submenu placement.
 
 ## Implementation Evidence
 
 - Added `interactive_model.contract_snapshot()` as a terminal-neutral menu
   contract for root, tool, Windows tool, credential sync, and sync menus.
-- Added regression tests for symbol-first labels, hidden legacy digit aliases,
+- Added regression tests for digit-first labels, hidden symbol aliases,
   action-route coverage, and credential submenu placement.
-- Added Windows interactive symbol-first snapshot coverage that strips ANSI and
+- Added Windows interactive digit-first snapshot coverage that strips ANSI and
   avoids terminal-emulator-specific assertions.
 - Extended `scripts/windows_ci_smoke.ps1` with a focused cross-platform UI
   regression pytest selector.

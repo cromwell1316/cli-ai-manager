@@ -27,5 +27,5 @@ python3 -m pytest
 ## Completed Evidence
 
 - Focused UI tests validate shared menu snapshots, route coverage, Windows
-  symbol-first menus, and terminal hygiene behavior.
+  digit-first menus, and terminal hygiene behavior.
 - Governance validates this completed horizon documentation.

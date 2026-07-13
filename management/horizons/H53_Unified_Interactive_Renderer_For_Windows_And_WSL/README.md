@@ -20,7 +20,7 @@ menus.
 - Preserve Windows native safety where raw terminal input differs from WSL.
 - Remove duplicated action routing between `interactive.py` and
   `windows_interactive.py`.
-- Keep symbol-first navigation consistent on both platforms.
+- Keep digit-first navigation with symbol aliases consistent on both platforms.
 
 ## Non-Goals
 

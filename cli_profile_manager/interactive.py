@@ -62,6 +62,7 @@ from .terminal_rendering import (
     visible_len,
     visible_ljust,
 )
+from . import interactive_render
 
 CLR_SKY = "\033[38;5;45m"
 CLR_AZURE = "\033[38;5;39m"
@@ -69,9 +70,9 @@ CLR_ROYAL = "\033[38;5;33m"
 CLR_VIOLET = "\033[38;5;99m"
 CLR_MINT = "\033[38;5;48m"
 CLR_ORANGE = "\033[38;5;208m"
-CLR_BG_BLACK = "\033[48;5;0m"
-CLR_DARK_RED = "\033[38;5;88m"
-CLR_BRIGHT_RED = "\033[38;5;196m"
+CLR_BG_BLACK = interactive_render.CLR_BG_BLACK
+CLR_DARK_RED = interactive_render.CLR_DARK_RED
+CLR_BRIGHT_RED = interactive_render.CLR_BRIGHT_RED
 
 
 def _audit():
@@ -984,7 +985,6 @@ def quota_progress_line(statuses, now=None):
     if total <= 0 or progress["active"] <= 0:
         return None
     now = time.time() if now is None else now
-    spinner = QUOTA_PROGRESS_SPINNER[int(now * 4) % len(QUOTA_PROGRESS_SPINNER)]
     done = progress["completed"]
     percent = int((done / total) * 100) if total else 0
     bar = quota_progress_bar(done, total)
@@ -998,7 +998,7 @@ def quota_progress_line(statuses, now=None):
         details += f", failed {progress['failed']}"
     if progress["pending"]:
         details += f", pending {progress['pending']}"
-    return f"Quota refresh {spinner} {CLR_BRIGHT_RED}{bar}{CLR_RESET} {details}"
+    return f"Quota refresh: {details} {CLR_DARK_RED}{bar}{CLR_RESET}"
 
 
 def agy_quota_cell_map(status):
@@ -1547,37 +1547,15 @@ def get_key(timeout=None):
 
 
 def header_lines(title="", width=None):
-    term_width = terminal_size()[0]
-    width = width or min(max(42, visible_len(title) + 10), term_width)
-    width = max(1, min(width, term_width))
-    divider = "━" * width
-    subtitle = f" {title}" if title else ""
-    return [
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}AI-MAN{CLR_RESET}{CLR_WHITE}{subtitle}{CLR_RESET}",
-        f"{CLR_DARK_RED}{divider}{CLR_RESET}",
-    ]
+    return interactive_render.header_lines(title, width)
 
 
 def themed_line(text="", width=None):
-    width = max(1, width or terminal_size()[0])
-    body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
-    padding = " " * max(0, width - visible_len(body))
-    return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
+    return interactive_render.themed_line(text, width)
 
 
 def themed_screen_lines(lines, width=None, height=None, top_padding=1, left_padding=None):
-    term_width, term_height = terminal_size()
-    width = max(1, width or term_width)
-    height = max(1, height or term_height)
-    if left_padding is None:
-        left_padding = 4 if width >= 100 else 2
-    left = " " * max(0, min(left_padding, max(0, width - 1)))
-    themed = [themed_line(width=width) for _ in range(max(0, top_padding))]
-    for line in lines:
-        themed.append(themed_line(left + str(line), width))
-    while len(themed) < height:
-        themed.append(themed_line(width=width))
-    return themed
+    return interactive_render.themed_screen_lines(lines, width, height, top_padding, left_padding)
 
 
 def status_screen_left_padding(width=None):
@@ -1887,41 +1865,11 @@ def launch_intro_lines(tool_key, profile_num):
 
 
 def _center_splash_line(text, width):
-    pad = max(0, (width - visible_len(text)) // 2)
-    return themed_line((" " * pad) + text, width)
+    return interactive_render._center_splash_line(text, width)
 
 
 def pilot_splash_lines(size=None):
-    width, height = size or terminal_size()
-    width = max(1, width)
-    height = max(1, height)
-    logo = [
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╗ ██╗██╗      ██████╗ ████████╗     ██████╗██╗     ██╗{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_RED}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝    ██╔════╝██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╔╝██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_RED}██╔═══╝ ██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██║     ██║███████╗╚██████╔╝   ██║       ╚██████╗███████╗██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_DARK_RED}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝        ╚═════╝╚══════╝╚═╝{CLR_RESET}",
-    ]
-    divider = f"{CLR_DARK_RED}{'━' * min(56, width)}{CLR_RESET}"
-    content = (
-        logo
-        + [
-            "",
-            divider,
-            f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
-            f"{CLR_BRIGHT_RED}● AGY{CLR_RESET}   {CLR_RED}● Codex{CLR_RESET}   {CLR_DARK_RED}● Claude{CLR_RESET}",
-            divider,
-            "",
-            f"{CLR_BOLD}{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_RED}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
-        ]
-    )
-    top_padding = max(1, (height - len(content)) // 3)
-    lines = [themed_line(width=width) for _ in range(top_padding)]
-    lines.extend(_center_splash_line(line, width) if line else themed_line(width=width) for line in content)
-    while len(lines) < height:
-        lines.append(themed_line(width=width))
-    return lines[:height]
+    return interactive_render.pilot_splash_lines(size)
 
 
 def show_startup_splash():
@@ -1939,23 +1887,8 @@ def show_startup_splash():
         renderer.reset()
 
 
-def render_menu_lines(options, title="", selected_idx=0, pre_lines=None):
-    lines = header_lines(title)
-    lines.append("")
-    if pre_lines:
-        lines.extend(str(line) for line in pre_lines)
-    for idx, option in enumerate(options):
-        if idx == selected_idx:
-            lines.append(f"{CLR_BRIGHT_RED}▌{CLR_RESET} {CLR_BOLD}{CLR_WHITE}{option}{CLR_RESET}")
-        else:
-            lines.append(f"  \033[90m{option}{CLR_RESET}")
-    lines.append("")
-    lines.append(
-        f"\033[90m↑/↓ move   digits/shortcuts   "
-        f"{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m select   "
-        f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}"
-    )
-    return themed_screen_lines(lines)
+def render_menu_lines(options, title="", selected_idx=0, pre_lines=None, post_lines=None, footer_lines=None):
+    return interactive_render.render_menu_lines(options, title, selected_idx, pre_lines, post_lines, footer_lines)
 
 
 def run_menu(options, title="", shortcuts=None, pre_lines=None):
@@ -1994,124 +1927,243 @@ def run_menu(options, title="", shortcuts=None, pre_lines=None):
 
 
 def launch_account_table(tool_key, statuses):
-    if tool_key == "agy":
-        quota_columns = agy_status_quota_columns(statuses)
-        widths = {
-            "profile": 6,
-            "account": 30,
-            "status": 10,
-            "quota": 6,
-            "label": 14,
-        }
-        quota_header = agy_quota_header_lines(quota_columns, widths["quota"])
-        total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
-        total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
-    else:
-        quota_columns = []
-        widths = {
-            "profile": 6,
-            "account": 30,
-            "status": 10,
-            "quota": 28,
-            "label": 14,
-        }
-        quota_header = f"{'Quota':<{widths['quota']}}"
-        total_width = sum(widths.values()) + len(widths) - 1
+    return interactive_render.launch_account_table(
+        tool_key,
+        statuses,
+        quota_fresh_seconds=interactive_quota_fresh_seconds(),
+    )
 
-    prefix = "      "
-    if isinstance(quota_header, tuple):
-        quota_group_header, quota_column_header = quota_header
-        headers = [
-            (
-                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'Profile':<{widths['profile']}} "
-                f"{'Account':<{widths['account']}} "
-                f"{'Status':<{widths['status']}} "
-                f"{quota_group_header} "
-                f"{'Label':<{widths['label']}}"
-                f"{CLR_RESET}"
-            ),
-            (
-                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'':<{widths['profile']}} "
-                f"{'':<{widths['account']}} "
-                f"{'':<{widths['status']}} "
-                f"{quota_column_header} "
-                f"{'':<{widths['label']}}"
-                f"{CLR_RESET}"
-            ),
-        ]
+
+def launch_selected_profile_line(status):
+    if not status:
+        return f"\033[90mSelected: none{CLR_RESET}"
+    label = status.get("label") or "none"
+    account = status.get("email") or status.get("account") or "unknown"
+    profile = f"p{status.get('num')}"
+    return (
+        f"\033[90mSelected: {CLR_BRIGHT_RED}{profile}{CLR_RESET}{CLR_BG_BLACK}\033[90m "
+        f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}"
+    )
+
+
+def launch_account_post_lines(tool_key, statuses, selected_idx=0, status_message=None):
+    now = time.time()
+    lines = []
+    selected_status = statuses[selected_idx] if statuses and 0 <= selected_idx < len(statuses) else None
+    progress_line = quota_progress_line(statuses, now)
+    if status_message:
+        lines.extend(["", f"{CLR_YELLOW}{status_message}{CLR_RESET}"])
+    lines.append("")
+    lines.append(launch_selected_profile_line(selected_status))
+    if progress_line:
+        lines.append(progress_line)
     else:
-        headers = [
-            (
-                f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'Profile':<{widths['profile']}} "
-                f"{'Account':<{widths['account']}} "
-                f"{'Status':<{widths['status']}} "
-                f"{quota_header} "
-                f"{'Label':<{widths['label']}}"
-                f"{CLR_RESET}"
-            )
-        ]
-    separator = f"{prefix}{'-' * total_width}"
-    rows = []
-    for status in statuses:
-        label_text = f"({status['label']})" if status["label"] else ""
-        state_text = f"{CLR_GREEN}Active{CLR_RESET}" if status["has_token"] else f"{CLR_RED}No Token{CLR_RESET}"
-        display_account = status.get("email", "")
-        quota_account = (status.get("quota") or {}).get("account")
-        if quota_account and (tool_key == "agy" or display_account in ("logged in", "(no login)")):
-            display_account = quota_account
-        account = color_email_parts(display_account) if status["has_token"] else f"{CLR_RED}{display_account}{CLR_RESET}"
-        if tool_key == "agy":
-            quota_text_value = " ".join(
-                visible_fit(color_agy_quota_cell(cell, status), widths["quota"])
-                for cell in agy_quota_cells(status, quota_columns)
-            )
-        else:
-            quota_text_value = visible_fit(quota_text(status, width=widths["quota"]), widths["quota"])
-        profile_text = status_profile_text(status)
-        label = f"{CLR_YELLOW}{label_text}{CLR_RESET}" if label_text else ""
-        rows.append(
-            f"{visible_fit(profile_text, widths['profile'])} "
-            f"{visible_fit(account, widths['account'])} "
-            f"{visible_fit(state_text, widths['status'])} "
-            f"{quota_text_value} "
-            f"{visible_fit(label, widths['label'])}"
-        )
-    return headers + [separator], rows
+        countdown = quota_refresh_countdown(tool_key, now)
+        if countdown != "pending":
+            lines.append(f"\033[90mQuota refresh: next in {CLR_RED}{countdown}{CLR_RESET}")
+    return lines
+
+
+def launch_account_footer_lines():
+    return [
+        (
+            f"\033[90m↑/↓ select   1-9 launch profile   "
+            f"{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m launch   "
+            f"{CLR_RED}r{CLR_RESET}{CLR_BG_BLACK}\033[90m refresh   "
+            f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}"
+        ),
+        (
+            f"\033[90m{CLR_RED}a/+{CLR_RESET}{CLR_BG_BLACK}\033[90m add/login   "
+            f"{CLR_RED}l/# {CLR_RESET}{CLR_BG_BLACK}\033[90m label   "
+            f"{CLR_DARK_RED}d/c/-{CLR_RESET}{CLR_BG_BLACK}\033[90m clear/logout   "
+            f"{CLR_RED}~{CLR_RESET}{CLR_BG_BLACK}\033[90m sync/recovery{CLR_RESET}"
+        ),
+    ]
+
+
+def render_launch_account_lines(tool_key, selected_idx=0, status_message=None, metadata=None):
+    metadata = load_metadata() if metadata is None else metadata
+    profiles = get_display_profiles(tool_key)
+    statuses = [status_with_auto_quota(tool_key, n, metadata) for n in profiles]
+    pre_lines, options = launch_account_table(tool_key, statuses)
+    return profiles, statuses, render_menu_lines(
+        options,
+        f"LAUNCH {TOOLS[tool_key]['name'].upper()}",
+        selected_idx,
+        pre_lines=pre_lines,
+        post_lines=launch_account_post_lines(tool_key, statuses, selected_idx, status_message),
+        footer_lines=launch_account_footer_lines(),
+    )
+
+
+def select_launch_action(tool_key, metadata):
+    selected_idx = 0
+    status_message = None
+    renderer = TerminalFrameRenderer(cache_key="launch")
+    _audit().record("interactive", "started", command="launch", tool=tool_key, details={"workflow": "launch_profile_select"})
+    try:
+        while True:
+            profiles, _statuses, lines = render_launch_account_lines(tool_key, selected_idx, status_message, metadata)
+            status_message = None
+            if profiles:
+                selected_idx %= len(profiles)
+            renderer.paint(lines)
+            key = get_key(timeout=next_quota_wake_timeout(tool_key))
+            if key is None:
+                count = schedule_due_quota_refresh(tool_key)
+                if count:
+                    _audit().record(
+                        "interactive",
+                        "retried",
+                        command="launch",
+                        tool=tool_key,
+                        details={"workflow": "auto_quota_refresh", "profiles": count},
+                    )
+                continue
+            if not profiles:
+                if key in ("esc", "q", "enter"):
+                    return "back", None
+                continue
+            if key == "up":
+                selected_idx = (selected_idx - 1) % len(profiles)
+            elif key == "down":
+                selected_idx = (selected_idx + 1) % len(profiles)
+            elif key == "enter":
+                profile_num = profiles[selected_idx]
+                _audit().record(
+                    "interactive",
+                    "completed",
+                    command="launch",
+                    tool=tool_key,
+                    result="succeeded",
+                    details={"workflow": "launch_profile_select", "profile": f"p{profile_num}"},
+                )
+                return "launch", profile_num
+            elif key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < len(profiles):
+                    return "launch", profiles[idx]
+            elif key in ("esc", "q"):
+                _audit().record("interactive", "completed", command="launch", tool=tool_key, result="cancelled", details={"workflow": "launch_profile_select", "key": key})
+                return "back", None
+            elif key in ("r", "R", "ctrl+r", "к", "К"):
+                count = force_quota_refresh(tool_key)
+                _audit().record("interactive", "retried", command="launch", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
+                status_message = f"Refreshing quota now for {count} profiles..." if count else "Quota refresh is already running..."
+            elif key in ("a", "+"):
+                return "login", None
+            elif key in ("l", "#"):
+                return "label", profiles[selected_idx]
+            elif key in ("d", "c", "-"):
+                return "clear", profiles[selected_idx]
+            elif key in ("~", "m"):
+                return "credential_sync", None
+            elif key == "ctrl+c":
+                _audit().record("interactive", "failed", command="launch", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
+                sys.exit(0)
+    finally:
+        renderer.clear()
+        renderer.reset()
+
+
+def select_launch_profile(tool_key, metadata):
+    action, profile_num = select_launch_action(tool_key, metadata)
+    return profile_num if action == "launch" else None
+
+
+def launch_selected_profile(tool_key, profile_num, metadata):
+    tool = TOOLS[tool_key]
+    status = status_payload(tool_key, profile_num, metadata)
+    if not status["has_token"]:
+        clear_screen()
+        print_header(f"LAUNCH p{profile_num} ({tool['cmd']})")
+        print(f"\n{CLR_RED}Profile p{profile_num} has no token. Use login or import first.{CLR_RESET}")
+        input("\nPress Enter to continue...")
+        return
+
+    paint_static_screen(launch_intro_lines(tool_key, profile_num))
+    release_terminal_theme_for_child()
+    code = run_cli_tool(tool_key, profile_num)
+    release_terminal_theme_for_child(clear_below=False)
+    invalidate_quota_cache(tool_key, profile_num)
+    if code != EXIT_OK:
+        print_themed_line(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
+        input("\nPress Enter to continue...")
+
+
+def set_label_for_profile(tool_key, profile_num, metadata=None):
+    tool = TOOLS[tool_key]
+    metadata = load_metadata() if metadata is None else metadata
+    clear_screen()
+    print_header(f"LABEL p{profile_num} ({tool['cmd']})")
+    print()
+
+    current_lbl = metadata.get(tool_key, {}).get(f"p{profile_num}", {}).get("label", "")
+    print(f"Current label: {CLR_YELLOW}{current_lbl or '(none)'}{CLR_RESET}\n")
+    new_lbl = input("Enter new label (or empty to clear): ").strip()
+
+    safety_decision(
+        "label",
+        command="label",
+        tool=tool_key,
+        profile=f"p{profile_num}",
+        target=profile_home(tool_key, profile_num),
+        facts={"label": new_lbl},
+    )
+    label_profile(tool_key, profile_num, new_lbl)
+    print(f"\n{CLR_GREEN}Label updated successfully!{CLR_RESET}")
+    input("Press Enter to return...")
+
+
+def clear_selected_profile(tool_key, profile_num):
+    home = profile_home(tool_key, profile_num)
+
+    clear_screen()
+    print_header(f"CLEAR p{profile_num}")
+    print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
+    print(f"Path: {home}")
+    confirm = input("\nType 'yes' to confirm deletion: ").strip().lower()
+    decision = safety_decision(
+        "clear",
+        command="clear",
+        tool=tool_key,
+        profile=f"p{profile_num}",
+        target=home,
+        facts={"exists": os.path.exists(home), "delete_paths": [home] if os.path.exists(home) else []},
+        yes=(confirm == "yes"),
+    )
+    if confirm == 'yes':
+        logging.info(f"Clearing profile p{profile_num} for {tool_key} at {home}")
+        try:
+            clear_profile_data(tool_key, profile_num)
+            invalidate_quota_cache(tool_key, profile_num)
+            print(f"\n{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
+            logging.info(f"Successfully cleared profile p{profile_num}")
+        except Exception as e:
+            logging.error(f"Error clearing profile p{profile_num}: {e}")
+            print(f"\n{CLR_RED}Error clearing profile: {e}{CLR_RESET}")
+    else:
+        print(f"\nOperation cancelled. {decision['message'] or ''}".rstrip())
+
+    input("\nPress Enter to return...")
+
 
 def launch_account(tool_key):
-    tool = TOOLS[tool_key]
     metadata = load_metadata()
     while True:
-        profiles = get_display_profiles(tool_key)
-        statuses = [status_with_auto_quota(tool_key, n, metadata) for n in profiles]
-        pre_lines, options = launch_account_table(tool_key, statuses)
-
-        sel = run_menu(options, f"LAUNCH {tool['name'].upper()}", pre_lines=pre_lines)
-        if sel == -1:
+        action, profile_num = select_launch_action(tool_key, metadata)
+        if action == "back":
             break
-
-        profile_num = profiles[sel]
-        status = status_payload(tool_key, profile_num, metadata)
-        if not status["has_token"]:
-            clear_screen()
-            print_header(f"LAUNCH p{profile_num} ({tool['cmd']})")
-            print(f"\n{CLR_RED}Profile p{profile_num} has no token. Use login or import first.{CLR_RESET}")
-            input("\nPress Enter to continue...")
-            continue
-
-        paint_static_screen(launch_intro_lines(tool_key, profile_num))
-        release_terminal_theme_for_child()
-        code = run_cli_tool(tool_key, profile_num)
-        release_terminal_theme_for_child(clear_below=False)
-        invalidate_quota_cache(tool_key, profile_num)
-        if code != EXIT_OK:
-            print_themed_line(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
-            input("\nPress Enter to continue...")
-
-        # Refresh metadata
+        if action == "launch":
+            launch_selected_profile(tool_key, profile_num, metadata)
+        elif action == "login":
+            add_account(tool_key)
+        elif action == "label":
+            set_label_for_profile(tool_key, profile_num, metadata)
+        elif action == "clear":
+            clear_selected_profile(tool_key, profile_num)
+        elif action == "credential_sync":
+            credential_sync_menu(tool_key)
         metadata = load_metadata()
 
 def add_account(tool_key):
@@ -2170,27 +2222,8 @@ def set_label(tool_key):
             break
 
         profile_num = profiles[sel]
-        clear_screen()
-        print_header(f"LABEL p{profile_num} ({tool['cmd']})")
-        print()
-
-        current_lbl = metadata.get(tool_key, {}).get(f"p{profile_num}", {}).get("label", "")
-        print(f"Current label: {CLR_YELLOW}{current_lbl or '(none)'}{CLR_RESET}\n")
-        new_lbl = input("Enter new label (or empty to clear): ").strip()
-
-        safety_decision(
-            "label",
-            command="label",
-            tool=tool_key,
-            profile=f"p{profile_num}",
-            target=profile_home(tool_key, profile_num),
-            facts={"label": new_lbl},
-        )
-        label_profile(tool_key, profile_num, new_lbl)
+        set_label_for_profile(tool_key, profile_num, metadata)
         metadata = load_metadata()
-
-        print(f"\n{CLR_GREEN}Label updated successfully!{CLR_RESET}")
-        input("Press Enter to return...")
 
 def find_windows_user():
     return core_find_windows_user()
@@ -2326,36 +2359,8 @@ def clear_profile(tool_key):
             break
 
         profile_num = profiles[sel]
-        home = profile_home(tool_key, profile_num)
-
-        clear_screen()
-        print_header(f"CLEAR p{profile_num}")
-        print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
-        print(f"Path: {home}")
-        confirm = input("\nType 'yes' to confirm deletion: ").strip().lower()
-        decision = safety_decision(
-            "clear",
-            command="clear",
-            tool=tool_key,
-            profile=f"p{profile_num}",
-            target=home,
-            facts={"exists": os.path.exists(home), "delete_paths": [home] if os.path.exists(home) else []},
-            yes=(confirm == "yes"),
-        )
-        if confirm == 'yes':
-            logging.info(f"Clearing profile p{profile_num} for {tool_key} at {home}")
-            try:
-                clear_profile_data(tool_key, profile_num)
-                invalidate_quota_cache(tool_key, profile_num)
-                print(f"\n{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
-                logging.info(f"Successfully cleared profile p{profile_num}")
-            except Exception as e:
-                logging.error(f"Error clearing profile p{profile_num}: {e}")
-                print(f"\n{CLR_RED}Error clearing profile: {e}{CLR_RESET}")
-        else:
-            print(f"\nOperation cancelled. {decision['message'] or ''}".rstrip())
-
-        input("\nPress Enter to return...")
+        clear_selected_profile(tool_key, profile_num)
+        metadata = load_metadata()
 
 def import_credential(tool_key):
     tool = TOOLS[tool_key]

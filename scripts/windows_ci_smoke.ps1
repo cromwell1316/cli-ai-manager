@@ -31,7 +31,7 @@ try {
             python -m pytest tests\test_profile_manager.py -k "windows"
         }
         Invoke-Step "Cross-platform UI regression pytest smoke" {
-            python -m pytest tests\test_profile_manager.py -k "windows_cross_platform_ui or windows_interactive_symbol_first"
+            python -m pytest tests\test_profile_manager.py -k "windows_cross_platform_ui or windows_interactive_digit_first"
         }
     }
 

@@ -25,4 +25,4 @@ python3 -m pytest
 - Tests cover root menu symbols and tool menu actions.
 - Credential import/export actions stay in the recovery submenu.
 - Shell reset and child CLI theme release remain covered.
-- Windows smoke includes focused symbol-first UI regression tests.
+- Windows smoke includes focused digit-first UI regression tests.

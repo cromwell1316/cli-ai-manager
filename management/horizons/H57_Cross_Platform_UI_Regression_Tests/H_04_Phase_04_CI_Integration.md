@@ -24,6 +24,6 @@ Windows and WSL UI parity has continuous automated signal.
 ## Implementation Notes
 
 - Windows smoke now runs the focused selector
-  `windows_cross_platform_ui or windows_interactive_symbol_first`.
+  `windows_cross_platform_ui or windows_interactive_digit_first`.
 - Full local validation continues to run the broader
   `interactive or windows_interactive` selector and full pytest.

@@ -1,5 +1,9 @@
+import os
+import sys
+
 from .metadata import load_metadata
 from . import interactive_model
+from . import interactive_render
 from . import windows_support
 from .operations import (
     EXIT_OK,
@@ -15,6 +19,7 @@ from .operations import (
     profile_status_operation,
     sync_profiles_operation,
 )
+from .terminal_rendering import TerminalFrameRenderer, visible_len
 
 CLR_RESET = "\033[0m"
 CLR_RED = "\033[31m"
@@ -24,11 +29,20 @@ CLR_WHITE_BOLD = "\033[1;37m"
 CLR_CYAN = "\033[36m"
 CLR_GREEN = "\033[32m"
 CLR_YELLOW = "\033[33m"
-CLR_PANEL = "\033[48;5;232m"
+CLR_BG_BLACK = interactive_render.CLR_BG_BLACK
+CLR_GRAY = "\033[90m"
+CLR_CLEAR = "\033[H\033[2J\033[3J"
 
 
 def _print(output, text=""):
     output(text)
+
+
+def _line(text="", width=None):
+    width = width or 120
+    plain_len = visible_len(text)
+    padding = " " * max(0, width - plain_len)
+    return f"{CLR_BG_BLACK}{text}{padding}{CLR_RESET}"
 
 
 def _input(prompt, input_func):
@@ -38,17 +52,196 @@ def _input(prompt, input_func):
         return "x"
 
 
+def _read_key(input_func):
+    if input_func is input and os.name == "nt":
+        import msvcrt
+
+        char = msvcrt.getwch()
+        if char in ("\x00", "\xe0"):
+            code = msvcrt.getwch()
+            return {
+                "H": "up",
+                "P": "down",
+                "K": "left",
+                "M": "right",
+            }.get(code, "")
+        if char in ("\r", "\n"):
+            return "enter"
+        if char == "\x1b":
+            return "esc"
+        return char.lower()
+    value = _input("", input_func).strip().lower()
+    return value or "enter"
+
+
 def _pause(input_func, output):
     _input(f"{CLR_DIM}Press Enter to continue...{CLR_RESET}", input_func)
 
 
-def _choice(prompt, choices, input_func, output):
-    valid = {str(key).lower() for key in choices}
-    while True:
-        value = _input(prompt, input_func).strip().lower()
-        if value in valid:
-            return value
-        _print(output, f"Invalid choice: {value}")
+def _menu_lines(menu_items, title, selected_idx=0, pre_lines=None):
+    return interactive_render.render_menu_lines(
+        interactive_model.options(menu_items),
+        title,
+        selected_idx,
+        pre_lines=pre_lines,
+    )
+
+
+def _paint_lines(lines, output, renderer=None):
+    if renderer is not None:
+        renderer.paint(lines)
+        return
+    for line in lines:
+        output(line)
+
+
+def _native_renderer(output, cache_key):
+    if output is print:
+        return TerminalFrameRenderer(stdout=sys.stdout, cache_key=cache_key)
+    return None
+
+
+def _show_startup_splash(input_func, output):
+    renderer = _native_renderer(output, "splash")
+    try:
+        _paint_lines(interactive_render.pilot_splash_lines(), output, renderer)
+        while True:
+            key = _read_key(input_func)
+            if key == "enter":
+                return True
+            if key in ("q", "esc"):
+                return False
+    finally:
+        if renderer is not None:
+            renderer.clear()
+            renderer.reset()
+
+
+def _choose_menu(menu_items, title, input_func, output, pre_lines=None, cancelled_action="back"):
+    selected_idx = 0
+    renderer = _native_renderer(output, "menu")
+    try:
+        while True:
+            _paint_lines(_menu_lines(menu_items, title, selected_idx, pre_lines), output, renderer)
+            key = _read_key(input_func)
+            if key == "up":
+                selected_idx = (selected_idx - 1) % len(menu_items)
+                continue
+            if key == "down":
+                selected_idx = (selected_idx + 1) % len(menu_items)
+                continue
+            if key == "enter":
+                return interactive_model.action_at(menu_items, selected_idx, cancelled_action=cancelled_action)
+            if key in ("esc", "q"):
+                return cancelled_action
+            action = interactive_model.action_for_choice(menu_items, key, cancelled_action=None)
+            if action is not None:
+                return action
+    finally:
+        if renderer is not None:
+            renderer.clear()
+            renderer.reset()
+
+
+def _choose_index(options, title, input_func, output, pre_lines=None):
+    selected_idx = 0
+    renderer = _native_renderer(output, "menu")
+    try:
+        while True:
+            lines = interactive_render.render_menu_lines(options, title, selected_idx, pre_lines=pre_lines)
+            _paint_lines(lines, output, renderer)
+            key = _read_key(input_func)
+            if key == "up":
+                selected_idx = (selected_idx - 1) % len(options)
+                continue
+            if key == "down":
+                selected_idx = (selected_idx + 1) % len(options)
+                continue
+            if key == "enter":
+                return selected_idx
+            if key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < len(options):
+                    return idx
+            if key in ("esc", "q"):
+                return -1
+    finally:
+        if renderer is not None:
+            renderer.clear()
+            renderer.reset()
+
+
+def _profile_action_post_lines(profiles, selected_idx):
+    selected = profiles[selected_idx] if profiles and 0 <= selected_idx < len(profiles) else None
+    if not selected:
+        selected_line = f"{CLR_GRAY}Selected: none{CLR_RESET}"
+    else:
+        label = selected.get("label") or "none"
+        account = selected.get("email") or selected.get("account") or "unknown"
+        selected_line = (
+            f"{CLR_GRAY}Selected: {CLR_RED_BOLD}p{selected.get('num')}{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} "
+            f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}"
+        )
+    return ["", selected_line]
+
+
+def _profile_action_footer_lines():
+    return [
+        (
+            f"{CLR_GRAY}↑/↓ select   1-9 launch profile   "
+            f"{CLR_RED_BOLD}Enter{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} launch   "
+            f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} back{CLR_RESET}"
+        ),
+        (
+            f"{CLR_GRAY}{CLR_RED}a/+{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} login   "
+            f"{CLR_RED}l/# {CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} label   "
+            f"{CLR_RED}d/c/-{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} clear/logout   "
+            f"{CLR_RED}~{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} sync/recovery{CLR_RESET}"
+        ),
+    ]
+
+
+def _choose_profile_action(options, profiles, title, input_func, output, pre_lines=None):
+    selected_idx = 0
+    renderer = _native_renderer(output, "menu")
+    try:
+        while True:
+            lines = interactive_render.render_menu_lines(
+                options,
+                title,
+                selected_idx,
+                pre_lines=pre_lines,
+                post_lines=_profile_action_post_lines(profiles, selected_idx),
+                footer_lines=_profile_action_footer_lines(),
+            )
+            _paint_lines(lines, output, renderer)
+            key = _read_key(input_func)
+            if key == "up":
+                selected_idx = (selected_idx - 1) % len(options)
+                continue
+            if key == "down":
+                selected_idx = (selected_idx + 1) % len(options)
+                continue
+            if key == "enter":
+                return "launch", selected_idx
+            if key.isdigit() and key != "0":
+                idx = int(key) - 1
+                if 0 <= idx < len(options):
+                    return "launch", idx
+            if key in ("a", "+"):
+                return "login", selected_idx
+            if key in ("l", "#"):
+                return "label", selected_idx
+            if key in ("d", "c", "-"):
+                return "clear", selected_idx
+            if key in ("~", "m"):
+                return "credential_sync", selected_idx
+            if key in ("esc", "q", "x", "b"):
+                return "back", -1
+    finally:
+        if renderer is not None:
+            renderer.clear()
+            renderer.reset()
 
 
 def _print_result(result, output):
@@ -63,24 +256,29 @@ def _print_result(result, output):
 
 
 def _banner(output, title, subtitle=None):
-    width = max(52, len(title) + 12)
-    _print(output)
-    _print(output, f"{CLR_PANEL}{CLR_RED_BOLD}{'=' * width}{CLR_RESET}")
-    _print(output, f"{CLR_PANEL}{CLR_WHITE_BOLD}{title.center(width)}{CLR_RESET}")
-    if subtitle:
-        _print(output, f"{CLR_PANEL}{CLR_DIM}{subtitle.center(width)}{CLR_RESET}")
-    _print(output, f"{CLR_PANEL}{CLR_RED_BOLD}{'=' * width}{CLR_RESET}")
+    heading = f"{CLR_RED_BOLD}{subtitle or 'AI-MAN'}{CLR_RESET}{CLR_BG_BLACK} {CLR_WHITE_BOLD}{title}{CLR_RESET}{CLR_BG_BLACK}"
+    width = max(52, visible_len(heading))
+    term_width = 120
+    _print(output, f"{CLR_CLEAR}{_line('', width=term_width)}")
+    _print(output, _line(heading, width=term_width))
+    _print(output, _line(f"{CLR_RED_BOLD}{'-' * width}{CLR_RESET}{CLR_BG_BLACK}", width=term_width))
+    _print(output, _line("", width=term_width))
+    return 4
 
 
 def _menu_item(output, marker, label, selected=False):
     marker_text = f"[{marker}]"
-    prefix = f"{CLR_CYAN}-->{CLR_RESET} " if selected else "    "
+    prefix = f"{CLR_RED_BOLD}|{CLR_RESET}{CLR_BG_BLACK}  " if selected else "   "
     color = CLR_RED_BOLD if selected else CLR_WHITE_BOLD
-    _print(output, f"{prefix}{color}{marker_text}{CLR_RESET} {label}")
+    label_color = CLR_WHITE_BOLD if selected else CLR_GRAY
+    _print(output, _line(f"{prefix}{color}{marker_text}{CLR_RESET}{CLR_BG_BLACK} {label_color}{label}{CLR_RESET}{CLR_BG_BLACK}"))
+    return 1
 
 
 def _hint(output, text):
-    _print(output, f"{CLR_DIM}{text}{CLR_RESET}")
+    _print(output, _line(""))
+    _print(output, _line(f"{CLR_GRAY}{text}{CLR_RESET}{CLR_BG_BLACK}"))
+    return 2
 
 
 def _profile_or_default(raw, default):
@@ -130,10 +328,27 @@ def _select_profile(tool_key, input_func, output, default=None):
         return None
 
 
-def _launch_profile(tool_key, input_func, output):
-    profile_num = _select_profile(tool_key, input_func, output, default=1)
-    if profile_num is None:
-        return
+def _select_profile_from_table(tool_key, input_func, output, title):
+    action, profile_num = _select_profile_action_from_table(tool_key, input_func, output, title)
+    return profile_num if action == "launch" else None
+
+
+def _select_profile_action_from_table(tool_key, input_func, output, title):
+    result = list_profiles_operation(tool_key, include_quota=False)
+    profiles = result.payload["profiles"]
+    for status in profiles:
+        if status.get("has_token"):
+            status.setdefault("quota", {"state": "startup_pending", "limits": {}})
+        else:
+            status.setdefault("quota", {"state": "no_token", "limits": {}})
+    pre_lines, rows = interactive_render.launch_account_table(tool_key, profiles)
+    action, sel = _choose_profile_action(rows, profiles, title, input_func, output, pre_lines=pre_lines)
+    if sel == -1:
+        return action, None
+    return action, int(profiles[sel]["num"])
+
+
+def _launch_selected_profile(tool_key, profile_num, output):
     if tool_key == "agy":
         state, lines = _windows_agy_session_lines(profile_num, login=False)
         for line in lines:
@@ -148,6 +363,57 @@ def _launch_profile(tool_key, input_func, output):
 
     code = run_cli_tool(tool_key, profile_num)
     _print(output, f"{CLR_DIM}{tool_key} p{profile_num} exited with code {code}{CLR_RESET}")
+
+
+def _login_selected_profile(tool_key, profile_num, output):
+    if tool_key == "agy":
+        _state, lines = _windows_agy_session_lines(profile_num, login=True)
+        for line in lines:
+            _print(output, line)
+    from .cli import run_cli_tool
+
+    code = run_cli_tool(tool_key, profile_num, [], login=True)
+    _print(output, f"{CLR_DIM}{tool_key} login p{profile_num} exited with code {code}{CLR_RESET}")
+
+
+def _label_selected_profile(tool_key, profile_num, input_func, output):
+    label = _input("Label (empty clears): ", input_func).strip()
+    result = label_profile_operation(tool_key, f"p{profile_num}", label)
+    if _print_result(result, output):
+        _print(output, f"{CLR_GREEN}label saved for {result.payload['profile']}{CLR_RESET}")
+
+
+def _clear_selected_profile(tool_key, profile_num, input_func, output):
+    confirm = _input(f"Type yes to clear {tool_key} p{profile_num}: ", input_func).strip().lower()
+    if confirm != "yes":
+        _print(output, f"{CLR_DIM}clear cancelled{CLR_RESET}")
+        return
+    result = clear_profile_operation(tool_key, f"p{profile_num}")
+    if _print_result(result, output):
+        _print(output, f"{CLR_GREEN}cleared {result.payload['profile']}: {result.payload['cleared']}{CLR_RESET}")
+
+
+def _launch_profile(tool_key, input_func, output):
+    while True:
+        action, profile_num = _select_profile_action_from_table(
+            tool_key,
+            input_func,
+            output,
+            f"LAUNCH {TOOLS[tool_key]['name'].upper()}",
+        )
+        if action == "back":
+            return
+        if action == "launch":
+            _launch_selected_profile(tool_key, profile_num, output)
+        elif action == "login":
+            _login_selected_profile(tool_key, profile_num, output)
+        elif action == "label":
+            _label_selected_profile(tool_key, profile_num, input_func, output)
+        elif action == "clear":
+            _clear_selected_profile(tool_key, profile_num, input_func, output)
+        elif action == "credential_sync":
+            _credential_sync_menu(tool_key, input_func, output)
+        _pause(input_func, output)
 
 
 def _login_profile(tool_key, input_func, output):
@@ -213,17 +479,12 @@ def _clear_profile(tool_key, input_func, output):
 def _credential_sync_menu(tool_key, input_func, output):
     menu_items = interactive_model.CREDENTIAL_SYNC_MENU
     while True:
-        _banner(output, f"{TOOLS[tool_key]['name'].upper()} CREDENTIAL SYNC / RECOVERY")
-        for idx, item in enumerate(menu_items):
-            _menu_item(output, item.marker, item.label, selected=(idx == 0))
-        _hint(output, "Use *, <, ^, x. Legacy m/i/e shortcuts also work.")
-        choice = _choice(
-            f"{CLR_RED}>{CLR_RESET} ",
-            interactive_model.choice_keys(menu_items),
+        action = _choose_menu(
+            menu_items,
+            f"{TOOLS[tool_key]['name'].upper()} CREDENTIAL SYNC / RECOVERY",
             input_func,
             output,
         )
-        action = interactive_model.action_for_choice(menu_items, choice)
         if action == "magic_import":
             _print(output, f"{CLR_YELLOW}Magic import is available in WSL interactive mode; use manual import here.{CLR_RESET}")
         elif action == "manual_import":
@@ -238,20 +499,12 @@ def _credential_sync_menu(tool_key, input_func, output):
 def _tool_menu(tool_key, input_func, output):
     menu_items = interactive_model.WINDOWS_TOOL_MENU
     while True:
-        _banner(output, TOOLS[tool_key]["name"].upper())
-        for line in _profile_status_lines(tool_key):
-            _print(output, line)
-        _print(output, "")
-        for idx, item in enumerate(menu_items):
-            _menu_item(output, item.marker, item.label, selected=(idx == 0))
-        _hint(output, "Use symbols/shortcuts, Enter confirms typed command.")
-        choice = _choice(
-            f"{CLR_RED}>{CLR_RESET} ",
-            interactive_model.choice_keys(menu_items),
+        action = _choose_menu(
+            menu_items,
+            TOOLS[tool_key]["name"].upper(),
             input_func,
             output,
         )
-        action = interactive_model.action_for_choice(menu_items, choice)
         if action == "launch":
             _launch_profile(tool_key, input_func, output)
         elif action == "login":
@@ -273,18 +526,11 @@ def _tool_menu(tool_key, input_func, output):
 def _sync_menu(input_func, output):
     direction_items = interactive_model.SYNC_DIRECTION_MENU
     mode_items = interactive_model.SYNC_MODE_MENU
-    _banner(output, "SYNC PROFILES")
-    for idx, item in enumerate(direction_items):
-        _menu_item(output, item.marker, item.label, selected=(idx == 0))
-    direction_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(direction_items), input_func, output)
-    direction_action = interactive_model.action_for_choice(direction_items, direction_choice)
+    direction_action = _choose_menu(direction_items, "SYNC PROFILES", input_func, output)
     if direction_action == "back":
         return
     direction = direction_action
-    for item in mode_items:
-        _menu_item(output, item.marker, item.label)
-    mode_choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(mode_items), input_func, output)
-    mode = interactive_model.action_for_choice(mode_items, mode_choice)
+    mode = _choose_menu(mode_items, "SYNC MODE", input_func, output)
     dry_run = _input("Dry run? [Y/n]: ", input_func).strip().lower() not in ("n", "no")
     yes = False
     if mode == "hard" and not dry_run:
@@ -307,30 +553,43 @@ def _settings_menu(input_func, output):
         _print_result(result, output)
         return
     payload = result.payload
-    _banner(output, "AI-MAN SETTINGS")
-    _print(output, f"{CLR_WHITE_BOLD}Profile roots:{CLR_RESET}")
+    used = _banner(output, "AI-MAN SETTINGS")
+    _print(output, _line(f"{CLR_WHITE_BOLD}Profile roots:{CLR_RESET}{CLR_BG_BLACK}"))
+    used += 1
     for tool_key, root in payload["profile_roots"].items():
-        _print(output, f"  {tool_key}: {root}")
-    _print(output, f"Metadata: {payload['metadata_dir']}")
-    _print(output, f"Sync roots: wsl={payload['sync_roots']['wsl']} windows={payload['sync_roots']['windows']}")
+        _print(output, _line(f"  {tool_key}: {root}"))
+        used += 1
+    _print(output, _line(f"Metadata: {payload['metadata_dir']}"))
+    used += 1
+    _print(output, _line(f"Sync roots: wsl={payload['sync_roots']['wsl']} windows={payload['sync_roots']['windows']}"))
+    used += 1
     quota = payload["quota"]
-    _print(output, f"Quota: enabled={quota['interactive_enabled']} timeout={quota['interactive_timeout']} agy_timeout={quota['interactive_agy_timeout']}")
+    _print(output, _line(f"Quota: enabled={quota['interactive_enabled']} timeout={quota['interactive_timeout']} agy_timeout={quota['interactive_agy_timeout']}"))
+    used += 1
     if payload.get("warnings"):
-        _print(output, "Warnings:")
+        _print(output, _line("Warnings:"))
+        used += 1
         for warning in payload["warnings"]:
-            _print(output, f"  {warning}")
+            _print(output, _line(f"  {warning}"))
+            used += 1
+    for line in interactive_render.themed_screen_lines([], top_padding=0)[used:]:
+        _print(output, line)
 
 
 def run_windows_interactive_main(input_func=input, output_func=print):
     load_metadata()
+    if input_func is input and output_func is print and not _show_startup_splash(input_func, output_func):
+        _print(output_func, f"{CLR_RESET}Exiting Profile Manager. Goodbye!")
+        return EXIT_OK
     menu_items = interactive_model.ROOT_MENU
     while True:
-        _banner(output_func, "UNIFIED PROFILE MANAGER", "AI-MAN")
-        for idx, item in enumerate(menu_items):
-            _menu_item(output_func, item.marker, item.label, selected=(idx == 0))
-        _hint(output_func, "Use @, $, ^, ~, !, x. Legacy digits still work.")
-        choice = _choice(f"{CLR_RED}>{CLR_RESET} ", interactive_model.choice_keys(menu_items), input_func, output_func)
-        action = interactive_model.action_for_choice(menu_items, choice, cancelled_action="exit")
+        action = _choose_menu(
+            menu_items,
+            "UNIFIED PROFILE MANAGER",
+            input_func,
+            output_func,
+            cancelled_action="exit",
+        )
         if action == "agy":
             _tool_menu("agy", input_func, output_func)
         elif action == "codex":
@@ -344,5 +603,5 @@ def run_windows_interactive_main(input_func=input, output_func=print):
             _settings_menu(input_func, output_func)
             _pause(input_func, output_func)
         elif action == "exit":
-            _print(output_func, f"{CLR_RESET}Exiting Profile Manager.")
+            _print(output_func, f"{CLR_RESET}Exiting Profile Manager. Goodbye!")
             return EXIT_OK

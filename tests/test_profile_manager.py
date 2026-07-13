@@ -665,7 +665,7 @@ def test_interactive_quota_progress_line_tracks_active_refresh():
         "pending": 0,
         "active": 2,
     }
-    assert "Quota refresh |" in line
+    assert "Quota refresh:" in line
     assert "1/4 25%" in line
     assert "running 1, queued 1, failed 1" in line
 
@@ -2893,14 +2893,11 @@ def test_launch_account_releases_theme_before_child_cli(monkeypatch, tmp_path):
 
     paths.refresh_from_env()
     output = io.StringIO()
-    selections = iter([0, -1])
+    selections = iter([("launch", 1), ("back", None)])
     captured = {}
 
     monkeypatch.setattr(interactive, "load_metadata", lambda: {})
-    monkeypatch.setattr(interactive, "get_display_profiles", lambda tool: [1])
-    monkeypatch.setattr(interactive, "status_with_auto_quota", lambda tool, profile, metadata: {"profile": profile})
-    monkeypatch.setattr(interactive, "launch_account_table", lambda tool, statuses: ([], ["p1"]))
-    monkeypatch.setattr(interactive, "run_menu", lambda options, title, pre_lines=None: next(selections))
+    monkeypatch.setattr(interactive, "select_launch_action", lambda tool, metadata: next(selections))
     monkeypatch.setattr(interactive, "status_payload", lambda tool, profile, metadata: {"has_token": True})
     monkeypatch.setattr(interactive, "invalidate_quota_cache", lambda tool, profile: None)
 
@@ -2944,11 +2941,11 @@ def test_tool_manager_keeps_credential_actions_in_submenu(monkeypatch):
     rendered = "\n".join(options)
     assert title == "ANTIGRAVITY CLI (AGY)"
     assert options == interactive_model.options(interactive_model.TOOL_MENU)
-    assert "[>] Launch Account" in rendered
-    assert "[+] Login / Re-authenticate" in rendered
-    assert "[i] Detailed Account Status" in rendered
-    assert "[#] Set Profile Label" in rendered
-    assert "[~] Credential Sync / Recovery" in rendered
+    assert "[1] Launch Account" in rendered
+    assert "[2] Login / Re-authenticate" in rendered
+    assert "[3] Detailed Account Status" in rendered
+    assert "[4] Set Profile Label" in rendered
+    assert "[5] Credential Sync / Recovery" in rendered
     assert "Magic Import from Windows" not in rendered
     assert "Import Windows Credential" not in rendered
     assert "Export Credential to Windows" not in rendered
@@ -2980,9 +2977,9 @@ def test_credential_sync_menu_routes_windows_credential_actions(monkeypatch):
     rendered = "\n".join(options)
     assert title == "ANTIGRAVITY CLI (AGY) CREDENTIAL SYNC / RECOVERY"
     assert options == interactive_model.options(interactive_model.CREDENTIAL_SYNC_MENU)
-    assert "[*] Magic Import from Windows" in rendered
-    assert "[<] Import Windows Credential (Manual)" in rendered
-    assert "[^] Export Credential to Windows" in rendered
+    assert "[1] Magic Import from Windows" in rendered
+    assert "[2] Import Windows Credential (Manual)" in rendered
+    assert "[3] Export Credential to Windows" in rendered
     assert shortcuts["*"] == 0
     assert shortcuts["<"] == 1
     assert shortcuts["^"] == 2
@@ -3004,10 +3001,10 @@ def test_cross_platform_interactive_menus_share_action_model():
         item.action for item in interactive_model.WINDOWS_TOOL_MENU
     ]
     assert interactive_model.options(interactive_model.CREDENTIAL_SYNC_MENU) == [
-        "[*] Magic Import from Windows",
-        "[<] Import Windows Credential (Manual)",
-        "[^] Export Credential to Windows",
-        "[x] Back",
+        "[1] Magic Import from Windows",
+        "[2] Import Windows Credential (Manual)",
+        "[3] Export Credential to Windows",
+        "[0] Back",
     ]
     assert interactive_model.shortcuts(interactive_model.TOOL_MENU, include_digits=False)["~"] == 4
     assert interactive_model.action_for_choice(interactive_model.ROOT_MENU, "@") == "agy"
@@ -3019,52 +3016,52 @@ def test_windows_cross_platform_ui_contract_snapshot_is_stable():
     snapshot = interactive_model.contract_snapshot()
 
     assert [(item["marker"], item["action"], item["label"]) for item in snapshot["root"]] == [
-        ("@", "agy", "Antigravity CLI (agy)"),
-        ("$", "codex", "OpenAI Codex CLI"),
-        ("^", "claude", "Anthropic Claude CLI"),
-        ("~", "sync", "Sync Profiles (WSL <-> Windows)"),
-        ("!", "settings", "Settings"),
-        ("x", "exit", "Exit"),
+        ("1", "agy", "Antigravity CLI (agy)"),
+        ("2", "codex", "OpenAI Codex CLI"),
+        ("3", "claude", "Anthropic Claude CLI"),
+        ("4", "sync", "Sync Profiles (WSL <-> Windows)"),
+        ("5", "settings", "Settings"),
+        ("0", "exit", "Exit"),
     ]
     assert [(item["marker"], item["action"]) for item in snapshot["tool"]] == [
-        (">", "launch"),
-        ("+", "login"),
-        ("i", "status"),
-        ("#", "label"),
-        ("~", "credential_sync"),
-        ("-", "clear"),
-        ("x", "back"),
+        ("1", "launch"),
+        ("2", "login"),
+        ("3", "status"),
+        ("4", "label"),
+        ("5", "credential_sync"),
+        ("6", "clear"),
+        ("0", "back"),
     ]
     assert snapshot["windows_tool"][:-1] == snapshot["tool"][:-1]
-    assert snapshot["windows_tool"][-1]["option"] == "[x] Back"
+    assert snapshot["windows_tool"][-1]["option"] == "[0] Back"
     assert snapshot["credential_sync"] == [
         {
             "action": "magic_import",
-            "marker": "*",
+            "marker": "1",
             "label": "Magic Import from Windows",
-            "aliases": ["m"],
-            "option": "[*] Magic Import from Windows",
+            "aliases": ["*", "m"],
+            "option": "[1] Magic Import from Windows",
         },
         {
             "action": "manual_import",
-            "marker": "<",
+            "marker": "2",
             "label": "Import Windows Credential (Manual)",
-            "aliases": ["i"],
-            "option": "[<] Import Windows Credential (Manual)",
+            "aliases": ["<", "i"],
+            "option": "[2] Import Windows Credential (Manual)",
         },
         {
             "action": "export",
-            "marker": "^",
+            "marker": "3",
             "label": "Export Credential to Windows",
-            "aliases": ["e"],
-            "option": "[^] Export Credential to Windows",
+            "aliases": ["^", "e"],
+            "option": "[3] Export Credential to Windows",
         },
         {
             "action": "back",
-            "marker": "x",
+            "marker": "0",
             "label": "Back",
-            "aliases": ["b"],
-            "option": "[x] Back",
+            "aliases": ["x", "b"],
+            "option": "[0] Back",
         },
     ]
     assert "1" not in snapshot["shortcuts_without_legacy_digits"]["root"]
@@ -3117,7 +3114,7 @@ def test_windows_cross_platform_ui_action_routes_are_complete():
         assert interactive_model.action_for_choice(interactive_model.CREDENTIAL_SYNC_MENU, choice) == action
 
 
-def test_windows_interactive_symbol_first_menu_snapshot(monkeypatch, tmp_path):
+def test_windows_interactive_digit_first_menu_snapshot(monkeypatch, tmp_path):
     load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.windows_interactive as windows_interactive
 
@@ -3133,15 +3130,69 @@ def test_windows_interactive_symbol_first_menu_snapshot(monkeypatch, tmp_path):
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", rendered)
     assert rc == 0
     assert "UNIFIED PROFILE MANAGER" in plain
-    assert "[@] Antigravity CLI (agy)" in plain
-    assert "[$] OpenAI Codex CLI" in plain
-    assert "[^] Anthropic Claude CLI" in plain
-    assert "[~] Sync Profiles (WSL <-> Windows)" in plain
-    assert "[>] Launch Account" in plain
-    assert "[+] Login / Re-authenticate" in plain
-    assert "[~] Credential Sync / Recovery" in plain
-    assert "[*] Magic Import from Windows" not in plain
+    assert "[1] Antigravity CLI (agy)" in plain
+    assert "[2] OpenAI Codex CLI" in plain
+    assert "[3] Anthropic Claude CLI" in plain
+    assert "[4] Sync Profiles (WSL <-> Windows)" in plain
+    assert "[1] Launch Account" in plain
+    assert "[2] Login / Re-authenticate" in plain
+    assert "[5] Credential Sync / Recovery" in plain
+    assert "[1] Magic Import from Windows" not in plain
     assert "Import Windows Credential (Manual)" not in plain
+
+
+def test_windows_interactive_keyboard_arrows_select_menu_item(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    prompts = iter(["down", "enter", "0", "0"])
+    output = []
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(output))
+    assert rc == 0
+    assert "OPENAI CODEX CLI" in plain
+    assert "[2] OpenAI Codex CLI" in plain
+
+
+def test_windows_interactive_reads_native_console_keys(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import types
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    keys = iter(["\xe0", "P", "\r", "\x1b"])
+    fake_msvcrt = types.SimpleNamespace(getwch=lambda: next(keys))
+
+    monkeypatch.setattr(windows_interactive.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+    assert windows_interactive._read_key(input) == "down"
+    assert windows_interactive._read_key(input) == "enter"
+    assert windows_interactive._read_key(input) == "esc"
+
+
+def test_windows_and_wsl_menus_share_exact_render_lines(monkeypatch, tmp_path):
+    load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.interactive_model as interactive_model
+    import cli_profile_manager.interactive as interactive
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    windows_lines = windows_interactive._menu_lines(
+        interactive_model.ROOT_MENU,
+        "UNIFIED PROFILE MANAGER",
+        selected_idx=2,
+    )
+    wsl_lines = interactive.render_menu_lines(
+        interactive_model.options(interactive_model.ROOT_MENU),
+        "UNIFIED PROFILE MANAGER",
+        selected_idx=2,
+    )
+
+    assert windows_lines == wsl_lines
 
 
 def test_show_startup_splash_waits_for_enter(monkeypatch):
@@ -3235,6 +3286,88 @@ def test_launch_account_table_renders_agy_quota_columns():
     assert "100%" in rendered
     assert "work" in rendered
     assert "No Token" in rendered
+
+
+def test_launch_profile_selector_auto_refreshes_quota_on_timeout(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    painted = []
+    keys = iter([None, "enter"])
+    scheduled = []
+
+    class FakeRenderer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def paint(self, lines):
+            painted.append("\n".join(lines))
+
+        def clear(self):
+            pass
+
+        def reset(self):
+            pass
+
+    monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
+    monkeypatch.setattr(interactive, "get_display_profiles", lambda tool: [1])
+    monkeypatch.setattr(interactive, "status_with_auto_quota", lambda tool, profile, metadata: {
+        "num": profile,
+        "email": "user@example.com",
+        "has_token": True,
+        "label": "",
+        "quota": {"state": "loading", "job_state": "running", "limits": {}},
+    })
+    monkeypatch.setattr(interactive, "get_key", lambda timeout=None: next(keys))
+    monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool: 0)
+    monkeypatch.setattr(interactive, "schedule_due_quota_refresh", lambda tool: scheduled.append(tool) or 1)
+
+    assert interactive.select_launch_profile("agy", {}) == 1
+
+    assert scheduled == ["agy"]
+    assert any("Quota refresh" in interactive.ANSI_RE.sub("", frame) for frame in painted)
+    assert any("Selected: p1" in interactive.ANSI_RE.sub("", frame) for frame in painted)
+
+
+def test_launch_profile_selector_exposes_primary_profile_actions(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    rendered = "\n".join(interactive.launch_account_post_lines("agy", []) + interactive.launch_account_footer_lines())
+    plain = interactive.ANSI_RE.sub("", rendered)
+
+    assert "Selected:" in plain
+    assert "add/login" in plain
+    assert "label" in plain
+    assert "clear/logout" in plain
+    assert "sync/recovery" in plain
+
+
+def test_launch_account_routes_inline_profile_actions(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    actions = iter([
+        ("login", None),
+        ("label", 2),
+        ("clear", 3),
+        ("credential_sync", None),
+        ("back", None),
+    ])
+    calls = []
+
+    monkeypatch.setattr(interactive, "load_metadata", lambda: {})
+    monkeypatch.setattr(interactive, "select_launch_action", lambda tool, metadata: next(actions))
+    monkeypatch.setattr(interactive, "add_account", lambda tool: calls.append(("login", tool)))
+    monkeypatch.setattr(interactive, "set_label_for_profile", lambda tool, profile, metadata=None: calls.append(("label", tool, profile)))
+    monkeypatch.setattr(interactive, "clear_selected_profile", lambda tool, profile: calls.append(("clear", tool, profile)))
+    monkeypatch.setattr(interactive, "credential_sync_menu", lambda tool: calls.append(("credential_sync", tool)))
+
+    interactive.launch_account("agy")
+
+    assert calls == [
+        ("login", "agy"),
+        ("label", "agy", 2),
+        ("clear", "agy", 3),
+        ("credential_sync", "agy"),
+    ]
 
 
 @pytest.mark.parametrize("refresh_key", ["r", "R", "ctrl+r", "к", "К"])
@@ -4383,7 +4516,7 @@ def test_windows_interactive_main_renders_selector_without_unix_interactive(monk
     assert rc == 0
     rendered = "\n".join(output)
     assert "UNIFIED PROFILE MANAGER" in rendered
-    assert "[@]" in rendered
+    assert "[1]" in rendered
     assert "Antigravity CLI (agy)" in rendered
     assert "Exiting Profile Manager." in rendered
     assert "cli_profile_manager.interactive" not in sys.modules
@@ -4396,7 +4529,7 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
 
     write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "r"}, "win@example.com"))
     captured = {}
-    prompts = iter(["@", ">", "1", "", "x", "x"])
+    prompts = iter(["@", ">", "1", "", "x", "", "x", "x"])
     output = []
 
     class FakeStatus:
@@ -4427,6 +4560,42 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
     assert "Native Windows AGY uses one shared Credential Manager slot" in "\n".join(output)
 
 
+def test_windows_interactive_launch_uses_profile_table_not_prompt(monkeypatch, tmp_path):
+    pm = load_pm(monkeypatch, tmp_path)
+    import cli_profile_manager.cli as cli
+    import cli_profile_manager.windows_interactive as windows_interactive
+
+    write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "r"}, "win@example.com"))
+    prompts = iter(["@", ">", "enter", "", "x", "", "x", "x"])
+    output = []
+
+    class FakeStatus:
+        payload = {
+            "has_token": True,
+            "token_state": "valid",
+        }
+
+    monkeypatch.setattr(
+        windows_interactive,
+        "profile_status_operation",
+        lambda tool, profile: FakeStatus(),
+    )
+    monkeypatch.setattr(cli, "run_cli_tool", lambda tool, profile, extra_args=None, login=False: 0)
+
+    rc = windows_interactive.run_windows_interactive_main(
+        input_func=lambda prompt="": next(prompts),
+        output_func=output.append,
+    )
+
+    rendered = "\n".join(output)
+    plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", rendered)
+    assert rc == 0
+    assert "LAUNCH ANTIGRAVITY CLI (AGY)" in plain
+    assert "Profile Account" in plain
+    assert "p1" in plain
+    assert "Profile [p1]:" not in plain
+
+
 def test_windows_interactive_tool_menu_keeps_credentials_in_submenu(monkeypatch, tmp_path):
     load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.windows_interactive as windows_interactive
@@ -4441,7 +4610,7 @@ def test_windows_interactive_tool_menu_keeps_credentials_in_submenu(monkeypatch,
 
     rendered = "\n".join(output)
     assert rc == 0
-    assert "[~]" in rendered
+    assert "[5]" in rendered
     assert "Credential Sync / Recovery" in rendered
     assert "Import Windows Credential" not in rendered
     assert "Export Credential to Windows" not in rendered
@@ -4465,9 +4634,9 @@ def test_windows_interactive_credential_sync_submenu_routes_manual_actions(monke
 
     rendered = "\n".join(output)
     assert calls == [("import", "agy")]
-    assert "[*]" in rendered
-    assert "[<]" in rendered
-    assert "[^]" in rendered
+    assert "[1]" in rendered
+    assert "[2]" in rendered
+    assert "[3]" in rendered
 
 
 def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path):
@@ -4483,6 +4652,8 @@ def test_windows_agy_helper_source_contains_credential_manager_actions(tmp_path)
     assert "Invoke-WithAgyCredentialSlotLock" in text
     assert "true parallel isolation" in text
     assert '"Login" { Invoke-AgyProfile $Profile $true }' in text
+    assert "$profileHome = Get-ProfileHome $N" in text
+    assert "$home = Get-ProfileHome $N" not in text
 
 
 def test_windows_agy_session_state_classifies_backup_and_recovery(monkeypatch, tmp_path):
