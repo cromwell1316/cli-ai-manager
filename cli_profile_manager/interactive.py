@@ -2741,11 +2741,11 @@ def run_interactive_main():
             sel = run_menu(options, "UNIFIED PROFILE MANAGER", shortcuts=shortcuts)
             action = interactive_model.action_at(menu_items, sel, cancelled_action="exit")
             if action == "agy":
-                run_tool_manager("agy")
+                launch_account("agy")
             elif action == "codex":
-                run_tool_manager("codex")
+                launch_account("codex")
             elif action == "claude":
-                run_tool_manager("claude")
+                launch_account("claude")
             elif action == "sync":
                 sync_profiles()
             elif action == "settings":

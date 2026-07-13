@@ -593,11 +593,11 @@ def run_windows_interactive_main(input_func=input, output_func=print):
             cancelled_action="exit",
         )
         if action == "agy":
-            _tool_menu("agy", input_func, output_func)
+            _launch_profile("agy", input_func, output_func)
         elif action == "codex":
-            _tool_menu("codex", input_func, output_func)
+            _launch_profile("codex", input_func, output_func)
         elif action == "claude":
-            _tool_menu("claude", input_func, output_func)
+            _launch_profile("claude", input_func, output_func)
         elif action == "sync":
             _sync_menu(input_func, output_func)
             _pause(input_func, output_func)

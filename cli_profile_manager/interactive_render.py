@@ -333,6 +333,7 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
         total_width = sum(widths.values()) + len(widths) - 1
 
     prefix = "      "
+    row_prefix = "    "
     if isinstance(quota_header, tuple):
         quota_group_header, quota_column_header = quota_header
         headers = [
@@ -387,6 +388,7 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
         profile_text = status_profile_text(status)
         label = f"{CLR_YELLOW}{label_text}{CLR_RESET}" if label_text else ""
         rows.append(
+            f"{row_prefix}"
             f"{visible_fit(profile_text, widths['profile'])} "
             f"{visible_fit(account, widths['account'])} "
             f"{visible_fit(state_text, widths['status'])} "

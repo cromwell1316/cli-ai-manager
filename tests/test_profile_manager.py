@@ -2840,6 +2840,28 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     assert "Exiting Profile Manager. Goodbye!" in rendered
 
 
+def test_interactive_main_opens_launch_screen_for_root_tools(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    calls = []
+    selections = iter([0, 5])
+
+    monkeypatch.setattr(interactive, "INTERACTIVE_QUOTA_SCHEDULER", None)
+    monkeypatch.setattr(interactive, "INTERACTIVE_SHUTTING_DOWN", False)
+    monkeypatch.setattr(interactive, "install_interactive_signal_handlers", lambda: {})
+    monkeypatch.setattr(interactive, "restore_interactive_signal_handlers", lambda handlers: None)
+    monkeypatch.setattr(interactive, "close_persistent_quota_sessions", lambda: None)
+    monkeypatch.setattr(interactive, "show_startup_splash", lambda: None)
+    monkeypatch.setattr(interactive, "run_menu", lambda *args, **kwargs: next(selections))
+    monkeypatch.setattr(interactive, "launch_account", lambda tool: calls.append(("launch", tool)))
+    monkeypatch.setattr(interactive, "run_tool_manager", lambda tool: calls.append(("tool_menu", tool)))
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert interactive.run_interactive_main() == interactive.EXIT_OK
+
+    assert calls == [("launch", "agy")]
+
+
 def test_interactive_main_exit_from_splash_resets_shell_theme(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
@@ -3161,9 +3183,9 @@ def test_windows_interactive_digit_first_menu_snapshot(monkeypatch, tmp_path):
     assert "[2] OpenAI Codex CLI" in plain
     assert "[3] Anthropic Claude CLI" in plain
     assert "[4] Sync Profiles (WSL <-> Windows)" in plain
-    assert "[1] Launch Account" in plain
-    assert "[2] Login / Re-authenticate" in plain
-    assert "[5] Credential Sync / Recovery" in plain
+    assert "LAUNCH ANTIGRAVITY CLI (AGY)" in plain
+    assert "[1] Launch Account" not in plain
+    assert "[2] Login / Re-authenticate" not in plain
     assert "[1] Magic Import from Windows" not in plain
     assert "Import Windows Credential (Manual)" not in plain
 
@@ -3172,7 +3194,7 @@ def test_windows_interactive_keyboard_arrows_select_menu_item(monkeypatch, tmp_p
     load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.windows_interactive as windows_interactive
 
-    prompts = iter(["down", "enter", "0", "0"])
+    prompts = iter(["down", "enter", "x", "x"])
     output = []
 
     rc = windows_interactive.run_windows_interactive_main(
@@ -3182,7 +3204,7 @@ def test_windows_interactive_keyboard_arrows_select_menu_item(monkeypatch, tmp_p
 
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(output))
     assert rc == 0
-    assert "OPENAI CODEX CLI" in plain
+    assert "LAUNCH OPENAI CODEX CLI" in plain
     assert "[2] OpenAI Codex CLI" in plain
 
 
@@ -3313,6 +3335,37 @@ def test_launch_account_table_renders_agy_quota_columns():
     assert "100%" in rendered
     assert "work" in rendered
     assert "No Token" in rendered
+
+
+def test_launch_account_table_rows_align_with_headers_after_selection_marker():
+    import cli_profile_manager.interactive as interactive
+
+    statuses = [
+        {
+            "num": 1,
+            "email": "user@example.com",
+            "has_token": True,
+            "label": "work",
+            "quota": {"state": "available", "limits": {}},
+        },
+        {
+            "num": 2,
+            "email": "(no login)",
+            "has_token": False,
+            "label": "",
+            "quota": {"state": "no_token", "limits": {}},
+        },
+    ]
+
+    pre_lines, rows = interactive.launch_account_table("agy", statuses)
+    lines = interactive.render_menu_lines(rows, "LAUNCH AGY", selected_idx=0, pre_lines=pre_lines, footer_lines=[])
+    plain_lines = [interactive.ANSI_RE.sub("", line) for line in lines]
+    header = next(line for line in plain_lines if "Profile" in line and "Account" in line)
+    selected = next(line for line in plain_lines if "p1" in line and "user@example.com" in line)
+    unselected = next(line for line in plain_lines if "p2" in line and "(no login)" in line)
+
+    assert selected.index("p1") == header.index("Profile")
+    assert unselected.index("p2") == header.index("Profile")
 
 
 def test_launch_profile_selector_auto_refreshes_quota_on_timeout(monkeypatch):
@@ -4572,7 +4625,7 @@ def test_windows_interactive_launch_workflow_uses_shared_launcher(monkeypatch, t
 
     write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "r"}, "win@example.com"))
     captured = {}
-    prompts = iter(["@", ">", "1", "", "x", "", "x", "x"])
+    prompts = iter(["@", "1", "", "x", "x"])
     output = []
 
     class FakeStatus:
@@ -4609,7 +4662,7 @@ def test_windows_interactive_launch_uses_profile_table_not_prompt(monkeypatch, t
     import cli_profile_manager.windows_interactive as windows_interactive
 
     write_json(Path(pm.agy_windows_credential_path(1)), pm.build_windows_agy_credential({"refresh_token": "r"}, "win@example.com"))
-    prompts = iter(["@", ">", "enter", "", "x", "", "x", "x"])
+    prompts = iter(["@", "enter", "", "x", "x"])
     output = []
 
     class FakeStatus:
@@ -4643,16 +4696,16 @@ def test_windows_interactive_tool_menu_keeps_credentials_in_submenu(monkeypatch,
     load_pm(monkeypatch, tmp_path)
     import cli_profile_manager.windows_interactive as windows_interactive
 
-    prompts = iter(["@", "x", "x"])
+    prompts = iter(["x"])
     output = []
 
-    rc = windows_interactive.run_windows_interactive_main(
+    windows_interactive._tool_menu(
+        "agy",
         input_func=lambda prompt="": next(prompts),
-        output_func=output.append,
+        output=output.append,
     )
 
     rendered = "\n".join(output)
-    assert rc == 0
     assert "[5]" in rendered
     assert "Credential Sync / Recovery" in rendered
     assert "Import Windows Credential" not in rendered
