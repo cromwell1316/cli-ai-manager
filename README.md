@@ -337,7 +337,7 @@ Launching `ai-man` opens the interactive selector:
 On WSL/Linux, the selector supports keyboard navigation:
 
 ```text
-digits  select visible item
+1-9     launch profile on the launch screen
 arrows  move selection
 Enter   confirm or launch
 a       add/login
@@ -345,7 +345,7 @@ i       import
 e       export
 l       label
 s       status
-c       clear
+d       clear/logout
 q/Esc   back or exit
 ```
 

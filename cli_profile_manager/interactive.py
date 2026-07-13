@@ -1418,6 +1418,22 @@ def quota_refresh_countdown(tool_key=None, now=None):
     return format_countdown(remaining)
 
 
+def quota_refresh_hint_line(tool_key=None, now=None, prefix=""):
+    countdown = quota_refresh_countdown(tool_key, now)
+    action_hint = f"{prefix}1-9 launch profile" if prefix else "1-9 launch profile"
+    if countdown == "updating now":
+        return (
+            f"\033[90m{action_hint}   Quota refresh: "
+            f"{CLR_RED}updating now{CLR_RESET}"
+        )
+    if countdown == "pending":
+        return f"\033[90m{action_hint}{CLR_RESET}"
+    return (
+        f"\033[90m{action_hint}   Next auto refresh: "
+        f"{CLR_RED}{countdown}{CLR_RESET}"
+    )
+
+
 def quota_runtime_snapshot(tool_key=None):
     now = time.time()
     with INTERACTIVE_QUOTA_LOCK:
@@ -1554,7 +1570,7 @@ def themed_line(text="", width=None):
     return interactive_render.themed_line(text, width)
 
 
-def themed_screen_lines(lines, width=None, height=None, top_padding=1, left_padding=None):
+def themed_screen_lines(lines, width=None, height=None, top_padding=2, left_padding=None):
     return interactive_render.themed_screen_lines(lines, width, height, top_padding, left_padding)
 
 
@@ -1745,8 +1761,12 @@ def render_status_screen_frame(tool_key, status_message=None, base_statuses=None
         lines.append(f"{CLR_BOLD}{CLR_YELLOW}Live logs{CLR_RESET}")
         for log_line in log_lines:
             lines.append(f"  {CLR_WHITE}{log_line}{CLR_RESET}")
+    if countdown == "updating now":
+        quota_hint = f"Quota refresh: {CLR_RED}updating now{CLR_RESET}{CLR_BG_BLACK}\033[90m. "
+    else:
+        quota_hint = f"Next auto refresh: {CLR_RED}{countdown}{CLR_RESET}{CLR_BG_BLACK}\033[90m. "
     lines.append(
-        f"\033[90mNext auto refresh: {CLR_RED}{countdown}{CLR_RESET}{CLR_BG_BLACK}\033[90m. "
+        f"\033[90m{quota_hint}"
         f"{CLR_BRIGHT_RED}Enter/q{CLR_RESET}{CLR_BG_BLACK}\033[90m return, "
         f"{CLR_RED}r{CLR_RESET}{CLR_BG_BLACK}\033[90m refresh quota now{CLR_RESET}"
     )
@@ -1942,7 +1962,8 @@ def launch_selected_profile_line(status):
     profile = f"p{status.get('num')}"
     return (
         f"\033[90mSelected: {CLR_BRIGHT_RED}{profile}{CLR_RESET}{CLR_BG_BLACK}\033[90m "
-        f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}"
+        f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}{CLR_BG_BLACK}\033[90m | "
+        f"{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m launch{CLR_RESET}"
     )
 
 
@@ -1958,24 +1979,22 @@ def launch_account_post_lines(tool_key, statuses, selected_idx=0, status_message
     if progress_line:
         lines.append(progress_line)
     else:
-        countdown = quota_refresh_countdown(tool_key, now)
-        if countdown != "pending":
-            lines.append(f"\033[90mQuota refresh: next in {CLR_RED}{countdown}{CLR_RESET}")
+        lines.append(quota_refresh_hint_line(tool_key, now))
     return lines
 
 
 def launch_account_footer_lines():
     return [
         (
-            f"\033[90m↑/↓ select   1-9 launch profile   "
+            f"\033[90m↑/↓ select   "
             f"{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_BG_BLACK}\033[90m launch   "
             f"{CLR_RED}r{CLR_RESET}{CLR_BG_BLACK}\033[90m refresh   "
-            f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}"
+            f"{CLR_RED}Esc{CLR_RESET}{CLR_BG_BLACK}\033[90m back{CLR_RESET}"
         ),
         (
-            f"\033[90m{CLR_RED}a/+{CLR_RESET}{CLR_BG_BLACK}\033[90m add/login   "
-            f"{CLR_RED}l/# {CLR_RESET}{CLR_BG_BLACK}\033[90m label   "
-            f"{CLR_DARK_RED}d/c/-{CLR_RESET}{CLR_BG_BLACK}\033[90m clear/logout   "
+            f"\033[90m{CLR_RED}a{CLR_RESET}{CLR_BG_BLACK}\033[90m add/login   "
+            f"{CLR_RED}l{CLR_RESET}{CLR_BG_BLACK}\033[90m label   "
+            f"{CLR_DARK_RED}d{CLR_RESET}{CLR_BG_BLACK}\033[90m clear/logout   "
             f"{CLR_RED}~{CLR_RESET}{CLR_BG_BLACK}\033[90m sync/recovery{CLR_RESET}"
         ),
     ]
@@ -2712,6 +2731,7 @@ def run_interactive_main():
     configure_interactive_logging()
     INTERACTIVE_SHUTTING_DOWN = False
     previous_handlers = install_interactive_signal_handlers()
+    shell_cleared = False
     try:
         show_startup_splash()
         while True:
@@ -2732,9 +2752,12 @@ def run_interactive_main():
                 settings_menu()
             elif action == "exit":
                 clear_screen_for_shell()
+                shell_cleared = True
                 print("Exiting Profile Manager. Goodbye!")
                 break
         return EXIT_OK
     finally:
+        if not shell_cleared:
+            clear_screen_for_shell()
         shutdown_interactive_runtime(wait=True)
         restore_interactive_signal_handlers(previous_handlers)

@@ -30,6 +30,7 @@ CLR_CYAN = "\033[36m"
 CLR_GREEN = "\033[32m"
 CLR_YELLOW = "\033[33m"
 CLR_BG_BLACK = interactive_render.CLR_BG_BLACK
+CLR_DARK_RED = interactive_render.CLR_DARK_RED
 CLR_GRAY = "\033[90m"
 CLR_CLEAR = "\033[H\033[2J\033[3J"
 
@@ -180,22 +181,23 @@ def _profile_action_post_lines(profiles, selected_idx):
         account = selected.get("email") or selected.get("account") or "unknown"
         selected_line = (
             f"{CLR_GRAY}Selected: {CLR_RED_BOLD}p{selected.get('num')}{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} "
-            f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}"
+            f"{account} | label: {CLR_YELLOW}{label}{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} | "
+            f"{CLR_RED_BOLD}Enter{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} launch{CLR_RESET}"
         )
-    return ["", selected_line]
+    return ["", selected_line, f"{CLR_GRAY}1-9 launch profile{CLR_RESET}"]
 
 
 def _profile_action_footer_lines():
     return [
         (
-            f"{CLR_GRAY}↑/↓ select   1-9 launch profile   "
+            f"{CLR_GRAY}↑/↓ select   "
             f"{CLR_RED_BOLD}Enter{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} launch   "
-            f"{CLR_RED}Esc/q{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} back{CLR_RESET}"
+            f"{CLR_RED}Esc{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} back{CLR_RESET}"
         ),
         (
-            f"{CLR_GRAY}{CLR_RED}a/+{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} login   "
-            f"{CLR_RED}l/# {CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} label   "
-            f"{CLR_RED}d/c/-{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} clear/logout   "
+            f"{CLR_GRAY}{CLR_RED}a{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} add/login   "
+            f"{CLR_RED}l{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} label   "
+            f"{CLR_DARK_RED}d{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} clear/logout   "
             f"{CLR_RED}~{CLR_RESET}{CLR_BG_BLACK}{CLR_GRAY} sync/recovery{CLR_RESET}"
         ),
     ]

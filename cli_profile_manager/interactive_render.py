@@ -55,7 +55,7 @@ def themed_line(text="", width=None):
     return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
 
 
-def themed_screen_lines(lines, width=None, height=None, top_padding=1, left_padding=None):
+def themed_screen_lines(lines, width=None, height=None, top_padding=2, left_padding=None):
     term_width, term_height = terminal_size()
     width = max(1, width or term_width)
     height = max(1, height or term_height)

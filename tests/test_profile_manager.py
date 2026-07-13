@@ -2645,6 +2645,9 @@ def test_interactive_menu_lines_mark_selection_and_fit_footer():
     lines = interactive.render_menu_lines(["First", "Second"], "MENU", selected_idx=1)
     rendered = "\n".join(interactive.ANSI_RE.sub("", line) for line in lines)
 
+    assert interactive.ANSI_RE.sub("", lines[0]).strip() == ""
+    assert interactive.ANSI_RE.sub("", lines[1]).strip() == ""
+    assert "AI-MAN" in interactive.ANSI_RE.sub("", lines[2])
     assert "MENU" in rendered
     assert "▌ Second" in rendered
     assert "First" in rendered
@@ -2835,6 +2838,30 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     assert rendered.startswith("\033[?25h\033[0m\033[H\033[2J\033[3J")
     assert interactive.CLR_BG_BLACK not in rendered
     assert "Exiting Profile Manager. Goodbye!" in rendered
+
+
+def test_interactive_main_exit_from_splash_resets_shell_theme(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    closed = []
+    restored = []
+
+    monkeypatch.setattr(interactive, "INTERACTIVE_QUOTA_SCHEDULER", None)
+    monkeypatch.setattr(interactive, "INTERACTIVE_SHUTTING_DOWN", False)
+    monkeypatch.setattr(interactive, "install_interactive_signal_handlers", lambda: {"handlers": True})
+    monkeypatch.setattr(interactive, "restore_interactive_signal_handlers", lambda handlers: restored.append(handlers))
+    monkeypatch.setattr(interactive, "close_persistent_quota_sessions", lambda: closed.append(True))
+    monkeypatch.setattr(interactive, "show_startup_splash", lambda: (_ for _ in ()).throw(SystemExit(0)))
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output), pytest.raises(SystemExit):
+        interactive.run_interactive_main()
+
+    rendered = output.getvalue()
+    assert rendered.startswith("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    assert interactive.CLR_BG_BLACK not in rendered
+    assert closed == [True]
+    assert restored == [{"handlers": True}]
 
 
 def test_pilot_splash_lines_brand_startup():
@@ -3335,10 +3362,26 @@ def test_launch_profile_selector_exposes_primary_profile_actions(monkeypatch):
     plain = interactive.ANSI_RE.sub("", rendered)
 
     assert "Selected:" in plain
+    assert "Enter launch" in plain
+    assert "1-9 launch profile" in plain
     assert "add/login" in plain
     assert "label" in plain
     assert "clear/logout" in plain
     assert "sync/recovery" in plain
+    assert "digits/shortcuts" not in plain
+    assert "d/c/-" not in plain
+
+
+def test_launch_quota_hint_uses_updating_copy(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setattr(interactive, "quota_refresh_countdown", lambda tool, now=None: "updating now")
+
+    plain = interactive.ANSI_RE.sub("", interactive.quota_refresh_hint_line("agy"))
+
+    assert "Quota refresh: updating now" in plain
+    assert "Next auto refresh" not in plain
+    assert "1-9 launch profile" in plain
 
 
 def test_launch_account_routes_inline_profile_actions(monkeypatch):
