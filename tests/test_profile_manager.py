@@ -3533,6 +3533,39 @@ def test_launch_profile_selector_exposes_primary_profile_actions(monkeypatch):
     assert "d/c/-" not in plain
 
 
+def test_launch_account_footer_is_pinned_to_bottom(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setattr(interactive.interactive_render, "terminal_size", lambda: (120, 20))
+
+    statuses = [
+        {
+            "num": 1,
+            "email": "user@example.com",
+            "has_token": True,
+            "label": "work",
+            "quota": {"state": "available", "limits": {}},
+        },
+    ]
+    pre_lines, rows = interactive.launch_account_table("agy", statuses)
+    lines = interactive.render_menu_lines(
+        rows,
+        "LAUNCH AGY",
+        selected_idx=0,
+        pre_lines=pre_lines,
+        post_lines=interactive.launch_account_post_lines("agy", statuses, 0),
+        footer_lines=interactive.launch_account_footer_lines(),
+    )
+    plain = [interactive.ANSI_RE.sub("", line) for line in lines]
+
+    assert len(lines) == 20
+    assert "↑/↓ select" in plain[-2]
+    assert "a add/login" in plain[-1]
+    selected_idx = next(idx for idx, line in enumerate(plain) if "Selected:" in line)
+    footer_idx = next(idx for idx, line in enumerate(plain) if "↑/↓ select" in line)
+    assert footer_idx - selected_idx > 1
+
+
 def test_clear_selected_profile_uses_themed_lines(monkeypatch):
     import cli_profile_manager.interactive as interactive
 

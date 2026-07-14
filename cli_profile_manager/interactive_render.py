@@ -70,6 +70,28 @@ def themed_screen_lines(lines, width=None, height=None, top_padding=2, left_padd
     return themed
 
 
+def themed_screen_with_footer_lines(lines, footer_lines, width=None, height=None, top_padding=2, left_padding=None):
+    term_width, term_height = terminal_size()
+    width = max(1, width or term_width)
+    height = max(1, height or term_height)
+    footer_lines = [str(line) for line in (footer_lines or [])]
+    if not footer_lines:
+        return themed_screen_lines(lines, width, height, top_padding, left_padding)
+    if left_padding is None:
+        left_padding = 4 if width >= 100 else 2
+    left = " " * max(0, min(left_padding, max(0, width - 1)))
+    themed = [themed_line(width=width) for _ in range(max(0, top_padding))]
+    footer_block = ["", *footer_lines]
+    content_capacity = max(0, height - len(themed) - len(footer_block))
+    for line in list(lines)[:content_capacity]:
+        themed.append(themed_line(left + str(line), width))
+    while len(themed) < height - len(footer_block):
+        themed.append(themed_line(width=width))
+    for line in footer_block:
+        themed.append(themed_line(left + str(line), width))
+    return themed[:height]
+
+
 def _center_splash_line(text, width):
     pad = max(0, (width - visible_len(text)) // 2)
     return themed_line((" " * pad) + text, width)
@@ -129,8 +151,7 @@ def render_menu_lines(options, title="", selected_idx=0, pre_lines=None, post_li
             )
         ]
     if footer_lines:
-        lines.append("")
-        lines.extend(str(line) for line in footer_lines)
+        return themed_screen_with_footer_lines(lines, footer_lines)
     return themed_screen_lines(lines)
 
 
