@@ -1874,7 +1874,8 @@ def clear_screen():
     STATUS_RENDERER.previous_size = None
     STATUS_RENDERER.cursor_hidden = False
     width, height = terminal_size()
-    fill = "\n".join(interactive_render.themed_line(width=width) for _ in range(max(1, height)))
+    fill_line = interactive_render.themed_line(width=width)
+    fill = "".join(f"\033[{row};1H{fill_line}\033[K" for row in range(1, max(1, height) + 1))
     sys.stdout.write(f"{TERMINAL_BG_BLACK}\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J{fill}{CLR_BG_BLACK}\033[H")
     sys.stdout.flush()
 

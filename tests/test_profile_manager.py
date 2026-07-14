@@ -2419,11 +2419,16 @@ def test_terminal_frame_renderer_initial_diff_shrink_and_resize():
     renderer.paint(["one"])
     renderer.paint(["one"])
 
-    assert "\033[H\033[Jone\ntwo\nthree" in stdout.writes[0]
+    assert "\033[?7l" in stdout.writes[0]
+    assert "\033[H\033[J" in stdout.writes[0]
+    assert "\033[1;1Hone\033[K" in stdout.writes[0]
+    assert "\033[2;1Htwo\033[K" in stdout.writes[0]
+    assert "\033[3;1Hthree\033[K" in stdout.writes[0]
     assert "\033[2;1HTWO\033[K" in stdout.writes[1]
     assert "\033[H" not in stdout.writes[1]
     assert "\033[2;1H\033[J" in stdout.writes[2]
-    assert "\033[H\033[Jone" in stdout.writes[3]
+    assert "\033[H\033[J" in stdout.writes[3]
+    assert "\033[1;1Hone\033[K" in stdout.writes[3]
 
 
 def test_terminal_frame_renderer_full_repaint_clears_old_line_tails():
@@ -2449,7 +2454,8 @@ def test_terminal_frame_renderer_full_repaint_clears_old_line_tails():
     renderer.reset()
     renderer.paint(["short"])
 
-    assert "\033[H\033[Jshort" in stdout.writes[-1]
+    assert "\033[H\033[J" in stdout.writes[-1]
+    assert "\033[1;1Hshort\033[K" in stdout.writes[-1]
 
 
 def test_terminal_frame_renderer_restores_cursor_after_exception():
@@ -2475,8 +2481,8 @@ def test_terminal_frame_renderer_restores_cursor_after_exception():
             renderer.paint(["frame"])
             raise RuntimeError("boom")
 
-    assert stdout.writes[0].startswith("\033]11;#000000\007\033[48;5;0m\033[?25l")
-    assert stdout.writes[-1] == "\033]111\007\033[0m\033[?25h"
+    assert stdout.writes[0].startswith("\033]11;#000000\007\033[48;5;0m\033[?7l\033[?25l")
+    assert stdout.writes[-1] == "\033[?7h\033]111\007\033[0m\033[?25h"
 
 
 def test_terminal_frame_renderer_non_tty_avoids_control_sequences():
@@ -2526,7 +2532,9 @@ def test_interactive_status_painter_updates_changed_lines_only(monkeypatch):
     interactive.paint_terminal_frame(["one", "two"])
     interactive.paint_terminal_frame(["one", "three"])
 
-    assert "\033[H\033[Jone\ntwo" in stdout.writes[0]
+    assert "\033[H\033[J" in stdout.writes[0]
+    assert "\033[1;1Hone\033[K" in stdout.writes[0]
+    assert "\033[2;1Htwo\033[K" in stdout.writes[0]
     assert "\033[2;1Hthree\033[K" in stdout.writes[1]
     assert "\033[H" not in stdout.writes[1]
     assert "\033[J" not in stdout.writes[1]
@@ -2934,6 +2942,9 @@ def test_clear_screen_fills_terminal_viewport(monkeypatch):
     rendered = output.getvalue()
     assert rendered.startswith(f"\033]11;#000000\007\033[?25h{interactive.CLR_BG_BLACK}\033[H\033[2J\033[3J")
     assert rendered.endswith("\033[H")
+    assert "\n" not in rendered
+    assert "\033[1;1H" in rendered
+    assert "\033[3;1H" in rendered
     assert rendered.count(interactive.CLR_BG_BLACK) >= 3
 
 

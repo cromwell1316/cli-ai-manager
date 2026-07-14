@@ -7,6 +7,8 @@ FRAME_BG_BLACK = "\033[48;5;0m"
 FRAME_RESET = "\033[0m"
 TERMINAL_BG_BLACK = "\033]11;#000000\007"
 TERMINAL_BG_RESET = "\033]111\007"
+AUTOWRAP_OFF = "\033[?7l"
+AUTOWRAP_ON = "\033[?7h"
 
 
 ANSI_RE = re.compile(
@@ -74,13 +76,15 @@ class TerminalFrameRenderer:
         output = []
         output.append(TERMINAL_BG_BLACK)
         output.append(FRAME_BG_BLACK)
+        output.append(AUTOWRAP_OFF)
         if not self.cursor_hidden:
             output.append("\033[?25l")
             self.cursor_hidden = True
 
         if force or resized or self.previous_lines is None:
             output.append("\033[H\033[J")
-            output.append("\n".join(text_lines))
+            for idx, line in enumerate(text_lines, start=1):
+                output.append(f"\033[{idx};1H{line}\033[K")
         else:
             max_lines = max(len(self.previous_lines), len(text_lines))
             for idx in range(max_lines):
@@ -102,13 +106,13 @@ class TerminalFrameRenderer:
             self.previous_lines = None
             self.previous_size = None
         if self.is_tty() and self.cursor_hidden:
-            self.stdout.write(f"{TERMINAL_BG_RESET}{FRAME_RESET}\033[?25h")
+            self.stdout.write(f"{AUTOWRAP_ON}{TERMINAL_BG_RESET}{FRAME_RESET}\033[?25h")
             self.stdout.flush()
         self.cursor_hidden = False
 
     def clear(self):
         if self.is_tty():
-            self.stdout.write(f"{TERMINAL_BG_BLACK}{FRAME_BG_BLACK}\033[H\033[J")
+            self.stdout.write(f"{AUTOWRAP_ON}{TERMINAL_BG_BLACK}{FRAME_BG_BLACK}\033[H\033[J")
             self.stdout.flush()
         self.previous_lines = None
         self.previous_size = None
