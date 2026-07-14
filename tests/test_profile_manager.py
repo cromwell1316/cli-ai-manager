@@ -2475,8 +2475,8 @@ def test_terminal_frame_renderer_restores_cursor_after_exception():
             renderer.paint(["frame"])
             raise RuntimeError("boom")
 
-    assert stdout.writes[0].startswith("\033[?25l")
-    assert stdout.writes[-1] == "\033[?25h"
+    assert stdout.writes[0].startswith("\033[48;5;0m\033[?25l")
+    assert stdout.writes[-1] == "\033[0m\033[?25h"
 
 
 def test_terminal_frame_renderer_non_tty_avoids_control_sequences():
@@ -2919,6 +2919,7 @@ def test_static_prompt_lines_erase_to_terminal_edge():
     assert rendered.startswith(interactive.CLR_BG_BLACK)
     assert "\033[K" in rendered
     assert f"{interactive.CLR_RESET}{interactive.CLR_BG_BLACK}" in rendered
+    assert rendered.endswith(f"{interactive.CLR_BG_BLACK}\n")
 
 
 def test_clear_screen_fills_terminal_viewport(monkeypatch):
@@ -2931,7 +2932,7 @@ def test_clear_screen_fills_terminal_viewport(monkeypatch):
         interactive.clear_screen()
 
     rendered = output.getvalue()
-    assert rendered.startswith("\033[?25h\033[H\033[2J\033[3J")
+    assert rendered.startswith(f"\033[?25h{interactive.CLR_BG_BLACK}\033[H\033[2J\033[3J")
     assert rendered.endswith("\033[H")
     assert rendered.count(interactive.CLR_BG_BLACK) >= 3
 
@@ -2949,6 +2950,7 @@ def test_themed_input_prompt_erases_to_terminal_edge(monkeypatch):
     rendered = output.getvalue()
     assert rendered.startswith(f"{interactive.CLR_BG_BLACK}Confirm: ")
     assert "\033[K" in rendered
+    assert rendered.endswith(interactive.CLR_BG_BLACK)
 
 
 def test_launch_intro_lines_use_themed_header_and_black_fill(monkeypatch, tmp_path):

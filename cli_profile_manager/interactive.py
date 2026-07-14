@@ -1873,7 +1873,7 @@ def clear_screen():
     STATUS_RENDERER.cursor_hidden = False
     width, height = terminal_size()
     fill = "\n".join(interactive_render.themed_line(width=width) for _ in range(max(1, height)))
-    sys.stdout.write(f"\033[?25h\033[H\033[2J\033[3J{fill}\033[H")
+    sys.stdout.write(f"\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J{fill}{CLR_BG_BLACK}\033[H")
     sys.stdout.flush()
 
 
@@ -1888,7 +1888,7 @@ def clear_screen_for_shell():
 
 def print_themed_line(text=""):
     body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
-    sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_RESET}\n")
+    sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_BG_BLACK}\n")
 
 
 def themed_input(prompt=""):
@@ -1900,7 +1900,7 @@ def themed_input(prompt=""):
     try:
         return input(prompt)
     finally:
-        sys.stdout.write(CLR_RESET)
+        sys.stdout.write(CLR_BG_BLACK)
         sys.stdout.flush()
 
 

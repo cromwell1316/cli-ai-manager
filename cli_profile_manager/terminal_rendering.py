@@ -3,6 +3,10 @@ import shutil
 import sys
 
 
+FRAME_BG_BLACK = "\033[48;5;0m"
+FRAME_RESET = "\033[0m"
+
+
 ANSI_RE = re.compile(
     r"(?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[@-_])"
 )
@@ -66,6 +70,7 @@ class TerminalFrameRenderer:
             return
         resized = self.previous_size is not None and size != self.previous_size
         output = []
+        output.append(FRAME_BG_BLACK)
         if not self.cursor_hidden:
             output.append("\033[?25l")
             self.cursor_hidden = True
@@ -94,13 +99,13 @@ class TerminalFrameRenderer:
             self.previous_lines = None
             self.previous_size = None
         if self.is_tty() and self.cursor_hidden:
-            self.stdout.write("\033[?25h")
+            self.stdout.write(f"{FRAME_RESET}\033[?25h")
             self.stdout.flush()
         self.cursor_hidden = False
 
     def clear(self):
         if self.is_tty():
-            self.stdout.write("\033[H\033[J")
+            self.stdout.write(f"{FRAME_RESET}\033[H\033[J")
             self.stdout.flush()
         self.previous_lines = None
         self.previous_size = None

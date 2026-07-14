@@ -43,7 +43,7 @@ def _line(text="", width=None):
     width = width or 120
     plain_len = visible_len(text)
     padding = " " * max(0, width - plain_len)
-    return f"{CLR_BG_BLACK}{text}{padding}{CLR_RESET}"
+    return f"{CLR_BG_BLACK}{text}{padding}{CLR_BG_BLACK}"
 
 
 def _input(prompt, input_func):

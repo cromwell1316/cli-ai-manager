@@ -52,7 +52,7 @@ def themed_line(text="", width=None):
     width = max(1, width or terminal_size()[0])
     body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
     padding = " " * max(0, width - visible_len(body))
-    return f"{CLR_BG_BLACK}{body}{padding}{CLR_RESET}"
+    return f"{CLR_BG_BLACK}{body}{padding}{CLR_BG_BLACK}"
 
 
 def themed_screen_lines(lines, width=None, height=None, top_padding=2, left_padding=None):
