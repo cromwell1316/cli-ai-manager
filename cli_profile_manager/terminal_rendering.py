@@ -5,6 +5,8 @@ import sys
 
 FRAME_BG_BLACK = "\033[48;5;0m"
 FRAME_RESET = "\033[0m"
+TERMINAL_BG_BLACK = "\033]11;#000000\007"
+TERMINAL_BG_RESET = "\033]111\007"
 
 
 ANSI_RE = re.compile(
@@ -70,6 +72,7 @@ class TerminalFrameRenderer:
             return
         resized = self.previous_size is not None and size != self.previous_size
         output = []
+        output.append(TERMINAL_BG_BLACK)
         output.append(FRAME_BG_BLACK)
         if not self.cursor_hidden:
             output.append("\033[?25l")
@@ -99,13 +102,13 @@ class TerminalFrameRenderer:
             self.previous_lines = None
             self.previous_size = None
         if self.is_tty() and self.cursor_hidden:
-            self.stdout.write(f"{FRAME_RESET}\033[?25h")
+            self.stdout.write(f"{TERMINAL_BG_RESET}{FRAME_RESET}\033[?25h")
             self.stdout.flush()
         self.cursor_hidden = False
 
     def clear(self):
         if self.is_tty():
-            self.stdout.write(f"{FRAME_RESET}\033[H\033[J")
+            self.stdout.write(f"{TERMINAL_BG_BLACK}{FRAME_BG_BLACK}\033[H\033[J")
             self.stdout.flush()
         self.previous_lines = None
         self.previous_size = None

@@ -19,7 +19,7 @@ from .operations import (
     profile_status_operation,
     sync_profiles_operation,
 )
-from .terminal_rendering import TerminalFrameRenderer, visible_len
+from .terminal_rendering import TERMINAL_BG_BLACK, TerminalFrameRenderer, visible_len
 
 CLR_RESET = "\033[0m"
 CLR_RED = "\033[31m"
@@ -43,7 +43,7 @@ def _line(text="", width=None):
     width = width or 120
     plain_len = visible_len(text)
     padding = " " * max(0, width - plain_len)
-    return f"{CLR_BG_BLACK}{text}{padding}{CLR_BG_BLACK}"
+    return f"{TERMINAL_BG_BLACK}{CLR_BG_BLACK}{text}{padding}{CLR_BG_BLACK}"
 
 
 def _input(prompt, input_func):

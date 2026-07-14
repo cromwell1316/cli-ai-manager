@@ -57,6 +57,8 @@ from . import interactive_model
 from .quota import close_persistent_quota_sessions
 from .terminal_rendering import (
     ANSI_RE,
+    TERMINAL_BG_BLACK,
+    TERMINAL_BG_RESET,
     TerminalFrameRenderer,
     terminal_size,
     visible_fit,
@@ -1873,7 +1875,7 @@ def clear_screen():
     STATUS_RENDERER.cursor_hidden = False
     width, height = terminal_size()
     fill = "\n".join(interactive_render.themed_line(width=width) for _ in range(max(1, height)))
-    sys.stdout.write(f"\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J{fill}{CLR_BG_BLACK}\033[H")
+    sys.stdout.write(f"{TERMINAL_BG_BLACK}\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J{fill}{CLR_BG_BLACK}\033[H")
     sys.stdout.flush()
 
 
@@ -1882,7 +1884,7 @@ def clear_screen_for_shell():
     STATUS_RENDERER.previous_lines = None
     STATUS_RENDERER.previous_size = None
     STATUS_RENDERER.cursor_hidden = False
-    sys.stdout.write("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    sys.stdout.write(f"{TERMINAL_BG_RESET}\033[?25h\033[0m\033[H\033[2J\033[3J")
     sys.stdout.flush()
 
 
@@ -1916,7 +1918,7 @@ def paint_static_screen(lines):
 
 
 def release_terminal_theme_for_child(clear_below=True):
-    sequence = CLR_RESET
+    sequence = TERMINAL_BG_RESET + CLR_RESET
     if clear_below:
         sequence += "\033[J"
     sys.stdout.write(sequence)

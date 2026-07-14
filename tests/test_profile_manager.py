@@ -2475,8 +2475,8 @@ def test_terminal_frame_renderer_restores_cursor_after_exception():
             renderer.paint(["frame"])
             raise RuntimeError("boom")
 
-    assert stdout.writes[0].startswith("\033[48;5;0m\033[?25l")
-    assert stdout.writes[-1] == "\033[0m\033[?25h"
+    assert stdout.writes[0].startswith("\033]11;#000000\007\033[48;5;0m\033[?25l")
+    assert stdout.writes[-1] == "\033]111\007\033[0m\033[?25h"
 
 
 def test_terminal_frame_renderer_non_tty_avoids_control_sequences():
@@ -2835,7 +2835,7 @@ def test_interactive_main_shutdown_closes_runtime(monkeypatch):
     assert restored == [{"handlers": True}]
     assert interactive.INTERACTIVE_QUOTA_SCHEDULER is None
     rendered = output.getvalue()
-    assert rendered.startswith("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    assert rendered.startswith("\033]111\007\033[?25h\033[0m\033[H\033[2J\033[3J")
     assert interactive.CLR_BG_BLACK not in rendered
     assert "Exiting Profile Manager. Goodbye!" in rendered
 
@@ -2880,7 +2880,7 @@ def test_interactive_main_exit_from_splash_resets_shell_theme(monkeypatch):
         interactive.run_interactive_main()
 
     rendered = output.getvalue()
-    assert rendered.startswith("\033[?25h\033[0m\033[H\033[2J\033[3J")
+    assert rendered.startswith("\033]111\007\033[?25h\033[0m\033[H\033[2J\033[3J")
     assert interactive.CLR_BG_BLACK not in rendered
     assert closed == [True]
     assert restored == [{"handlers": True}]
@@ -2932,7 +2932,7 @@ def test_clear_screen_fills_terminal_viewport(monkeypatch):
         interactive.clear_screen()
 
     rendered = output.getvalue()
-    assert rendered.startswith(f"\033[?25h{interactive.CLR_BG_BLACK}\033[H\033[2J\033[3J")
+    assert rendered.startswith(f"\033]11;#000000\007\033[?25h{interactive.CLR_BG_BLACK}\033[H\033[2J\033[3J")
     assert rendered.endswith("\033[H")
     assert rendered.count(interactive.CLR_BG_BLACK) >= 3
 
@@ -2991,7 +2991,7 @@ def test_launch_account_releases_theme_before_child_cli(monkeypatch, tmp_path):
     with contextlib.redirect_stdout(output):
         interactive.launch_account("agy")
 
-    assert captured["before_child"].endswith(interactive.CLR_RESET + "\033[J")
+    assert captured["before_child"].endswith("\033]111\007" + interactive.CLR_RESET + "\033[J")
     assert not captured["before_child"].endswith(interactive.CLR_BG_BLACK)
     assert output.getvalue().endswith(interactive.CLR_RESET)
 
