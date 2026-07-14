@@ -1963,8 +1963,7 @@ def show_startup_splash():
                 if key in ("q", "esc", "ctrl+c"):
                     sys.exit(0)
     finally:
-        renderer.clear()
-        renderer.reset()
+        renderer.reset(clear_cache=False)
 
 
 def render_menu_lines(options, title="", selected_idx=0, pre_lines=None, post_lines=None, footer_lines=None):
@@ -2007,8 +2006,7 @@ def run_menu(options, title="", shortcuts=None, pre_lines=None):
                     _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
                     sys.exit(0)
     finally:
-        renderer.clear()
-        renderer.reset()
+        renderer.reset(clear_cache=False)
 
 
 def launch_account_table(tool_key, statuses):
@@ -2150,8 +2148,7 @@ def select_launch_action(tool_key, metadata):
                     _audit().record("interactive", "failed", command="launch", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
                     sys.exit(0)
     finally:
-        renderer.clear()
-        renderer.reset()
+        renderer.reset(clear_cache=False)
 
 
 def select_launch_profile(tool_key, metadata):
@@ -2795,8 +2792,7 @@ def settings_menu():
         elif sel in (2, -1):
             _audit().record("interactive", "completed", result="succeeded", details={"workflow": "settings", "selected": sel})
             break
-    renderer.clear()
-    renderer.reset()
+    renderer.reset(clear_cache=False)
 
 
 def run_interactive_main():

@@ -114,8 +114,7 @@ def _show_startup_splash(input_func, output):
                 return False
     finally:
         if renderer is not None:
-            renderer.clear()
-            renderer.reset()
+            renderer.reset(clear_cache=False)
 
 
 def _choose_menu(menu_items, title, input_func, output, pre_lines=None, cancelled_action="back"):
@@ -140,8 +139,7 @@ def _choose_menu(menu_items, title, input_func, output, pre_lines=None, cancelle
                 return action
     finally:
         if renderer is not None:
-            renderer.clear()
-            renderer.reset()
+            renderer.reset(clear_cache=False)
 
 
 def _choose_index(options, title, input_func, output, pre_lines=None):
@@ -168,8 +166,7 @@ def _choose_index(options, title, input_func, output, pre_lines=None):
                 return -1
     finally:
         if renderer is not None:
-            renderer.clear()
-            renderer.reset()
+            renderer.reset(clear_cache=False)
 
 
 def _profile_action_post_lines(profiles, selected_idx):
@@ -242,8 +239,7 @@ def _choose_profile_action(options, profiles, title, input_func, output, pre_lin
                 return "back", -1
     finally:
         if renderer is not None:
-            renderer.clear()
-            renderer.reset()
+            renderer.reset(clear_cache=False)
 
 
 def _print_result(result, output):

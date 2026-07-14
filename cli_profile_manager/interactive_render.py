@@ -101,27 +101,14 @@ def pilot_splash_lines(size=None):
     width, height = size or terminal_size()
     width = max(1, width)
     height = max(1, height)
-    logo = [
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╗ ██╗██╗      ██████╗ ████████╗     ██████╗██╗     ██╗{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_RED}██╔══██╗██║██║     ██╔═══██╗╚══██╔══╝    ██╔════╝██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██████╔╝██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_RED}██╔═══╝ ██║██║     ██║   ██║   ██║       ██║     ██║     ██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_BRIGHT_RED}██║     ██║███████╗╚██████╔╝   ██║       ╚██████╗███████╗██║{CLR_RESET}",
-        f"{CLR_BOLD}{CLR_DARK_RED}╚═╝     ╚═╝╚══════╝ ╚═════╝    ╚═╝        ╚═════╝╚══════╝╚═╝{CLR_RESET}",
+    content = [
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}AI-MAN{CLR_RESET}",
+        f"{CLR_WHITE}Profile control deck{CLR_RESET}",
+        f"{CLR_DARK_RED}{'━' * min(32, width)}{CLR_RESET}",
+        f"{CLR_BRIGHT_RED}AGY{CLR_RESET}{CLR_WHITE} · {CLR_RED}Codex{CLR_RESET}{CLR_WHITE} · {CLR_DARK_RED}Claude{CLR_RESET}",
+        "",
+        f"{CLR_BOLD}{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_RED}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
     ]
-    divider = f"{CLR_DARK_RED}{'━' * min(56, width)}{CLR_RESET}"
-    content = (
-        logo
-        + [
-            "",
-            divider,
-            f"{CLR_WHITE}AI profile control deck{CLR_RESET}",
-            f"{CLR_BRIGHT_RED}● AGY{CLR_RESET}   {CLR_RED}● Codex{CLR_RESET}   {CLR_DARK_RED}● Claude{CLR_RESET}",
-            divider,
-            "",
-            f"{CLR_BOLD}{CLR_BRIGHT_RED}Enter{CLR_RESET}{CLR_WHITE} to continue · {CLR_RED}q/Esc{CLR_RESET}{CLR_WHITE} to exit{CLR_RESET}",
-        ]
-    )
     top_padding = max(1, (height - len(content)) // 3)
     lines = [themed_line(width=width) for _ in range(top_padding)]
     lines.extend(_center_splash_line(line, width) if line else themed_line(width=width) for line in content)

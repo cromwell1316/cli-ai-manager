@@ -2903,15 +2903,16 @@ def test_pilot_splash_lines_brand_startup():
     assert len(lines) == 24
     assert all(interactive.visible_len(line) == 96 for line in lines)
     assert all(line.startswith(interactive.CLR_BG_BLACK) for line in lines)
-    assert "██████" in rendered
-    assert "AI profile control deck" in rendered
+    assert "AI-MAN" in rendered
+    assert "Profile control deck" in rendered
     assert "AGY" in rendered
     assert "Codex" in rendered
     assert "Claude" in rendered
-    assert interactive.CLR_BG_BLACK in next(line for line in lines if "██████" in line)
+    assert "implemented" not in rendered
+    assert "Worktree" not in rendered
+    assert interactive.CLR_BG_BLACK in next(line for line in lines if "AI-MAN" in line)
     assert interactive.CLR_BRIGHT_RED in next(line for line in lines if "AGY" in line)
     assert interactive.CLR_DARK_RED in next(line for line in lines if "Claude" in line)
-    assert interactive.ANSI_RE.sub("", next(line for line in lines if "██████" in line)).startswith(" " * 13)
     assert "Enter to continue" in rendered
     assert "q/Esc to exit" in rendered
 
@@ -3316,8 +3317,8 @@ def test_show_startup_splash_waits_for_enter(monkeypatch):
         def clear(self):
             events.append(("clear", None))
 
-        def reset(self):
-            events.append(("reset", None))
+        def reset(self, clear_cache=True):
+            events.append(("reset", clear_cache))
 
     monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
     monkeypatch.setattr(interactive, "get_key", lambda: events.append(("key", None)) or "enter")
@@ -3326,7 +3327,8 @@ def test_show_startup_splash_waits_for_enter(monkeypatch):
 
     assert ("key", None) in events
     assert events[0] == ("init", "splash")
-    assert events[-2:] == [("clear", None), ("reset", None)]
+    assert ("clear", None) not in events
+    assert events[-1] == ("reset", False)
 
 
 def test_show_startup_splash_allows_exit(monkeypatch):
@@ -3342,7 +3344,7 @@ def test_show_startup_splash_allows_exit(monkeypatch):
         def clear(self):
             pass
 
-        def reset(self):
+        def reset(self, clear_cache=True):
             pass
 
     monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
@@ -3445,7 +3447,7 @@ def test_launch_profile_selector_auto_refreshes_quota_on_timeout(monkeypatch):
         def clear(self):
             pass
 
-        def reset(self):
+        def reset(self, clear_cache=True):
             pass
 
     monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
@@ -3492,7 +3494,7 @@ def test_launch_profile_selector_holds_raw_mode_without_forced_repaints(monkeypa
         def clear(self):
             pass
 
-        def reset(self):
+        def reset(self, clear_cache=True):
             pass
 
     monkeypatch.setattr(interactive, "terminal_raw_mode", lambda: FakeRawMode())
