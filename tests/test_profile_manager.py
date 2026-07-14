@@ -2930,6 +2930,20 @@ def test_static_prompt_lines_erase_to_terminal_edge():
     assert rendered.endswith(f"{interactive.CLR_BG_BLACK}\n")
 
 
+def test_static_themed_print_keeps_background_after_color_reset():
+    import cli_profile_manager.interactive as interactive
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        interactive.print_themed(f"{interactive.CLR_RED}Warn{interactive.CLR_RESET}\nPath: /tmp/p12")
+
+    lines = output.getvalue().splitlines()
+    assert len(lines) == 2
+    assert all(line.startswith(interactive.CLR_BG_BLACK) for line in lines)
+    assert all(line.endswith(interactive.CLR_BG_BLACK) for line in lines)
+    assert f"{interactive.CLR_RESET}{interactive.CLR_BG_BLACK}" in lines[0]
+
+
 def test_clear_screen_fills_terminal_viewport(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
@@ -3454,7 +3468,7 @@ def test_launch_profile_selector_auto_refreshes_quota_on_timeout(monkeypatch):
     assert any("Selected: p1" in interactive.ANSI_RE.sub("", frame) for frame in painted)
 
 
-def test_launch_profile_selector_holds_raw_mode_between_repaints(monkeypatch):
+def test_launch_profile_selector_holds_raw_mode_without_forced_repaints(monkeypatch):
     import cli_profile_manager.interactive as interactive
 
     events = []
@@ -3496,7 +3510,8 @@ def test_launch_profile_selector_holds_raw_mode_between_repaints(monkeypatch):
 
     assert interactive.select_launch_profile("agy", {}) == 1
     assert events[0] == ("raw", "enter")
-    assert ("paint", True) in events
+    assert ("paint", False) in events
+    assert ("paint", True) not in events
     assert ("key", 7) in events
     assert events[-1] == ("raw", "exit")
 
@@ -3516,6 +3531,34 @@ def test_launch_profile_selector_exposes_primary_profile_actions(monkeypatch):
     assert "sync/recovery" in plain
     assert "digits/shortcuts" not in plain
     assert "d/c/-" not in plain
+
+
+def test_clear_selected_profile_uses_themed_lines(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setattr(interactive, "clear_screen", lambda: None)
+    monkeypatch.setattr(interactive, "print_header", lambda title="": None)
+    monkeypatch.setattr(interactive, "profile_home", lambda tool, profile: "/tmp/agy-homes/p12")
+    monkeypatch.setattr(interactive, "themed_input", lambda prompt="": "no")
+    monkeypatch.setattr(
+        interactive,
+        "safety_decision",
+        lambda *args, **kwargs: {"message": "confirmation required"},
+    )
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        interactive.clear_selected_profile("agy", 12)
+
+    rendered = output.getvalue()
+    assert "WARNING: This will completely delete" in rendered
+    assert "Path: /tmp/agy-homes/p12" in rendered
+    assert f"{interactive.CLR_RESET}{interactive.CLR_BG_BLACK}" in rendered
+    assert all(
+        line.startswith(interactive.CLR_BG_BLACK)
+        for line in rendered.splitlines()
+        if line
+    )
 
 
 def test_launch_quota_hint_uses_updating_copy(monkeypatch):

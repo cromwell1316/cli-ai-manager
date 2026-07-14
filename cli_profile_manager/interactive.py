@@ -1831,12 +1831,7 @@ def view_status(tool_key):
     try:
         with terminal_raw_mode() as raw_fd:
             while True:
-                if raw_fd is None:
-                    render_status_screen(tool_key, status_message, base_statuses)
-                else:
-                    snapshot_key, lines = render_status_screen_frame(tool_key, status_message, base_statuses)
-                    paint_terminal_frame(lines, force=True)
-                    STATUS_SCREEN_RENDER_CACHE["status_snapshot_key"] = snapshot_key
+                render_status_screen(tool_key, status_message, base_statuses)
                 status_message = None
                 key = get_key_in_raw_mode(raw_fd, timeout=next_quota_wake_timeout(tool_key))
                 if key is None:
@@ -1892,6 +1887,16 @@ def clear_screen_for_shell():
 def print_themed_line(text=""):
     body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
     sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_BG_BLACK}\n")
+
+
+def print_themed(text=""):
+    raw = str(text)
+    lines = raw.splitlines()
+    if not lines:
+        print_themed_line()
+        return
+    for line in lines:
+        print_themed_line(line)
 
 
 def themed_input(prompt=""):
@@ -1978,7 +1983,7 @@ def run_menu(options, title="", shortcuts=None, pre_lines=None):
                 if raw_fd is None:
                     renderer.paint(lines)
                 else:
-                    renderer.paint(lines, force=True)
+                    renderer.paint(lines)
                 key = get_key_in_raw_mode(raw_fd)
                 if key == 'up':
                     selected_idx = (selected_idx - 1) % len(options)
@@ -2090,7 +2095,7 @@ def select_launch_action(tool_key, metadata):
                 if raw_fd is None:
                     renderer.paint(lines)
                 else:
-                    renderer.paint(lines, force=True)
+                    renderer.paint(lines)
                 key = get_key_in_raw_mode(raw_fd, timeout=next_quota_wake_timeout(tool_key))
                 if key is None:
                     count = schedule_due_quota_refresh(tool_key)
@@ -2203,8 +2208,9 @@ def clear_selected_profile(tool_key, profile_num):
 
     clear_screen()
     print_header(f"CLEAR p{profile_num}")
-    print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
-    print(f"Path: {home}")
+    print_themed()
+    print_themed(f"{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
+    print_themed(f"Path: {home}")
     confirm = themed_input("\nType 'yes' to confirm deletion: ").strip().lower()
     decision = safety_decision(
         "clear",
@@ -2220,13 +2226,16 @@ def clear_selected_profile(tool_key, profile_num):
         try:
             clear_profile_data(tool_key, profile_num)
             invalidate_quota_cache(tool_key, profile_num)
-            print(f"\n{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
+            print_themed()
+            print_themed(f"{CLR_GREEN}Profile p{profile_num} has been cleared.{CLR_RESET}")
             logging.info(f"Successfully cleared profile p{profile_num}")
         except Exception as e:
             logging.error(f"Error clearing profile p{profile_num}: {e}")
-            print(f"\n{CLR_RED}Error clearing profile: {e}{CLR_RESET}")
+            print_themed()
+            print_themed(f"{CLR_RED}Error clearing profile: {e}{CLR_RESET}")
     else:
-        print(f"\nOperation cancelled. {decision['message'] or ''}".rstrip())
+        print_themed()
+        print_themed(f"Operation cancelled. {decision['message'] or ''}".rstrip())
 
     themed_input("\nPress Enter to return...")
 
