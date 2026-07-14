@@ -2921,6 +2921,36 @@ def test_static_prompt_lines_erase_to_terminal_edge():
     assert f"{interactive.CLR_RESET}{interactive.CLR_BG_BLACK}" in rendered
 
 
+def test_clear_screen_fills_terminal_viewport(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setattr(interactive, "terminal_size", lambda fallback=(120, 24): (12, 3))
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        interactive.clear_screen()
+
+    rendered = output.getvalue()
+    assert rendered.startswith("\033[?25h\033[H\033[2J\033[3J")
+    assert rendered.endswith("\033[H")
+    assert rendered.count(interactive.CLR_BG_BLACK) >= 3
+
+
+def test_themed_input_prompt_erases_to_terminal_edge(monkeypatch):
+    import builtins
+    import cli_profile_manager.interactive as interactive
+
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "yes")
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        assert interactive.themed_input("Confirm: ") == "yes"
+
+    rendered = output.getvalue()
+    assert rendered.startswith(f"{interactive.CLR_BG_BLACK}Confirm: ")
+    assert "\033[K" in rendered
+
+
 def test_launch_intro_lines_use_themed_header_and_black_fill(monkeypatch, tmp_path):
     monkeypatch.setenv("AI_MAN_AGY_HOME", str(tmp_path / "agy-homes"))
     import cli_profile_manager.paths as paths
@@ -3325,8 +3355,11 @@ def test_launch_account_table_renders_agy_quota_columns():
 
     pre_lines, rows = interactive.launch_account_table("agy", statuses)
     rendered = "\n".join(pre_lines + rows)
+    plain = interactive.ANSI_RE.sub("", rendered)
 
     assert "Profile" in rendered
+    assert "Profile  Account" in plain
+    assert re.search(r"GPT\s{2,}Label", plain)
     assert "Mdl" in rendered
     assert "Hgt" in rendered
     assert "Sonnet" in rendered
@@ -3406,6 +3439,53 @@ def test_launch_profile_selector_auto_refreshes_quota_on_timeout(monkeypatch):
     assert scheduled == ["agy"]
     assert any("Quota refresh" in interactive.ANSI_RE.sub("", frame) for frame in painted)
     assert any("Selected: p1" in interactive.ANSI_RE.sub("", frame) for frame in painted)
+
+
+def test_launch_profile_selector_holds_raw_mode_between_repaints(monkeypatch):
+    import cli_profile_manager.interactive as interactive
+
+    events = []
+
+    class FakeRawMode:
+        def __enter__(self):
+            events.append(("raw", "enter"))
+            return 7
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append(("raw", "exit"))
+            return False
+
+    class FakeRenderer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def paint(self, lines, force=False):
+            events.append(("paint", force))
+
+        def clear(self):
+            pass
+
+        def reset(self):
+            pass
+
+    monkeypatch.setattr(interactive, "terminal_raw_mode", lambda: FakeRawMode())
+    monkeypatch.setattr(interactive, "TerminalFrameRenderer", FakeRenderer)
+    monkeypatch.setattr(interactive, "get_display_profiles", lambda tool: [1])
+    monkeypatch.setattr(interactive, "status_with_auto_quota", lambda tool, profile, metadata: {
+        "num": profile,
+        "email": "user@example.com",
+        "has_token": True,
+        "label": "",
+        "quota": {"state": "available", "limits": {}},
+    })
+    monkeypatch.setattr(interactive, "get_key_in_raw_mode", lambda raw_fd, timeout=None: events.append(("key", raw_fd)) or "enter")
+    monkeypatch.setattr(interactive, "next_quota_wake_timeout", lambda tool: None)
+
+    assert interactive.select_launch_profile("agy", {}) == 1
+    assert events[0] == ("raw", "enter")
+    assert ("paint", True) in events
+    assert ("key", 7) in events
+    assert events[-1] == ("raw", "exit")
 
 
 def test_launch_profile_selector_exposes_primary_profile_actions(monkeypatch):
@@ -4687,7 +4767,7 @@ def test_windows_interactive_launch_uses_profile_table_not_prompt(monkeypatch, t
     plain = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", rendered)
     assert rc == 0
     assert "LAUNCH ANTIGRAVITY CLI (AGY)" in plain
-    assert "Profile Account" in plain
+    assert "Profile  Account" in plain
     assert "p1" in plain
     assert "Profile [p1]:" not in plain
 

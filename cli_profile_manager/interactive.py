@@ -11,6 +11,7 @@ import threading
 import time
 import tty
 from concurrent.futures import Future
+from contextlib import contextmanager
 from itertools import count
 
 from .cli import (
@@ -1534,32 +1535,61 @@ def key_from_escape_sequence(fd):
     return 'esc'
 
 
+def read_raw_key(fd, timeout=None):
+    ch = read_key_byte(fd, timeout)
+    if ch is None:
+        return None
+    if ch == '\x1b':
+        ch2 = read_key_byte(fd, 0.5)
+        if ch2 is None:
+            return 'esc'
+        if ch2 in ('[', 'O'):
+            key = key_from_escape_sequence(fd)
+            return key or 'esc'
+        return 'esc'
+    elif ch in ('\n', '\r'):
+        return 'enter'
+    elif ch == '\x03': # Ctrl+C
+        return 'ctrl+c'
+    elif ch == '\x12': # Ctrl+R
+        return 'ctrl+r'
+    return ch
+
+
+@contextmanager
+def terminal_raw_mode():
+    try:
+        fd = sys.stdin.fileno()
+    except (OSError, ValueError):
+        yield None
+        return
+    if not getattr(sys.stdin, "isatty", lambda: False)():
+        yield None
+        return
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        yield fd
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
 def get_key(timeout=None):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = read_key_byte(fd, timeout)
-        if ch is None:
-            return None
-        if ch == '\x1b':
-            ch2 = read_key_byte(fd, 0.5)
-            if ch2 is None:
-                return 'esc'
-            if ch2 in ('[', 'O'):
-                key = key_from_escape_sequence(fd)
-                return key or 'esc'
-            return 'esc'
-        elif ch in ('\n', '\r'):
-            return 'enter'
-        elif ch == '\x03': # Ctrl+C
-            return 'ctrl+c'
-        elif ch == '\x12': # Ctrl+R
-            return 'ctrl+r'
-        else:
-            return ch
+        return read_raw_key(fd, timeout)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def get_key_in_raw_mode(raw_fd=None, timeout=None):
+    if raw_fd is None:
+        if timeout is None:
+            return get_key()
+        return get_key(timeout=timeout)
+    return read_raw_key(raw_fd, timeout)
 
 
 def header_lines(title="", width=None):
@@ -1587,13 +1617,13 @@ def reset_status_screen_render():
     STATUS_RENDERER.reset()
 
 
-def paint_terminal_frame(lines, cache_key="status"):
+def paint_terminal_frame(lines, cache_key="status", force=False):
     global STATUS_RENDERER
     if STATUS_RENDERER.stdout is not sys.stdout or STATUS_RENDERER.cache_key != cache_key:
         STATUS_RENDERER = TerminalFrameRenderer(stdout=sys.stdout, cache_key=cache_key)
     if cache_key not in STATUS_SCREEN_RENDER_CACHE:
         STATUS_RENDERER.previous_lines = None
-    STATUS_RENDERER.paint(lines)
+    STATUS_RENDERER.paint(lines, force=force)
     STATUS_SCREEN_RENDER_CACHE[cache_key] = list(STATUS_RENDERER.previous_lines or [])
 
 
@@ -1797,35 +1827,41 @@ def view_status(tool_key):
     STATUS_SCREEN_RENDER_CACHE.clear()
     _audit().record("interactive", "started", command="status", tool=tool_key, details={"workflow": "view_status"})
     try:
-        while True:
-            render_status_screen(tool_key, status_message, base_statuses)
-            status_message = None
-            key = get_key(timeout=next_quota_wake_timeout(tool_key))
-            if key is None:
-                count = schedule_due_quota_refresh(tool_key)
-                if count:
-                    _audit().record(
-                        "interactive",
-                        "retried",
-                        command="status",
-                        tool=tool_key,
-                        details={"workflow": "auto_quota_refresh", "profiles": count},
-                    )
-                continue
-            if key in ("enter", "esc", "q"):
-                _audit().record("interactive", "completed", command="status", tool=tool_key, result="succeeded", details={"workflow": "view_status", "key": key})
-                return
-            elif key in ("r", "R", "ctrl+r", "к", "К"):
-                count = force_quota_refresh(tool_key)
-                _audit().record("interactive", "retried", command="status", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
-                if count:
-                    status_message = f"Refreshing quota now for {count} profiles..."
+        with terminal_raw_mode() as raw_fd:
+            while True:
+                if raw_fd is None:
+                    render_status_screen(tool_key, status_message, base_statuses)
                 else:
-                    status_message = "Quota refresh is already running..."
-                continue
-            elif key == "ctrl+c":
-                _audit().record("interactive", "failed", command="status", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
-                sys.exit(0)
+                    snapshot_key, lines = render_status_screen_frame(tool_key, status_message, base_statuses)
+                    paint_terminal_frame(lines, force=True)
+                    STATUS_SCREEN_RENDER_CACHE["status_snapshot_key"] = snapshot_key
+                status_message = None
+                key = get_key_in_raw_mode(raw_fd, timeout=next_quota_wake_timeout(tool_key))
+                if key is None:
+                    count = schedule_due_quota_refresh(tool_key)
+                    if count:
+                        _audit().record(
+                            "interactive",
+                            "retried",
+                            command="status",
+                            tool=tool_key,
+                            details={"workflow": "auto_quota_refresh", "profiles": count},
+                        )
+                    continue
+                if key in ("enter", "esc", "q"):
+                    _audit().record("interactive", "completed", command="status", tool=tool_key, result="succeeded", details={"workflow": "view_status", "key": key})
+                    return
+                elif key in ("r", "R", "ctrl+r", "к", "К"):
+                    count = force_quota_refresh(tool_key)
+                    _audit().record("interactive", "retried", command="status", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
+                    if count:
+                        status_message = f"Refreshing quota now for {count} profiles..."
+                    else:
+                        status_message = "Quota refresh is already running..."
+                    continue
+                elif key == "ctrl+c":
+                    _audit().record("interactive", "failed", command="status", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
+                    sys.exit(0)
     finally:
         reset_status_screen_render()
 
@@ -1835,7 +1871,9 @@ def clear_screen():
     STATUS_RENDERER.previous_lines = None
     STATUS_RENDERER.previous_size = None
     STATUS_RENDERER.cursor_hidden = False
-    sys.stdout.write(f"\033[?25h{CLR_BG_BLACK}\033[H\033[2J\033[3J")
+    width, height = terminal_size()
+    fill = "\n".join(interactive_render.themed_line(width=width) for _ in range(max(1, height)))
+    sys.stdout.write(f"\033[?25h\033[H\033[2J\033[3J{fill}\033[H")
     sys.stdout.flush()
 
 
@@ -1851,6 +1889,19 @@ def clear_screen_for_shell():
 def print_themed_line(text=""):
     body = str(text).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
     sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K{CLR_RESET}\n")
+
+
+def themed_input(prompt=""):
+    if prompt:
+        body = str(prompt).replace(CLR_RESET, CLR_RESET + CLR_BG_BLACK)
+        sys.stdout.write(f"{CLR_BG_BLACK}{body}\033[K")
+        sys.stdout.flush()
+        prompt = ""
+    try:
+        return input(prompt)
+    finally:
+        sys.stdout.write(CLR_RESET)
+        sys.stdout.flush()
 
 
 def print_header(title=""):
@@ -1895,13 +1946,14 @@ def pilot_splash_lines(size=None):
 def show_startup_splash():
     renderer = TerminalFrameRenderer(cache_key="splash")
     try:
-        renderer.paint(pilot_splash_lines())
-        while True:
-            key = get_key()
-            if key == "enter":
-                break
-            if key in ("q", "esc", "ctrl+c"):
-                sys.exit(0)
+        with terminal_raw_mode() as raw_fd:
+            renderer.paint(pilot_splash_lines())
+            while True:
+                key = get_key_in_raw_mode(raw_fd)
+                if key == "enter":
+                    break
+                if key in ("q", "esc", "ctrl+c"):
+                    sys.exit(0)
     finally:
         renderer.clear()
         renderer.reset()
@@ -1917,30 +1969,35 @@ def run_menu(options, title="", shortcuts=None, pre_lines=None):
     renderer = TerminalFrameRenderer(cache_key="menu")
     _audit().record("interactive", "started", details={"workflow": "menu", "title": title, "options": len(options)})
     try:
-        while True:
-            renderer.paint(render_menu_lines(options, title, selected_idx, pre_lines=pre_lines))
-            key = get_key()
-            if key == 'up':
-                selected_idx = (selected_idx - 1) % len(options)
-            elif key == 'down':
-                selected_idx = (selected_idx + 1) % len(options)
-            elif key == 'enter':
-                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": selected_idx})
-                return selected_idx
-            elif key.isdigit() and key != "0":
-                idx = int(key) - 1
-                if 0 <= idx < len(options):
-                    _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": idx, "key": key})
-                    return idx
-            elif key in shortcuts:
-                _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "shortcut": key})
-                return shortcuts[key]
-            elif key in ('esc', 'q'):
-                _audit().record("interactive", "completed", result="cancelled", details={"workflow": "menu", "title": title, "key": key})
-                return -1
-            elif key == 'ctrl+c':
-                _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
-                sys.exit(0)
+        with terminal_raw_mode() as raw_fd:
+            while True:
+                lines = render_menu_lines(options, title, selected_idx, pre_lines=pre_lines)
+                if raw_fd is None:
+                    renderer.paint(lines)
+                else:
+                    renderer.paint(lines, force=True)
+                key = get_key_in_raw_mode(raw_fd)
+                if key == 'up':
+                    selected_idx = (selected_idx - 1) % len(options)
+                elif key == 'down':
+                    selected_idx = (selected_idx + 1) % len(options)
+                elif key == 'enter':
+                    _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": selected_idx})
+                    return selected_idx
+                elif key and key.isdigit() and key != "0":
+                    idx = int(key) - 1
+                    if 0 <= idx < len(options):
+                        _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "selected": idx, "key": key})
+                        return idx
+                elif key in shortcuts:
+                    _audit().record("interactive", "completed", result="succeeded", details={"workflow": "menu", "title": title, "shortcut": key})
+                    return shortcuts[key]
+                elif key in ('esc', 'q'):
+                    _audit().record("interactive", "completed", result="cancelled", details={"workflow": "menu", "title": title, "key": key})
+                    return -1
+                elif key == 'ctrl+c':
+                    _audit().record("interactive", "failed", result="failed", error_class="KeyboardInterrupt", details={"workflow": "menu", "title": title})
+                    sys.exit(0)
     finally:
         renderer.clear()
         renderer.reset()
@@ -2021,65 +2078,69 @@ def select_launch_action(tool_key, metadata):
     renderer = TerminalFrameRenderer(cache_key="launch")
     _audit().record("interactive", "started", command="launch", tool=tool_key, details={"workflow": "launch_profile_select"})
     try:
-        while True:
-            profiles, _statuses, lines = render_launch_account_lines(tool_key, selected_idx, status_message, metadata)
-            status_message = None
-            if profiles:
-                selected_idx %= len(profiles)
-            renderer.paint(lines)
-            key = get_key(timeout=next_quota_wake_timeout(tool_key))
-            if key is None:
-                count = schedule_due_quota_refresh(tool_key)
-                if count:
+        with terminal_raw_mode() as raw_fd:
+            while True:
+                profiles, _statuses, lines = render_launch_account_lines(tool_key, selected_idx, status_message, metadata)
+                status_message = None
+                if profiles:
+                    selected_idx %= len(profiles)
+                if raw_fd is None:
+                    renderer.paint(lines)
+                else:
+                    renderer.paint(lines, force=True)
+                key = get_key_in_raw_mode(raw_fd, timeout=next_quota_wake_timeout(tool_key))
+                if key is None:
+                    count = schedule_due_quota_refresh(tool_key)
+                    if count:
+                        _audit().record(
+                            "interactive",
+                            "retried",
+                            command="launch",
+                            tool=tool_key,
+                            details={"workflow": "auto_quota_refresh", "profiles": count},
+                        )
+                    continue
+                if not profiles:
+                    if key in ("esc", "q", "enter"):
+                        return "back", None
+                    continue
+                if key == "up":
+                    selected_idx = (selected_idx - 1) % len(profiles)
+                elif key == "down":
+                    selected_idx = (selected_idx + 1) % len(profiles)
+                elif key == "enter":
+                    profile_num = profiles[selected_idx]
                     _audit().record(
                         "interactive",
-                        "retried",
+                        "completed",
                         command="launch",
                         tool=tool_key,
-                        details={"workflow": "auto_quota_refresh", "profiles": count},
+                        result="succeeded",
+                        details={"workflow": "launch_profile_select", "profile": f"p{profile_num}"},
                     )
-                continue
-            if not profiles:
-                if key in ("esc", "q", "enter"):
+                    return "launch", profile_num
+                elif key and key.isdigit() and key != "0":
+                    idx = int(key) - 1
+                    if 0 <= idx < len(profiles):
+                        return "launch", profiles[idx]
+                elif key in ("esc", "q"):
+                    _audit().record("interactive", "completed", command="launch", tool=tool_key, result="cancelled", details={"workflow": "launch_profile_select", "key": key})
                     return "back", None
-                continue
-            if key == "up":
-                selected_idx = (selected_idx - 1) % len(profiles)
-            elif key == "down":
-                selected_idx = (selected_idx + 1) % len(profiles)
-            elif key == "enter":
-                profile_num = profiles[selected_idx]
-                _audit().record(
-                    "interactive",
-                    "completed",
-                    command="launch",
-                    tool=tool_key,
-                    result="succeeded",
-                    details={"workflow": "launch_profile_select", "profile": f"p{profile_num}"},
-                )
-                return "launch", profile_num
-            elif key.isdigit() and key != "0":
-                idx = int(key) - 1
-                if 0 <= idx < len(profiles):
-                    return "launch", profiles[idx]
-            elif key in ("esc", "q"):
-                _audit().record("interactive", "completed", command="launch", tool=tool_key, result="cancelled", details={"workflow": "launch_profile_select", "key": key})
-                return "back", None
-            elif key in ("r", "R", "ctrl+r", "к", "К"):
-                count = force_quota_refresh(tool_key)
-                _audit().record("interactive", "retried", command="launch", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
-                status_message = f"Refreshing quota now for {count} profiles..." if count else "Quota refresh is already running..."
-            elif key in ("a", "+"):
-                return "login", None
-            elif key in ("l", "#"):
-                return "label", profiles[selected_idx]
-            elif key in ("d", "c", "-"):
-                return "clear", profiles[selected_idx]
-            elif key in ("~", "m"):
-                return "credential_sync", None
-            elif key == "ctrl+c":
-                _audit().record("interactive", "failed", command="launch", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
-                sys.exit(0)
+                elif key in ("r", "R", "ctrl+r", "к", "К"):
+                    count = force_quota_refresh(tool_key)
+                    _audit().record("interactive", "retried", command="launch", tool=tool_key, details={"workflow": "quota_refresh", "profiles": count})
+                    status_message = f"Refreshing quota now for {count} profiles..." if count else "Quota refresh is already running..."
+                elif key in ("a", "+"):
+                    return "login", None
+                elif key in ("l", "#"):
+                    return "label", profiles[selected_idx]
+                elif key in ("d", "c", "-"):
+                    return "clear", profiles[selected_idx]
+                elif key in ("~", "m"):
+                    return "credential_sync", None
+                elif key == "ctrl+c":
+                    _audit().record("interactive", "failed", command="launch", tool=tool_key, result="failed", error_class="KeyboardInterrupt")
+                    sys.exit(0)
     finally:
         renderer.clear()
         renderer.reset()
@@ -2097,7 +2158,7 @@ def launch_selected_profile(tool_key, profile_num, metadata):
         clear_screen()
         print_header(f"LAUNCH p{profile_num} ({tool['cmd']})")
         print(f"\n{CLR_RED}Profile p{profile_num} has no token. Use login or import first.{CLR_RESET}")
-        input("\nPress Enter to continue...")
+        themed_input("\nPress Enter to continue...")
         return
 
     paint_static_screen(launch_intro_lines(tool_key, profile_num))
@@ -2107,7 +2168,7 @@ def launch_selected_profile(tool_key, profile_num, metadata):
     invalidate_quota_cache(tool_key, profile_num)
     if code != EXIT_OK:
         print_themed_line(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
-        input("\nPress Enter to continue...")
+        themed_input("\nPress Enter to continue...")
 
 
 def set_label_for_profile(tool_key, profile_num, metadata=None):
@@ -2119,7 +2180,7 @@ def set_label_for_profile(tool_key, profile_num, metadata=None):
 
     current_lbl = metadata.get(tool_key, {}).get(f"p{profile_num}", {}).get("label", "")
     print(f"Current label: {CLR_YELLOW}{current_lbl or '(none)'}{CLR_RESET}\n")
-    new_lbl = input("Enter new label (or empty to clear): ").strip()
+    new_lbl = themed_input("Enter new label (or empty to clear): ").strip()
 
     safety_decision(
         "label",
@@ -2131,7 +2192,7 @@ def set_label_for_profile(tool_key, profile_num, metadata=None):
     )
     label_profile(tool_key, profile_num, new_lbl)
     print(f"\n{CLR_GREEN}Label updated successfully!{CLR_RESET}")
-    input("Press Enter to return...")
+    themed_input("Press Enter to return...")
 
 
 def clear_selected_profile(tool_key, profile_num):
@@ -2141,7 +2202,7 @@ def clear_selected_profile(tool_key, profile_num):
     print_header(f"CLEAR p{profile_num}")
     print(f"\n{CLR_RED}WARNING: This will completely delete the profile folder and log you out!{CLR_RESET}")
     print(f"Path: {home}")
-    confirm = input("\nType 'yes' to confirm deletion: ").strip().lower()
+    confirm = themed_input("\nType 'yes' to confirm deletion: ").strip().lower()
     decision = safety_decision(
         "clear",
         command="clear",
@@ -2164,7 +2225,7 @@ def clear_selected_profile(tool_key, profile_num):
     else:
         print(f"\nOperation cancelled. {decision['message'] or ''}".rstrip())
 
-    input("\nPress Enter to return...")
+    themed_input("\nPress Enter to return...")
 
 
 def launch_account(tool_key):
@@ -2193,13 +2254,13 @@ def add_account(tool_key):
 
     next_p = first_free_profile(tool_key)
 
-    p_num_input = input(f"Enter profile number [Default: {next_p}]: ").strip()
+    p_num_input = themed_input(f"Enter profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
             next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"{CLR_RED}Invalid profile number!{CLR_RESET}")
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             return
 
     os.makedirs(profile_home(tool_key, next_p), exist_ok=True)
@@ -2209,7 +2270,7 @@ def add_account(tool_key):
     print(f"\nConfig directory: {profile_home(tool_key, next_p)}\n")
     print("Launching CLI to sign in.")
     print("Complete the browser authentication flow. Once logged in, exit the tool.\n")
-    input("Press Enter to start authentication...")
+    themed_input("Press Enter to start authentication...")
 
     logging.info(f"Adding new profile p{next_p} for {tool_key}")
     release_terminal_theme_for_child()
@@ -2222,7 +2283,7 @@ def add_account(tool_key):
         print(f"{CLR_RED}Command exited with code {code}.{CLR_RESET}")
 
     print(f"\n{CLR_GREEN}Setup finished for p{next_p}!{CLR_RESET}")
-    input("Press Enter to return...")
+    themed_input("Press Enter to return...")
 
 def set_label(tool_key):
     tool = TOOLS[tool_key]
@@ -2269,7 +2330,7 @@ def magic_import(tool_key):
 
     if not found_files:
         print(f"{CLR_YELLOW}No Windows credentials found automatically.{CLR_RESET}")
-        input("\nPress Enter to return...")
+        themed_input("\nPress Enter to return...")
         return
 
     options = []
@@ -2284,13 +2345,13 @@ def magic_import(tool_key):
 
     next_p = first_free_profile(tool_key)
 
-    p_num_input = input(f"\nSelected: {cred_file}\nEnter target profile number [Default: {next_p}]: ").strip()
+    p_num_input = themed_input(f"\nSelected: {cred_file}\nEnter target profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
             next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"\n{CLR_RED}Invalid profile number!{CLR_RESET}")
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             return
 
     print(f"\nImporting into profile p{next_p}...")
@@ -2310,7 +2371,7 @@ def magic_import(tool_key):
     except Exception as e:
         print(f"\n{CLR_RED}Import error: {e}{CLR_RESET}")
 
-    input("\nPress Enter to return...")
+    themed_input("\nPress Enter to return...")
 
 def export_credential(tool_key):
     tool = TOOLS[tool_key]
@@ -2331,7 +2392,7 @@ def export_credential(tool_key):
             clear_screen()
             print_header(f"EXPORT {tool['name'].upper()}")
             print(f"\n{CLR_YELLOW}No active profiles to export.{CLR_RESET}")
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             break
 
         sel = run_menu(options, f"EXPORT {tool['name'].upper()}")
@@ -2358,7 +2419,7 @@ def export_credential(tool_key):
         except Exception as e:
             print(f"\n{CLR_RED}Export error: {e}{CLR_RESET}")
 
-        input("\nPress Enter to return...")
+        themed_input("\nPress Enter to return...")
 
 def clear_profile(tool_key):
     tool = TOOLS[tool_key]
@@ -2389,24 +2450,24 @@ def import_credential(tool_key):
 
     print(f"{CLR_WHITE}{tool['import_help']}{CLR_RESET}\n")
 
-    cred_file = input("Enter path to file to import: ").strip()
+    cred_file = themed_input("Enter path to file to import: ").strip()
 
     cred_file = normalize_credential_path(tool_key, cred_file)
 
     if not os.path.exists(cred_file):
         print(f"\n{CLR_RED}Error: File '{cred_file}' not found.{CLR_RESET}")
-        input("\nPress Enter to return...")
+        themed_input("\nPress Enter to return...")
         return
 
     next_p = first_free_profile(tool_key)
 
-    p_num_input = input(f"Enter target profile number [Default: {next_p}]: ").strip()
+    p_num_input = themed_input(f"Enter target profile number [Default: {next_p}]: ").strip()
     if p_num_input:
         try:
             next_p = parse_profile(p_num_input)
         except ValueError:
             print(f"\n{CLR_RED}Invalid profile number!{CLR_RESET}")
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             return
 
     print(f"\nImporting into profile p{next_p}...")
@@ -2427,7 +2488,7 @@ def import_credential(tool_key):
     except Exception as e:
         print(f"\n{CLR_RED}Import error: {e}{CLR_RESET}")
 
-    input("\nPress Enter to return...")
+    themed_input("\nPress Enter to return...")
 
 def credential_sync_menu(tool_key):
     tool = TOOLS[tool_key]
@@ -2524,10 +2585,10 @@ def sync_profiles():
                 print(f"  {path}")
         except Exception as e:
             print(f"{CLR_RED}Preflight failed: {e}{CLR_RESET}")
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             return
         print(f"{CLR_RED}WARNING: Hard sync will DELETE extra files in Dest that are not in Source.{CLR_RESET}")
-        confirm = input("Type 'yes' to proceed: ").strip().lower()
+        confirm = themed_input("Type 'yes' to proceed: ").strip().lower()
         decision = safety_decision(
             "sync-hard",
             command="sync",
@@ -2543,7 +2604,7 @@ def sync_profiles():
         )
         if confirm != 'yes':
             print(f"Operation cancelled. {decision['message'] or ''}".rstrip())
-            input("\nPress Enter to return...")
+            themed_input("\nPress Enter to return...")
             return
     else:
         safety_decision(
@@ -2563,7 +2624,7 @@ def sync_profiles():
     except Exception as e:
         logging.error(f"Sync failed: {e}")
         print(f"{CLR_RED}Sync failed: {e}{CLR_RESET}")
-        input("\nPress Enter to return...")
+        themed_input("\nPress Enter to return...")
         return
 
     logging.info(f"Sync completed successfully: {result}")
@@ -2573,7 +2634,7 @@ def sync_profiles():
         f"converted {result['converted']} agy credentials, invalid {result['invalid']}.{CLR_RESET}"
     )
     print(f"\n{CLR_CYAN}Sync Complete!{CLR_RESET}")
-    input("\nPress Enter to return...")
+    themed_input("\nPress Enter to return...")
 
 
 def format_duration(seconds):
@@ -2661,20 +2722,20 @@ def edit_quota_refresh_interval():
     current = interactive_quota_fresh_seconds()
     print(f"\nCurrent value: {CLR_CYAN}{format_duration(current)}{CLR_RESET} ({current:g} seconds)")
     print("Enter seconds, or use suffix: 30s, 10m, 1h.")
-    value = input("\nNew value (empty to cancel): ").strip()
+    value = themed_input("\nNew value (empty to cancel): ").strip()
     if not value:
         return
     try:
         seconds = parse_duration_seconds(value)
     except ValueError as e:
         print(f"\n{CLR_RED}Invalid interval: {e}{CLR_RESET}")
-        input("\nPress Enter to return...")
+        themed_input("\nPress Enter to return...")
         return
     save_interactive_setting(QUOTA_REFRESH_SETTING_KEY, seconds)
     os.environ["AI_MAN_INTERACTIVE_QUOTA_FRESH_SECONDS"] = str(seconds)
     invalidate_quota_cache()
     print(f"\n{CLR_GREEN}Quota refresh interval updated to {format_duration(seconds)}.{CLR_RESET}")
-    input("Press Enter to return...")
+    themed_input("Press Enter to return...")
 
 
 def toggle_developer_mode():
@@ -2682,7 +2743,7 @@ def toggle_developer_mode():
     save_interactive_setting(DEVELOPER_MODE_SETTING_KEY, enabled)
     os.environ["AI_MAN_DEVELOPER_MODE"] = "1" if enabled else "0"
     print(f"\n{CLR_GREEN}Developer mode {'enabled' if enabled else 'disabled'}.{CLR_RESET}")
-    input("Press Enter to return...")
+    themed_input("Press Enter to return...")
 
 
 def settings_menu():

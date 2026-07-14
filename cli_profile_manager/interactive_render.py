@@ -318,10 +318,15 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
             "label": 14,
         }
         quota_header = agy_quota_header_lines(quota_columns, widths["quota"])
+        major_gap = "  "
+        quota_gap = " "
         total_width = widths["profile"] + widths["account"] + widths["status"] + widths["label"]
-        total_width += (widths["quota"] * len(quota_columns)) + len(quota_columns) + 3
+        total_width += (widths["quota"] * len(quota_columns)) + (len(quota_columns) - 1)
+        total_width += len(major_gap) * 4
     else:
         quota_columns = []
+        major_gap = "  "
+        quota_gap = " "
         widths = {
             "profile": 6,
             "account": 30,
@@ -330,7 +335,7 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
             "label": 14,
         }
         quota_header = f"{'Quota':<{widths['quota']}}"
-        total_width = sum(widths.values()) + len(widths) - 1
+        total_width = sum(widths.values()) + len(major_gap) * 4
 
     prefix = "      "
     row_prefix = "    "
@@ -339,19 +344,19 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
         headers = [
             (
                 f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'Profile':<{widths['profile']}} "
-                f"{'Account':<{widths['account']}} "
-                f"{'Status':<{widths['status']}} "
-                f"{quota_group_header} "
+                f"{'Profile':<{widths['profile']}}{major_gap}"
+                f"{'Account':<{widths['account']}}{major_gap}"
+                f"{'Status':<{widths['status']}}{major_gap}"
+                f"{quota_group_header}{major_gap}"
                 f"{'Label':<{widths['label']}}"
                 f"{CLR_RESET}"
             ),
             (
                 f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'':<{widths['profile']}} "
-                f"{'':<{widths['account']}} "
-                f"{'':<{widths['status']}} "
-                f"{quota_column_header} "
+                f"{'':<{widths['profile']}}{major_gap}"
+                f"{'':<{widths['account']}}{major_gap}"
+                f"{'':<{widths['status']}}{major_gap}"
+                f"{quota_column_header}{major_gap}"
                 f"{'':<{widths['label']}}"
                 f"{CLR_RESET}"
             ),
@@ -360,10 +365,10 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
         headers = [
             (
                 f"{prefix}{CLR_BOLD}{CLR_WHITE}"
-                f"{'Profile':<{widths['profile']}} "
-                f"{'Account':<{widths['account']}} "
-                f"{'Status':<{widths['status']}} "
-                f"{quota_header} "
+                f"{'Profile':<{widths['profile']}}{major_gap}"
+                f"{'Account':<{widths['account']}}{major_gap}"
+                f"{'Status':<{widths['status']}}{major_gap}"
+                f"{quota_header}{major_gap}"
                 f"{'Label':<{widths['label']}}"
                 f"{CLR_RESET}"
             )
@@ -379,7 +384,7 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
             display_account = quota_account
         account = color_email_parts(display_account) if status.get("has_token") else f"{CLR_RED}{display_account}{CLR_RESET}"
         if tool_key == "agy":
-            quota_text_value = " ".join(
+            quota_text_value = quota_gap.join(
                 visible_fit(color_agy_quota_cell(cell, status, quota_fresh_seconds), widths["quota"])
                 for cell in agy_quota_cells(status, quota_columns)
             )
@@ -389,10 +394,10 @@ def launch_account_table(tool_key, statuses, quota_fresh_seconds=600.0):
         label = f"{CLR_YELLOW}{label_text}{CLR_RESET}" if label_text else ""
         rows.append(
             f"{row_prefix}"
-            f"{visible_fit(profile_text, widths['profile'])} "
-            f"{visible_fit(account, widths['account'])} "
-            f"{visible_fit(state_text, widths['status'])} "
-            f"{quota_text_value} "
+            f"{visible_fit(profile_text, widths['profile'])}{major_gap}"
+            f"{visible_fit(account, widths['account'])}{major_gap}"
+            f"{visible_fit(state_text, widths['status'])}{major_gap}"
+            f"{quota_text_value}{major_gap}"
             f"{visible_fit(label, widths['label'])}"
         )
     return headers + [separator], rows
